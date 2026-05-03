@@ -281,6 +281,14 @@ export default function Dashboard() {
     const page = Math.min(currentPage, totalPages);
     return processedCampaigns.slice((page - 1) * DASHBOARD_CAMPAIGNS_PER_PAGE, page * DASHBOARD_CAMPAIGNS_PER_PAGE);
   }, [currentPage, processedCampaigns, totalPages]);
+  const metaAvgCPM = useMemo(() => {
+    if (isShopee) return 0;
+    const totalWeightedCost = processedCampaigns.reduce((sum, campaign) => (
+      sum + Number(campaign.costPerMessage || 0) * Number(campaign.messages || 0)
+    ), 0);
+    const totalMessages = processedCampaigns.reduce((sum, campaign) => sum + Number(campaign.messages || 0), 0);
+    return totalMessages > 0 ? totalWeightedCost / totalMessages : 0;
+  }, [processedCampaigns, isShopee]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -317,7 +325,7 @@ export default function Dashboard() {
         <div className="stat p">
           <div className="stat-label">{isShopee ? 'Luot click' : 'Tin nhan'} {dateLabel}</div>
           <div className="stat-value p" id="sMessages">{isShopee ? formatNumber(localStats.totalClicks || 0) : (localStats.totalMessages ? formatNumber(localStats.totalMessages) : '-')}</div>
-          <div className="stat-sub">{!isShopee && localStats.avgCPM > 0 ? `CPM: ${formatVND(localStats.avgCPM)}` : '-'}</div>
+          <div className="stat-sub">{!isShopee && metaAvgCPM > 0 ? `CPM: ${formatVND(metaAvgCPM)}` : '-'}</div>
         </div>
         {showOrders && (
           <div className="stat g2" style={{ borderColor: 'var(--g2)' }}>
