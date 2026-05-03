@@ -1,0 +1,9 @@
+node_modules/
+.env
+.DS_Store
+.vscode/
+*.log
+tools/redis/
+tools/redis.zip
+scratch/
+check_order.js
