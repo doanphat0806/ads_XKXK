@@ -172,7 +172,7 @@ async function saveFacebookTokenState({ appId, appSecret, token, expiresAt, refr
 async function resolveFacebookTokenInput() {
   const [tokenState, config] = await Promise.all([
     FacebookToken.findOne({ key: FACEBOOK_TOKEN_KEY }),
-    getAppConfig()
+    Config.findOne({ key: 'app' })
   ]);
 
   return {
