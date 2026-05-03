@@ -4,6 +4,10 @@ export function apiUrl(path) {
   return `${API_URL}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+export function getAuthToken() {
+  return localStorage.getItem('adsctrl-token') || '';
+}
+
 const responseCache = new Map();
 const RESPONSE_CACHE_PREFIX = 'adsctrl:api-cache:';
 const RESPONSE_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
@@ -47,6 +51,8 @@ export async function api(method, path, body = null, options = {}) {
     headers: { 'Content-Type': 'application/json' },
     signal: controller.signal
   };
+  const token = getAuthToken();
+  if (token) opts.headers.Authorization = `Bearer ${token}`;
 
   if (body !== null && body !== undefined) opts.body = JSON.stringify(body);
 

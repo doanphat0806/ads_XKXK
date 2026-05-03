@@ -25,8 +25,8 @@ export default function ConfigModal() {
       setFbApp({ id: appConfig.fbAppId || '', secret: '' });
       setPancake({ apiKey: '', shopId: appConfig.pancakeShopId || '' });
       setAutoRules({ 
-        start: appConfig.autoRuleStartTime || '00:00', 
-        end: appConfig.autoRuleEndTime || '09:00' 
+        start: isShopee ? (appConfig.shopeeAutoRuleStartTime || '00:00') : (appConfig.autoRuleStartTime || '00:00'), 
+        end: isShopee ? (appConfig.shopeeAutoRuleEndTime || '09:00') : (appConfig.autoRuleEndTime || '09:00') 
       });
       // Populating limits from config if available
       setAutoLimits({
@@ -42,7 +42,7 @@ export default function ConfigModal() {
         lifetimeCpcLimit: appConfig.lifetimeCpcLimit || 600
       });
     }
-  }, [appConfig]);
+  }, [appConfig, isShopee]);
 
   const save = async (path, body, successMsg) => {
     try {
@@ -87,7 +87,20 @@ export default function ConfigModal() {
         window.removeEventListener('message', handleMessage);
         setFbOAuthLoading(false);
         toast.error('Trinh duyet da chan popup. Hay cho phep popup roi thu lai.');
+        return;
       }
+
+      // Check if popup is closed by user manually or errors out
+      const checkTimer = setInterval(() => {
+        if (!popup || popup.closed) {
+          clearInterval(checkTimer);
+          if (fbOAuthLoading) { // if still loading, means we didn't get success message
+            window.removeEventListener('message', handleMessage);
+            setFbOAuthLoading(false);
+          }
+        }
+      }, 500);
+
     } catch (e) {
       window.removeEventListener('message', handleMessage);
       setFbOAuthLoading(false);
@@ -193,7 +206,7 @@ export default function ConfigModal() {
             </div>
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
-            <button className="btn btn-p btn-sm" onClick={() => save('/auto-rules', { startTime: autoRules.start, endTime: autoRules.end }, 'Đã lưu khung giờ')}>Lưu khung giờ</button>
+            <button className="btn btn-p btn-sm" onClick={() => save('/auto-rules', { provider, startTime: autoRules.start, endTime: autoRules.end }, 'Đã lưu khung giờ')}>Lưu khung giờ</button>
           </div>
         </section>
 

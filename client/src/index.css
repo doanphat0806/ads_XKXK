@@ -2400,16 +2400,28 @@
       min-height: 118px;
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
+      justify-content: flex-start;
       contain: layout paint;
       min-width: 0;
     }
 
     #page-dashboard .stat-value {
+      font-size: 20px;
       line-height: 1.2;
       min-height: 28px;
+      margin-top: 14px;
       font-variant-numeric: tabular-nums;
       overflow-wrap: anywhere;
+    }
+
+    #page-dashboard .stat-value-compact {
+      font-size: 20px;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    #page-dashboard .stat-sub {
+      margin-top: 14px;
     }
 
     @media (max-width: 1500px) {

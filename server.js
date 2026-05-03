@@ -68,7 +68,28 @@ app.get('/auth/facebook/callback', async (req, res) => {
     const user = userRes.data;
     console.log("FB USER:", user);
 
-    // 👉 TODO: lưu DB nếu cần
+    // 👉 Lưu token vào DB
+    const Config = require('./models/Config');
+    
+    // Thử đổi token sang loại dài hạn (long-lived)
+    let longLivedToken = access_token;
+    try {
+      longLivedToken = await exchangeToken(access_token, process.env.FB_APP_ID, process.env.FB_APP_SECRET);
+    } catch (e) {
+      console.warn("Could not exchange for long lived token:", e.message);
+    }
+
+    // Lưu token dung chung
+    await Config.findOneAndUpdate(
+      { key: 'app' },
+      { 
+        $set: { 
+          fbToken: longLivedToken,
+          fbTokenLastRefreshTime: new Date()
+        } 
+      },
+      { upsert: true }
+    );
 
     // ✅ Đăng nhập thành công trên frontend và về lại Dash
     return res.send(`
@@ -113,6 +134,7 @@ const Account = require('./models/Account');
 const Campaign = require('./models/Campaign');
 const Log = require('./models/Log');
 const Config = require('./models/Config');
+const User = require('./models/User');
 const FacebookToken = require('./models/FacebookToken');
 const Order = require('./models/Order');
 const FacebookPost = require('./models/FacebookPost');
@@ -229,6 +251,14 @@ const readCache = new Map();
 const ACCOUNT_RATE_LIMIT_COOLDOWN_MS = parseBoundedInt(process.env.ACCOUNT_RATE_LIMIT_COOLDOWN_MS, 10 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
 const AUTO_CHECK_MIN_INTERVAL_SECONDS = parseBoundedInt(process.env.AUTO_CHECK_MIN_INTERVAL_SECONDS, 180, 60, 60 * 60);
 const accountRateLimitUntil = new Map();
+const AUTH_TOKEN_TTL_MS = parseBoundedInt(process.env.AUTH_TOKEN_TTL_MS, 7 * 24 * 60 * 60 * 1000, 60 * 1000, 30 * 24 * 60 * 60 * 1000);
+const AUTH_SECRET = String(process.env.AUTH_SECRET || process.env.SESSION_SECRET || process.env.FB_APP_SECRET || 'adsctrl-local-auth-secret');
+const DEFAULT_LOGIN_USERS = [
+  { username: 'admin', password: process.env.USER_ADMIN_PASSWORD || 'admin', displayName: 'Admin', provider: 'facebook' },
+  { username: 'user2', password: process.env.USER2_PASSWORD || 'admin', displayName: 'User 2', provider: 'facebook' },
+  { username: 'user3', password: process.env.USER3_PASSWORD || 'admin', displayName: 'User 3', provider: 'facebook' },
+  { username: 'user4', password: process.env.USER4_PASSWORD || 'admin', displayName: 'User 4', provider: 'facebook' }
+];
 
 function getReadCache(key) {
   const cached = readCache.get(key);
@@ -251,10 +281,133 @@ function setReadCache(key, value) {
 
 function clearCampaignReadCache() {
   for (const key of readCache.keys()) {
-    if (key.startsWith('campaigns:') || key.startsWith('stats:')) {
+    if (key.includes(':campaigns:') || key.includes(':stats:') || key.startsWith('campaigns:') || key.startsWith('stats:')) {
       readCache.delete(key);
     }
   }
+}
+
+function clearAllReadCache() {
+  readCache.clear();
+}
+
+const META_PURCHASE_ACTION_TYPES = new Set([
+  'purchase',
+  'omni_purchase',
+  'offsite_conversion.fb_pixel_purchase',
+  'onsite_conversion.fb_pixel_purchase',
+  'onsite_conversion.messaging_purchase',
+  'onsite_conversion.purchase'
+]);
+
+function parseInsightMetricValue(value) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isMetaPurchaseAction(action) {
+  const actionType = String(action?.action_type || '').toLowerCase();
+  return META_PURCHASE_ACTION_TYPES.has(actionType) || actionType.endsWith('_purchase');
+}
+
+function getMetaOrdersFromInsight(insight = {}) {
+  const values = [];
+  for (const source of [insight.conversions, insight.actions]) {
+    if (!Array.isArray(source)) continue;
+    for (const action of source) {
+      if (isMetaPurchaseAction(action)) {
+        values.push(parseInsightMetricValue(action.value));
+      }
+    }
+  }
+  return values.length ? Math.round(Math.max(...values)) : 0;
+}
+
+function isMetaMessageAction(action = {}) {
+  return action.action_type === 'onsite_conversion.messaging_conversation_started_7d' ||
+    action.action_type === 'onsite_conversion.total_messaging_connection' ||
+    action.action_type === 'omni_initiated_conversation';
+}
+
+function getMetaCostPerMessageFromInsight(insight = {}) {
+  const item = Array.isArray(insight.cost_per_action_type)
+    ? insight.cost_per_action_type.find(isMetaMessageAction)
+    : null;
+  const value = Number(item?.value || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.pbkdf2Sync(String(password || ''), salt, 120000, 32, 'sha256').toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedHash = '') {
+  const [salt, expectedHash] = String(storedHash || '').split(':');
+  if (!salt || !expectedHash) return false;
+  const actualHash = hashPassword(password, salt).split(':')[1];
+  if (actualHash.length !== expectedHash.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(actualHash, 'hex'), Buffer.from(expectedHash, 'hex'));
+}
+
+function signAuthPayload(payload) {
+  return crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('hex');
+}
+
+function createAuthToken(user) {
+  const payload = Buffer.from(JSON.stringify({
+    userId: String(user._id),
+    username: user.username,
+    provider: user.provider || 'facebook',
+    exp: Date.now() + AUTH_TOKEN_TTL_MS
+  })).toString('base64url');
+  return `${payload}.${signAuthPayload(payload)}`;
+}
+
+function parseAuthToken(token = '') {
+  const [payload, signature] = String(token || '').split('.');
+  if (!payload || !signature || signAuthPayload(payload) !== signature) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!data?.userId || !data?.exp || Date.now() > data.exp) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function getBearerToken(req) {
+  const header = String(req.get('authorization') || '');
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1] || '';
+}
+
+function getUserFilter(req) {
+  return req.currentUser?._id ? { ownerUserId: req.currentUser._id } : {};
+}
+
+function withUserFilter(req, filter = {}) {
+  return { ...filter, ...getUserFilter(req) };
+}
+
+function userScopedCacheKey(req, key) {
+  return `${req.currentUser?._id || 'public'}:${key}`;
+}
+
+async function authenticateApiRequest(req, res, next) {
+  if (req.path === '/auth/login' || req.path === '/facebook/oauth/callback' || req.path === '/webhooks/pancake') {
+    return next();
+  }
+
+  const tokenData = parseAuthToken(getBearerToken(req));
+  if (!tokenData || !mongoose.Types.ObjectId.isValid(tokenData.userId)) {
+    return res.status(401).json({ error: 'Chua dang nhap hoac phien da het han' });
+  }
+
+  const user = await User.findOne({ _id: tokenData.userId, active: true }).select('-passwordHash').lean();
+  if (!user) return res.status(401).json({ error: 'Tai khoan khong hop le' });
+  req.currentUser = user;
+  next();
 }
 
 async function getAppConfig() {
@@ -263,7 +416,12 @@ async function getAppConfig() {
 
 async function getEffectiveSecrets(account) {
   const config = await getAppConfig();
-  let fbToken = account.fbToken || config?.fbToken || '';
+  let ownerFbToken = '';
+  if (account.ownerUserId) {
+    const owner = await User.findById(account.ownerUserId).select('fbToken').lean();
+    ownerFbToken = owner?.fbToken || '';
+  }
+  let fbToken = account.fbToken || ownerFbToken || config?.fbToken || '';
   let claudeKey = account.claudeKey || config?.claudeKey || '';
   return { fbToken, claudeKey };
 }
@@ -381,15 +539,17 @@ function buildAdName(code, prefix = DEFAULT_AD_NAME_PREFIX, status = 'Test') {
 
 async function buildAccountPayload(input = {}) {
   const config = await getAppConfig();
+  const owner = input.ownerUserId ? await User.findById(input.ownerUserId).select('fbToken').lean() : null;
   const provider = normalizeProvider(input.provider);
   const adAccountId = provider === 'facebook'
     ? normalizeAdAccountId(input.adAccountId)
     : String(input.adAccountId || '').trim();
 
   return {
+    ownerUserId: input.ownerUserId,
     name: String(input.name || '').trim(),
     provider,
-    fbToken: provider === 'facebook' ? String(input.fbToken || config?.fbToken || '').trim() : '',
+    fbToken: provider === 'facebook' ? String(input.fbToken || owner?.fbToken || config?.fbToken || '').trim() : '',
     adAccountId,
     claudeKey: String(input.claudeKey || config?.claudeKey || '').trim(),
     spendThreshold: Number(input.spendThreshold || 20000),
@@ -563,8 +723,13 @@ async function exchangeToken(shortToken, appId, appSecret) {
 
 async function getAutoCheckIntervalSeconds(account) {
   const config = await getAppConfig();
-  const ruleStart = config?.autoRuleStartTime || '00:00';
-  const ruleEnd = config?.autoRuleEndTime || '09:00';
+  const isShopee = account.provider === 'shopee';
+  const ruleStart = isShopee
+    ? (config?.shopeeAutoRuleStartTime || config?.autoRuleStartTime || '00:00')
+    : (config?.autoRuleStartTime || '00:00');
+  const ruleEnd = isShopee
+    ? (config?.shopeeAutoRuleEndTime || config?.autoRuleEndTime || '09:00')
+    : (config?.autoRuleEndTime || '09:00');
   const minInterval = account.provider === 'shopee' ? 60 : AUTO_CHECK_MIN_INTERVAL_SECONDS;
   return isWithinAutoRuleTimeWindow(ruleStart, ruleEnd)
     ? Math.max(Number(account.checkInterval || minInterval), minInterval)
@@ -586,6 +751,11 @@ function markAccountRateLimited(accountId) {
 }
 
 function getFacebookOAuthRedirectUri(req) {
+  const host = req.get('host');
+  if (host && host.includes('localhost')) {
+    const protocol = req.protocol || 'http';
+    return `${protocol}://${host}/api/facebook/oauth/callback`;
+  }
   return 'https://xekoxukashop.id.vn/api/facebook/oauth/callback';
 }
 
@@ -593,7 +763,8 @@ function getFacebookOAuthState(req) {
   const state = crypto.randomBytes(24).toString('hex');
   facebookOAuthStates.set(state, {
     createdAt: Date.now(),
-    redirectUri: getFacebookOAuthRedirectUri(req)
+    redirectUri: getFacebookOAuthRedirectUri(req),
+    userId: req.currentUser?._id ? String(req.currentUser._id) : ''
   });
 
   if (facebookOAuthStates.size > 50) {
@@ -617,7 +788,7 @@ function renderOAuthPopupResult(payload) {
     <script>
       const payload = ${json};
       if (window.opener) {
-        window.opener.postMessage({ type: 'adsctrl:facebook-oauth', payload }, window.location.origin);
+        window.opener.postMessage({ type: 'adsctrl:facebook-oauth', payload }, '*');
       }
       window.close();
     </script>
@@ -1110,13 +1281,9 @@ function getPauseReason(provider, spend, messages, costPerMessage, clicks, costP
 function getCampaignMessageStats(campaign) {
   const spend = parseFloat(campaign.insights?.data?.[0]?.spend || 0);
   const actions = campaign.insights?.data?.[0]?.actions || [];
-  const msgAction = actions.find(action =>
-    action.action_type === 'onsite_conversion.messaging_conversation_started_7d' ||
-    action.action_type === 'onsite_conversion.total_messaging_connection' ||
-    action.action_type === 'omni_initiated_conversation'
-  );
+  const msgAction = actions.find(isMetaMessageAction);
   const messages = parseInt(msgAction?.value || 0, 10);
-  const costPerMessage = messages > 0 ? spend / messages : 0;
+  const costPerMessage = getMetaCostPerMessageFromInsight(campaign.insights?.data?.[0] || {}) || (messages > 0 ? spend / messages : 0);
 
   return { spend, messages, costPerMessage };
 }
@@ -1208,14 +1375,12 @@ async function fetchAccountData(account) {
     const impressions = parseInt(insight.impressions || 0, 10);
     const clicks = parseInt(insight.clicks || 0, 10);
     const actions = insight.actions || [];
-    const msgAction = actions.find(action =>
-      action.action_type === 'onsite_conversion.messaging_conversation_started_7d' ||
-      action.action_type === 'onsite_conversion.total_messaging_connection' ||
-      action.action_type === 'omni_initiated_conversation'
-    );
+    const msgAction = actions.find(isMetaMessageAction);
     const messages = parseInt(msgAction?.value || 0, 10);
+    const costPerMessage = getMetaCostPerMessageFromInsight(insight) || (messages > 0 ? spend / messages : 0);
+    const metaOrders = getMetaOrdersFromInsight(insight);
     if (spend <= 0 && impressions <= 0 && clicks <= 0 && messages <= 0) continue;
-    metricInsights.push({ ...insight, spend, impressions, clicks, messages });
+    metricInsights.push({ ...insight, spend, impressions, clicks, messages, costPerMessage, metaOrders });
     seenCampaignIds.add(String(insight.campaign_id));
   }
 
@@ -1247,8 +1412,7 @@ async function fetchAccountData(account) {
   for (const insight of metricInsights) {
     const campaignId = String(insight.campaign_id);
     const actions = insight.actions || [];
-    const { spend, impressions, clicks, messages } = insight;
-    const costPerMessage = messages > 0 ? spend / messages : 0;
+    const { spend, impressions, clicks, messages, costPerMessage } = insight;
     insightTotalSpend += spend;
     insightTotalMessages += messages;
     const meta = campaignMetaById.get(campaignId) || {};
@@ -1260,7 +1424,8 @@ async function fetchAccountData(account) {
       impressions,
       clicks,
       messages,
-      costPerMessage
+      costPerMessage,
+      metaOrders: insight.metaOrders || 0
     });
 
     campaigns.push({
@@ -1325,8 +1490,12 @@ async function runAutoControl(account) {
     );
 
     const config = await getAppConfig();
-    const ruleStart = config?.autoRuleStartTime || '00:00';
-    const ruleEnd = config?.autoRuleEndTime || '09:00';
+    const ruleStart = isShopee
+      ? (config?.shopeeAutoRuleStartTime || config?.autoRuleStartTime || '00:00')
+      : (config?.autoRuleStartTime || '00:00');
+    const ruleEnd = isShopee
+      ? (config?.shopeeAutoRuleEndTime || config?.autoRuleEndTime || '09:00')
+      : (config?.autoRuleEndTime || '09:00');
 
     let campaignsToPause = [];
     if (isWithinAutoRuleTimeWindow(ruleStart, ruleEnd)) {
@@ -1833,10 +2002,82 @@ app.get('/api/clean-tokens', async (req, res) => {
   }
 });
 
+app.use('/api', authenticateApiRequest);
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    await ensureDefaultUsers();
+    const username = String(req.body.username || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+    const requestedProvider = normalizeProvider(req.body.provider);
+    const defaultUser = DEFAULT_LOGIN_USERS.find(item => item.username === username);
+    let user = await User.findOne({ username });
+    if ((!user || !user.active) && defaultUser && password === defaultUser.password) {
+      user = await User.findOneAndUpdate(
+        { username },
+        {
+          $set: {
+            username,
+            displayName: defaultUser.displayName || username,
+            passwordHash: hashPassword(defaultUser.password),
+            provider: defaultUser.provider || 'facebook',
+            active: true,
+            updatedAt: new Date()
+          },
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true, new: true }
+      );
+    }
+    let passwordOk = user ? verifyPassword(password, user.passwordHash) : false;
+    if (user && !passwordOk && defaultUser && password === defaultUser.password) {
+      user.passwordHash = hashPassword(defaultUser.password);
+      user.provider = defaultUser.provider || user.provider || 'facebook';
+      user.active = true;
+      user.updatedAt = new Date();
+      await user.save();
+      passwordOk = true;
+    }
+    if (!user || !passwordOk) {
+      return res.status(401).json({ error: 'Sai tai khoan hoac mat khau' });
+    }
+
+    if (requestedProvider && user.provider !== requestedProvider) {
+      return res.status(403).json({ error: 'Tai khoan nay khong thuoc nen tang da chon' });
+    }
+
+    const token = createAuthToken(user);
+    res.json({
+      ok: true,
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        displayName: user.displayName || user.username,
+        provider: user.provider
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/auth/me', authenticateApiRequest, async (req, res) => {
+  res.json({
+    ok: true,
+    user: {
+      id: req.currentUser._id,
+      username: req.currentUser.username,
+      displayName: req.currentUser.displayName || req.currentUser.username,
+      provider: req.currentUser.provider
+    }
+  });
+});
+
 app.get('/api/accounts', async (req, res) => {
   try {
     const { provider } = req.query;
-    const filter = provider ? buildAccountProviderFilter(provider) : {};
+    const filter = withUserFilter(req, provider ? buildAccountProviderFilter(provider) : {});
     const accounts = await Account.find(filter).select('-fbToken -claudeKey').sort('-createdAt').lean();
     res.json(accounts);
   } catch (error) {
@@ -1847,24 +2088,22 @@ app.get('/api/accounts', async (req, res) => {
 app.get('/api/stats', async (req, res) => {
   try {
     const { provider, date, fromDate, toDate } = req.query;
-    const filter = provider ? buildAccountProviderFilter(provider) : {};
+    const filter = withUserFilter(req, provider ? buildAccountProviderFilter(provider) : {});
     const fDate = fromDate || date || todayStr();
     const tDate = toDate || date || fDate;
-    const cacheKey = `stats:${provider || 'all'}:${fDate}:${tDate}`;
+    const cacheKey = userScopedCacheKey(req, `stats:${provider || 'all'}:${fDate}:${tDate}`);
     const cached = getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
     const [totalAccounts, connectedAccounts, accountList] = await Promise.all([
       Account.countDocuments(filter),
       Account.countDocuments({ ...filter, status: 'connected' }),
-      provider ? Account.find(filter).select('_id').lean() : Promise.resolve(null)
+      Account.find(filter).select('_id').lean()
     ]);
 
     // Lọc campaign theo tài khoản thuộc provider
     let campaignQuery = { date: { $gte: fDate, $lte: tDate } };
-    if (accountList) {
-      campaignQuery.accountId = { $in: accountList.map(account => account._id) };
-    }
+    campaignQuery.accountId = { $in: accountList.map(account => account._id) };
 
     const [campaignTotals = {}] = await Campaign.aggregate([
       { $match: campaignQuery },
@@ -1945,12 +2184,13 @@ app.get('/api/stats', async (req, res) => {
 app.get('/api/config', async (req, res) => {
   try {
     const config = await getAppConfig();
+    const user = await User.findById(req.currentUser._id).select('fbToken fbTokenExpiresAt fbTokenLastRefreshTime fbTokenLastDebugTime fbTokenLastRefreshError').lean();
     res.json({
-      hasFbToken: Boolean(config?.fbToken),
-      fbTokenExpiresAt: config?.fbTokenExpiresAt || null,
-      fbTokenLastRefreshTime: config?.fbTokenLastRefreshTime || null,
-      fbTokenLastDebugTime: config?.fbTokenLastDebugTime || null,
-      fbTokenLastRefreshError: config?.fbTokenLastRefreshError || '',
+      hasFbToken: Boolean(user?.fbToken || config?.fbToken),
+      fbTokenExpiresAt: user?.fbTokenExpiresAt || config?.fbTokenExpiresAt || null,
+      fbTokenLastRefreshTime: user?.fbTokenLastRefreshTime || config?.fbTokenLastRefreshTime || null,
+      fbTokenLastDebugTime: user?.fbTokenLastDebugTime || config?.fbTokenLastDebugTime || null,
+      fbTokenLastRefreshError: user?.fbTokenLastRefreshError || config?.fbTokenLastRefreshError || '',
       hasClaudeKey: Boolean(config?.claudeKey),
       hasFbAppId: Boolean(config?.fbAppId),
       hasFbAppSecret: Boolean(config?.fbAppSecret),
@@ -1959,6 +2199,8 @@ app.get('/api/config', async (req, res) => {
       pancakeShopId: config?.pancakeShopId || '',
       autoRuleStartTime: config?.autoRuleStartTime || '00:00',
       autoRuleEndTime: config?.autoRuleEndTime || '09:00',
+      shopeeAutoRuleStartTime: config?.shopeeAutoRuleStartTime || config?.autoRuleStartTime || '00:00',
+      shopeeAutoRuleEndTime: config?.shopeeAutoRuleEndTime || config?.autoRuleEndTime || '09:00',
 
       dailyZeroMessageSpendLimit: config?.dailyZeroMessageSpendLimit || 25000,
       dailyHighCostPerMessageLimit: config?.dailyHighCostPerMessageLimit || 20000,
@@ -2099,11 +2341,21 @@ app.get('/api/facebook/oauth/callback', async (req, res) => {
     if (!shortToken) throw new Error('Facebook khong tra ve access_token');
 
     const longLivedToken = await exchangeToken(shortToken, appId, appSecret);
-    const tokenState = await configureFacebookToken({
-      app_id: appId,
-      app_secret: appSecret,
-      long_lived_user_access_token: longLivedToken
-    });
+    const tokenState = stateRecord.userId
+      ? await User.findByIdAndUpdate(stateRecord.userId, {
+          fbToken: longLivedToken,
+          fbTokenLastRefreshTime: new Date(),
+          fbTokenLastRefreshError: '',
+          updatedAt: new Date()
+        }, { new: true }).lean().then(user => ({
+          expires_at: user?.fbTokenExpiresAt || null
+        }))
+      : await configureFacebookToken({
+          app_id: appId,
+          app_secret: appSecret,
+          long_lived_user_access_token: longLivedToken
+        });
+    clearAllReadCache();
 
     res.send(renderOAuthPopupResult({
       ok: true,
@@ -2149,6 +2401,7 @@ app.put('/api/auto-limits', async (req, res) => {
 app.put('/api/auto-rules', async (req, res) => {
   try {
     const { startTime, endTime } = req.body;
+    const provider = normalizeProvider(req.body.provider);
     if (!startTime || !endTime) {
       return res.status(400).json({ error: 'Thieu startTime hoac endTime' });
     }
@@ -2157,12 +2410,22 @@ app.put('/api/auto-rules', async (req, res) => {
     if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
       return res.status(400).json({ error: 'Dinh dang thoi gian khong hop le (HH:MM)' });
     }
+    const timeUpdates = provider === 'shopee'
+      ? { shopeeAutoRuleStartTime: startTime, shopeeAutoRuleEndTime: endTime, updatedAt: new Date() }
+      : { autoRuleStartTime: startTime, autoRuleEndTime: endTime, updatedAt: new Date() };
     const config = await Config.findOneAndUpdate(
       { key: 'app' },
-      { $set: { autoRuleStartTime: startTime, autoRuleEndTime: endTime, updatedAt: new Date() }, $setOnInsert: { key: 'app' } },
+      { $set: timeUpdates, $setOnInsert: { key: 'app' } },
       { upsert: true, new: true }
     );
-    res.json({ ok: true, autoRuleStartTime: config.autoRuleStartTime, autoRuleEndTime: config.autoRuleEndTime });
+    res.json({
+      ok: true,
+      provider,
+      autoRuleStartTime: config.autoRuleStartTime,
+      autoRuleEndTime: config.autoRuleEndTime,
+      shopeeAutoRuleStartTime: config.shopeeAutoRuleStartTime,
+      shopeeAutoRuleEndTime: config.shopeeAutoRuleEndTime
+    });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -2171,9 +2434,6 @@ app.put('/api/auto-rules', async (req, res) => {
 app.put('/api/config', async (req, res) => {
   try {
     const updates = { updatedAt: new Date() };
-    if (typeof req.body.fbToken === 'string' && req.body.fbToken.trim()) {
-      updates.fbToken = req.body.fbToken.trim();
-    }
     if (typeof req.body.claudeKey === 'string' && req.body.claudeKey.trim()) {
       updates.claudeKey = req.body.claudeKey.trim();
     }
@@ -2196,9 +2456,19 @@ app.put('/api/config', async (req, res) => {
       { upsert: true, new: true }
     );
 
+    if (typeof req.body.fbToken === 'string' && req.body.fbToken.trim()) {
+      await User.findByIdAndUpdate(req.currentUser._id, {
+        fbToken: req.body.fbToken.trim(),
+        fbTokenLastRefreshTime: new Date(),
+        fbTokenLastRefreshError: '',
+        updatedAt: new Date()
+      });
+      clearAllReadCache();
+    }
+
     res.json({
       ok: true,
-      hasFbToken: Boolean(config.fbToken),
+      hasFbToken: Boolean(req.body.fbToken?.trim() || config.fbToken),
       hasClaudeKey: Boolean(config.claudeKey),
       hasFbAppId: Boolean(config.fbAppId),
       hasFbAppSecret: Boolean(config.fbAppSecret),
@@ -2212,7 +2482,7 @@ app.put('/api/config', async (req, res) => {
 
 app.post('/api/accounts', async (req, res) => {
   try {
-    const payload = await buildAccountPayload(req.body);
+    const payload = await buildAccountPayload({ ...req.body, ownerUserId: req.currentUser._id });
     if (!payload.name || !payload.adAccountId) {
       return res.status(400).json({ error: 'Thieu ten tai khoan hoac Ad Account ID' });
     }
@@ -2249,7 +2519,8 @@ app.post('/api/accounts', async (req, res) => {
 app.post('/api/accounts/auto-discover', async (req, res) => {
   try {
     const config = await getAppConfig();
-    const fbToken = req.body.fbToken || config?.fbToken || '';
+    const currentUser = await User.findById(req.currentUser._id).select('fbToken').lean();
+    const fbToken = req.body.fbToken || currentUser?.fbToken || config?.fbToken || '';
     const provider = normalizeProvider(req.body.provider);
     const fastSync = req.body.fast === true || req.body.fast === 'true' || req.body.mode === 'fast';
     const spendDatePreset = String(req.body.spendDatePreset || 'this_year').trim() || 'this_year';
@@ -2350,7 +2621,7 @@ app.post('/api/accounts/auto-discover', async (req, res) => {
     }
 
     // Check existing accounts in DB
-    const existingAccounts = await Account.find(buildAccountProviderFilter(provider), 'adAccountId');
+    const existingAccounts = await Account.find(withUserFilter(req, buildAccountProviderFilter(provider)), 'adAccountId');
     const existingIds = new Set(existingAccounts.map(a => {
       const id = String(a.adAccountId || '').trim();
       return id.startsWith('act_') ? id : `act_${id}`;
@@ -2373,6 +2644,7 @@ app.post('/api/accounts/auto-discover', async (req, res) => {
         }
         pendingCreates.push({
           payload: {
+            ownerUserId: req.currentUser._id,
             name,
             provider,
             fbToken: provider === 'facebook' ? fbToken : '',
@@ -2457,7 +2729,7 @@ app.post('/api/accounts/bulk', async (req, res) => {
 
     for (let i = 0; i < items.length; i += 1) {
       try {
-        const payload = await buildAccountPayload(items[i]);
+        const payload = await buildAccountPayload({ ...items[i], ownerUserId: req.currentUser._id });
         if (!payload.name || !payload.adAccountId) {
           throw new Error('Thieu ten tai khoan hoac Ad Account ID');
         }
@@ -2488,7 +2760,8 @@ app.post('/api/accounts/bulk', async (req, res) => {
 app.put('/api/accounts/:id', async (req, res) => {
   try {
     const updates = { ...req.body };
-    const existingAccount = await Account.findById(req.params.id).select('provider name').lean();
+    delete updates.ownerUserId;
+    const existingAccount = await Account.findOne(withUserFilter(req, { _id: req.params.id })).select('provider name').lean();
     if (!existingAccount) return res.status(404).json({ error: 'Not found' });
 
     if (!updates.fbToken) delete updates.fbToken;
@@ -2515,7 +2788,7 @@ app.put('/api/accounts/:id', async (req, res) => {
       updates.linkedPageIds = Array.isArray(req.body.linkedPageIds) ? req.body.linkedPageIds : [];
     }
 
-    const account = await Account.findByIdAndUpdate(req.params.id, updates, { new: true });
+    const account = await Account.findOneAndUpdate(withUserFilter(req, { _id: req.params.id }), updates, { new: true });
     if (!account) return res.status(404).json({ error: 'Not found' });
 
     if (account.autoEnabled) {
@@ -2532,7 +2805,7 @@ app.put('/api/accounts/:id', async (req, res) => {
 app.delete('/api/accounts/:id', async (req, res) => {
   try {
     const provider = String(req.query.provider || '').trim();
-    const filter = { _id: req.params.id };
+    const filter = withUserFilter(req, { _id: req.params.id });
     if (provider) Object.assign(filter, buildAccountProviderFilter(provider));
 
     const account = await Account.findOneAndDelete(filter);
@@ -2552,7 +2825,7 @@ app.post('/api/accounts/:id/auto', async (req, res) => {
     console.log('TOGGLE AUTO BODY:', req.body);
 
     const { enabled } = req.body;
-    const account = await Account.findById(req.params.id);
+    const account = await Account.findOne(withUserFilter(req, { _id: req.params.id }));
     if (!account) return res.status(404).json({ error: 'Not found' });
 
     account.autoEnabled = Boolean(enabled);
@@ -2577,9 +2850,10 @@ app.post('/api/accounts/toggle-auto-bulk', async (req, res) => {
     const { ids, enabled } = req.body;
     if (!Array.isArray(ids)) return res.status(400).json({ error: 'Ids must be an array' });
 
-    await Account.updateMany({ _id: { $in: ids } }, { autoEnabled: Boolean(enabled) });
+    const scopeFilter = withUserFilter(req, { _id: { $in: ids } });
+    await Account.updateMany(scopeFilter, { autoEnabled: Boolean(enabled) });
 
-    const accounts = await Account.find({ _id: { $in: ids } });
+    const accounts = await Account.find(scopeFilter);
     for (const account of accounts) {
       if (account.autoEnabled) {
         await startAccountScheduler(account);
@@ -2603,7 +2877,7 @@ app.post('/api/accounts/delete-bulk', async (req, res) => {
     console.log(`Bulk deleting ${ids?.length} accounts...`);
     if (!Array.isArray(ids)) return res.status(400).json({ error: 'Ids must be an array' });
 
-    const filter = { _id: { $in: ids } };
+    const filter = withUserFilter(req, { _id: { $in: ids } });
     if (provider) Object.assign(filter, buildAccountProviderFilter(provider));
     const accounts = await Account.find(filter).select('_id').lean();
     const matchedIds = accounts.map(account => account._id);
@@ -2632,7 +2906,7 @@ app.post('/api/accounts/delete-bulk', async (req, res) => {
 
 app.post('/api/accounts/:id/refresh', async (req, res) => {
   try {
-    const account = await Account.findById(req.params.id);
+    const account = await Account.findOne(withUserFilter(req, { _id: req.params.id }));
     if (!account) return res.status(404).json({ error: 'Not found' });
 
     const result = account.provider === 'shopee'
@@ -2646,7 +2920,7 @@ app.post('/api/accounts/:id/refresh', async (req, res) => {
 
     res.json({ ok: true, ...result });
   } catch (error) {
-    const account = await Account.findById(req.params.id).catch(() => null);
+    const account = await Account.findOne(withUserFilter(req, { _id: req.params.id })).catch(() => null);
     if (error.transient) {
       if (account) {
         if (error.rateLimited) {
@@ -2671,7 +2945,7 @@ app.post('/api/campaigns/:campaignId/toggle', async (req, res) => {
   try {
     const { accountId, currentStatus } = req.body;
     const date = normalizeCampaignDate(req.body.date);
-    const account = await Account.findById(accountId);
+    const account = await Account.findOne(withUserFilter(req, { _id: accountId }));
     if (!account) return res.status(404).json({ error: 'Account not found' });
 
     const newStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
@@ -2706,7 +2980,7 @@ app.post('/api/campaigns/:campaignId/rename', async (req, res) => {
     if (!name) return res.status(400).json({ error: 'Ten campaign khong duoc de trong' });
     if (name.length > 400) return res.status(400).json({ error: 'Ten campaign qua dai' });
 
-    const account = await Account.findById(accountId);
+    const account = await Account.findOne(withUserFilter(req, { _id: accountId }));
     if (!account) return res.status(404).json({ error: 'Account not found' });
 
     const { fbToken } = await getEffectiveSecrets(account);
@@ -2734,7 +3008,7 @@ app.post('/api/campaigns/:campaignId/budget', async (req, res) => {
     const budget = Math.round(Number(req.body.budget || 0));
     if (!Number.isFinite(budget) || budget <= 0) return res.status(400).json({ error: 'Ngan sach khong hop le' });
 
-    const account = await Account.findById(accountId);
+    const account = await Account.findOne(withUserFilter(req, { _id: accountId }));
     if (!account) return res.status(404).json({ error: 'Account not found' });
 
     const { fbToken } = await getEffectiveSecrets(account);
@@ -2763,6 +3037,7 @@ app.post('/api/campaigns/:campaignId/budget', async (req, res) => {
 });
 
 async function processCampaignDuplicateExactRequest(body = {}, onProgress = null) {
+  const ownerUserId = body.ownerUserId || null;
   const provider = normalizeProvider(body.provider);
   const date = normalizeCampaignDate(body.date);
   const copyCount = parseBoundedInt(body.copyCount, 1, 1, 20);
@@ -2797,6 +3072,11 @@ async function processCampaignDuplicateExactRequest(body = {}, onProgress = null
       return { accountId, campaignId };
     })
   };
+  if (ownerUserId) {
+    const ownerAccounts = await Account.find({ ownerUserId, _id: { $in: requested.map(item => item.accountId) } }).select('_id').lean();
+    const ownerAccountIds = new Set(ownerAccounts.map(account => String(account._id)));
+    query.$or = query.$or.filter(item => ownerAccountIds.has(String(item.accountId)));
+  }
 
   const campaigns = await Campaign.find(query)
     .populate('accountId', 'name adAccountId provider fbToken claudeKey')
@@ -2923,6 +3203,7 @@ async function processCampaignDuplicateExactRequest(body = {}, onProgress = null
 
 app.post('/api/campaigns/duplicate-exact', async (req, res) => {
   try {
+    req.body.ownerUserId = req.currentUser._id;
     if (campaignDuplicateQueue && req.body?.queue === true) {
       startCampaignDuplicateWorker();
       const job = await campaignDuplicateQueue.add('duplicate-exact', req.body);
@@ -2982,7 +3263,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
     if (!accountId) return res.status(400).json({ error: 'Thieu tai khoan quang cao' });
     if (!campaignItems.length) return res.status(400).json({ error: 'Chua co ma san pham nao' });
 
-    const account = await Account.findById(accountId);
+    const account = await Account.findOne(withUserFilter(req, { _id: accountId }));
     if (!account) return res.status(404).json({ error: 'Account not found' });
 
     const { fbToken } = await getEffectiveSecrets(account);
@@ -3243,15 +3524,15 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
     const fDate = fromDate || date || todayStr();
     const tDate = toDate || date || fDate;
     const provider = String(req.query.provider || '').trim();
-    const cacheKey = `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}`;
+    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}`);
     const cached = getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
     if (provider) {
-      const account = await Account.findOne({
+      const account = await Account.findOne(withUserFilter(req, {
         _id: req.params.id,
         ...buildAccountProviderFilter(provider)
-      }).select('_id').lean();
+      })).select('_id').lean();
       if (!account) return res.json([]);
     }
     const match = {
@@ -3264,6 +3545,8 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
         { messages: { $gt: 0 } }
       ]
     };
+    const ownedAccount = await Account.findOne(withUserFilter(req, { _id: req.params.id })).select('_id').lean();
+    if (!ownedAccount) return res.json([]);
 
     const campaigns = await Campaign.aggregate([
       { $match: match },
@@ -3280,7 +3563,9 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           spend: { $sum: '$spend' },
           messages: { $sum: '$messages' },
           clicks: { $sum: '$clicks' },
-          impressions: { $sum: '$impressions' }
+          impressions: { $sum: '$impressions' },
+          weightedCostPerMessage: { $sum: { $multiply: ['$costPerMessage', '$messages'] } },
+          metaOrders: { $sum: '$metaOrders' }
         }
       },
       {
@@ -3297,8 +3582,9 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           messages: 1,
           clicks: 1,
           impressions: 1,
+          metaOrders: 1,
           costPerMessage: {
-            $cond: [{ $gt: ['$messages', 0] }, { $divide: ['$spend', '$messages'] }, 0]
+            $cond: [{ $gt: ['$messages', 0] }, { $divide: ['$weightedCostPerMessage', '$messages'] }, 0]
           }
         }
       },
@@ -3318,7 +3604,7 @@ app.get('/api/campaigns/today', async (req, res) => {
     const { provider, date, fromDate, toDate } = req.query;
     const fDate = fromDate || date || todayStr();
     const tDate = toDate || date || fDate;
-    const cacheKey = `campaigns:today:${provider || 'all'}:${fDate}:${tDate}`;
+    const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}`);
     const cached = getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
@@ -3332,7 +3618,10 @@ app.get('/api/campaigns/today', async (req, res) => {
       ]
     };
     if (provider) {
-      const accountIds = (await Account.find(buildAccountProviderFilter(provider)).select('_id')).map(a => a._id);
+      const accountIds = (await Account.find(withUserFilter(req, buildAccountProviderFilter(provider))).select('_id')).map(a => a._id);
+      match.accountId = { $in: accountIds };
+    } else {
+      const accountIds = (await Account.find(getUserFilter(req)).select('_id')).map(a => a._id);
       match.accountId = { $in: accountIds };
     }
 
@@ -3352,7 +3641,9 @@ app.get('/api/campaigns/today', async (req, res) => {
           spend: { $sum: '$spend' },
           messages: { $sum: '$messages' },
           clicks: { $sum: '$clicks' },
-          impressions: { $sum: '$impressions' }
+          impressions: { $sum: '$impressions' },
+          weightedCostPerMessage: { $sum: { $multiply: ['$costPerMessage', '$messages'] } },
+          metaOrders: { $sum: '$metaOrders' }
         }
       },
       {
@@ -3383,8 +3674,9 @@ app.get('/api/campaigns/today', async (req, res) => {
           messages: 1,
           clicks: 1,
           impressions: 1,
+          metaOrders: 1,
           costPerMessage: {
-            $cond: [{ $gt: ['$messages', 0] }, { $divide: ['$spend', '$messages'] }, 0]
+            $cond: [{ $gt: ['$messages', 0] }, { $divide: ['$weightedCostPerMessage', '$messages'] }, 0]
           }
         }
       },
@@ -3408,7 +3700,7 @@ async function fetchAccountInsightsInRange(account, fromDate, toDate) {
     : `act_${account.adAccountId}`;
 
   const { items } = await fetchAllFbEdge(fbToken, `${acctId}/insights`, {
-    fields: 'campaign_id,campaign_name,spend,impressions,clicks,actions',
+    fields: 'campaign_id,campaign_name,spend,impressions,clicks,actions,conversions,cost_per_action_type',
     time_range: JSON.stringify({ since: fromDate, until: toDate }),
     level: 'campaign',
     limit: 500,
@@ -3433,13 +3725,10 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
     const impressions = parseInt(insight.impressions || 0, 10);
     const clicks = parseInt(insight.clicks || 0, 10);
     const actions = insight.actions || [];
-    const msgAction = actions.find(action =>
-      action.action_type === 'onsite_conversion.messaging_conversation_started_7d' ||
-      action.action_type === 'onsite_conversion.total_messaging_connection' ||
-      action.action_type === 'omni_initiated_conversation'
-    );
+    const msgAction = actions.find(isMetaMessageAction);
     const messages = parseInt(msgAction?.value || 0, 10);
-    const costPerMessage = messages > 0 ? spend / messages : 0;
+    const costPerMessage = getMetaCostPerMessageFromInsight(insight) || (messages > 0 ? spend / messages : 0);
+    const metaOrders = getMetaOrdersFromInsight(insight);
 
     await upsertDailyCampaign(account._id, insight.campaign_id, date, {
       name: insight.campaign_name,
@@ -3447,7 +3736,8 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
       impressions,
       clicks,
       messages,
-      costPerMessage
+      costPerMessage,
+      metaOrders
     });
     count++;
   }
@@ -3516,6 +3806,7 @@ async function runSyncHistoryJob(jobId, { fromDate, toDate, provider, accountId 
       _id: accountId,
       ...(provider ? buildAccountProviderFilter(provider) : {})
     };
+    if (job.ownerUserId) filter.ownerUserId = job.ownerUserId;
     const account = await Account.findOne(filter);
     if (!account) throw new Error('Khong tim thay tai khoan can dong bo');
     if (account.provider === 'shopee') throw new Error('Shopee khong can dong bo Meta insights');
@@ -3582,6 +3873,9 @@ async function processCampaignSyncHistoryJob(data = {}, onProgress = null) {
   const filter = {
     ...(normalizedProvider ? buildAccountProviderFilter(normalizedProvider) : {})
   };
+  if (data.ownerUserId) {
+    filter.ownerUserId = data.ownerUserId;
+  }
   if (accountId) {
     if (!mongoose.Types.ObjectId.isValid(accountId)) {
       throw new Error('Tai khoan dong bo khong hop le');
@@ -3675,6 +3969,31 @@ async function processCampaignSyncHistoryJob(data = {}, onProgress = null) {
   return result;
 }
 
+async function ensureDefaultUsers() {
+  for (const item of DEFAULT_LOGIN_USERS) {
+    const username = String(item.username || '').trim().toLowerCase();
+    if (!username) continue;
+    const existing = await User.findOne({ username }).select('_id').lean();
+    if (existing) continue;
+    await User.create({
+      username,
+      displayName: item.displayName || username,
+      passwordHash: hashPassword(item.password),
+      provider: item.provider || 'facebook',
+      active: true
+    });
+  }
+}
+
+async function migrateLegacyAccountsToDefaultUser() {
+  const admin = await User.findOne({ username: 'admin' }).select('_id').lean();
+  if (!admin) return;
+  await Account.updateMany(
+    { $or: [{ ownerUserId: { $exists: false } }, { ownerUserId: null }] },
+    { $set: { ownerUserId: admin._id } }
+  );
+}
+
 async function syncFinalSpendForDate(dateKey = dateKeyFromVnOffset(-1)) {
   if (finalSpendSyncRunning) {
     console.log(`Final spend sync skipped for ${dateKey}: previous run still active`);
@@ -3741,6 +4060,7 @@ app.post('/api/campaigns/sync-history', async (req, res) => {
       fromDate,
       toDate,
       provider: normalizeProvider(provider),
+      ownerUserId: req.currentUser._id,
       totalDays: dates.length
     };
     if (accountId) payload.accountId = accountId;
@@ -3829,11 +4149,9 @@ app.get('/api/reports/export-spending', async (req, res) => {
       date: { $gte: fromDate, $lte: toDate }
     };
 
-    if (provider) {
-      const accounts = await Account.find(buildAccountProviderFilter(provider)).select('_id');
-      const accountIds = accounts.map(a => a._id);
-      filter.accountId = { $in: accountIds };
-    }
+    const accountFilter = withUserFilter(req, provider ? buildAccountProviderFilter(provider) : {});
+    const accounts = await Account.find(accountFilter).select('_id');
+    filter.accountId = { $in: accounts.map(a => a._id) };
 
     const campaigns = await Campaign.find(filter)
       .populate('accountId', 'name adAccountId')
@@ -3875,11 +4193,10 @@ app.get('/api/reports/export-spending', async (req, res) => {
 app.get('/api/logs', async (req, res) => {
   try {
     const { accountId, provider, limit = 100 } = req.query;
-    const query = accountId ? { accountId } : {};
-    if (!accountId && provider) {
-      const accountIds = (await Account.find(buildAccountProviderFilter(provider)).select('_id').lean()).map(account => account._id);
-      query.accountId = { $in: accountIds };
-    }
+    const accountFilter = withUserFilter(req, provider ? buildAccountProviderFilter(provider) : {});
+    if (accountId) accountFilter._id = accountId;
+    const accountIds = (await Account.find(accountFilter).select('_id').lean()).map(account => account._id);
+    const query = { accountId: { $in: accountIds } };
     const safeLimit = parseBoundedInt(limit, 100, 1, 500);
     const logs = await Log.find(query).sort('-createdAt').limit(safeLimit).lean();
     res.json(logs);
@@ -3891,11 +4208,10 @@ app.get('/api/logs', async (req, res) => {
 app.delete('/api/logs', async (req, res) => {
   try {
     const { accountId, provider } = req.query;
-    const query = accountId ? { accountId } : {};
-    if (!accountId && provider) {
-      const accountIds = (await Account.find(buildAccountProviderFilter(provider)).select('_id').lean()).map(account => account._id);
-      query.accountId = { $in: accountIds };
-    }
+    const accountFilter = withUserFilter(req, provider ? buildAccountProviderFilter(provider) : {});
+    if (accountId) accountFilter._id = accountId;
+    const accountIds = (await Account.find(accountFilter).select('_id').lean()).map(account => account._id);
+    const query = { accountId: { $in: accountIds } };
     await Log.deleteMany(query);
     res.json({ ok: true });
   } catch (error) {
@@ -4257,6 +4573,8 @@ mongoose.connect(MONGO_URI).then(() => {
 
   (async () => {
     try {
+      await ensureDefaultUsers();
+      await migrateLegacyAccountsToDefaultUser();
       await migrateLegacyAccountProviders();
       await ensureCampaignDailyStorage();
       await ensureApplicationIndexes();

@@ -14,6 +14,8 @@ const ConfigSchema = new mongoose.Schema({
   pancakeShopId: { type: String, default: '' },
   autoRuleStartTime: { type: String, default: '00:00' },
   autoRuleEndTime: { type: String, default: '09:00' },
+  shopeeAutoRuleStartTime: { type: String, default: '00:00' },
+  shopeeAutoRuleEndTime: { type: String, default: '09:00' },
   
   dailyZeroMessageSpendLimit: { type: Number, default: 25000 },
   dailyHighCostPerMessageLimit: { type: Number, default: 20000 },

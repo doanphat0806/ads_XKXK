@@ -14,6 +14,7 @@ const CampaignSchema = new mongoose.Schema({
   clicks: { type: Number, default: 0 },
   messages: { type: Number, default: 0 },
   costPerMessage: { type: Number, default: 0 },
+  metaOrders: { type: Number, default: 0 },
   date: { type: String, required: true },
   updatedAt: { type: Date, default: Date.now }
 }, { autoIndex: false });

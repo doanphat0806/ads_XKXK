@@ -23,9 +23,22 @@ const formatDateTime = (value) => {
   if (Number.isNaN(date.getTime())) return '-';
   return dateTimeString(date);
 };
+const campaignCreatedDateKey = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+};
+const normalizeCampaignDuplicateKey = (campaign) => {
+  const name = String(campaign.name || '').toUpperCase().replace(/\s+/g, '').trim();
+  if (!name) return '';
+  const createdDate = campaignCreatedDateKey(campaign.createdTime || campaign.created_time);
+  return `${createdDate || 'NO_DATE'}:${name}`;
+};
 
 const DASHBOARD_CAMPAIGNS_PER_PAGE = 100;
 const CAMPAIGN_RETURN_STATS_FROM_DATE = '2026-02-22';
+const CPO_WARNING_THRESHOLD = 100000;
 
 export default function Dashboard() {
   const { provider, stats: globalStats, loading: globalLoading } = useAppContext();
@@ -220,18 +233,31 @@ export default function Dashboard() {
       .map(c => {
         const orderCount = showOrders ? getOrderCountForCampaign(c.name) : 0;
         const returnStats = showOrders ? getReturnStatsForCampaign(c.name) : { denominator: 0, rate: 0 };
+        const metaOrders = showOrders ? (c.metaOrders || 0) : 0;
         const costPerOrder = orderCount > 0 ? c.spend / orderCount : 0;
-        const costPerMessage = c.messages > 0 ? c.spend / c.messages : 0;
+        const costPerMessage = Number(c.costPerMessage || 0);
         const costPerClick = c.clicks > 0 ? c.spend / c.clicks : 0;
-        return { ...c, orderCount, returnStats, returnRate: returnStats.rate || 0, costPerOrder, costPerMessage, costPerClick };
+        return { ...c, orderCount, returnStats, returnRate: returnStats.rate || 0, costPerOrder, costPerMessage, costPerClick, metaOrders };
       });
+    const duplicateCounts = mapped.reduce((counts, campaign) => {
+      const key = normalizeCampaignDuplicateKey(campaign);
+      if (!key) return counts;
+      counts[key] = (counts[key] || 0) + 1;
+      return counts;
+    }, {});
+    const mappedWithDuplicates = mapped.map(campaign => {
+      const key = normalizeCampaignDuplicateKey(campaign);
+      return { ...campaign, sameDayDuplicateCount: key ? (duplicateCounts[key] || 0) : 0 };
+    });
 
-    return [...mapped].sort((a, b) => {
+    return [...mappedWithDuplicates].sort((a, b) => {
       const dir = sortDir === 'asc' ? 1 : -1;
       const sA = String(a.status || '').toUpperCase() === 'ACTIVE' ? 1 : 0;
       const sB = String(b.status || '').toUpperCase() === 'ACTIVE' ? 1 : 0;
       if (sA !== sB) return sB - sA;
+      if (sortField === 'duplicateCount') return dir * ((a.sameDayDuplicateCount || 1) - (b.sameDayDuplicateCount || 1));
       if (sortField === 'orderCount') return dir * ((a.orderCount || 0) - (b.orderCount || 0));
+      if (sortField === 'metaOrders') return dir * ((a.metaOrders || 0) - (b.metaOrders || 0));
       if (sortField === 'costPerOrder') {
         if (!a.orderCount && !b.orderCount) return 0;
         if (!a.orderCount) return 1;
@@ -281,11 +307,12 @@ export default function Dashboard() {
         </div>
         <div className="stat b">
           <div className="stat-label">Camp dang chay</div>
-          <div className="stat-value b" id="sActive">{localStats.activeCount ?? '-'}</div>
+          <div className="stat-value b" id="sActive">{localStats.activeCount !== undefined ? formatNumber(localStats.activeCount) : '-'}</div>
+          <div className="stat-sub">Tong: {formatNumber(processedCampaigns.length)} camp</div>
         </div>
         <div className="stat o">
           <div className="stat-label">Chi tieu {dateLabel}</div>
-          <div className="stat-value o" id="sSpend">{localStats.totalSpend ? formatVND(localStats.totalSpend) : '-'}</div>
+          <div className="stat-value o stat-value-compact" id="sSpend">{localStats.totalSpend ? formatVND(localStats.totalSpend) : '-'}</div>
         </div>
         <div className="stat p">
           <div className="stat-label">{isShopee ? 'Luot click' : 'Tin nhan'} {dateLabel}</div>
@@ -305,12 +332,12 @@ export default function Dashboard() {
             <div className="stat-value" id="sCPO" style={{ color: 'var(--r)', fontSize: skuLoading ? '1.4rem' : undefined }}>
               {skuLoading ? '...' : (skuTotal > 0 && localStats.totalSpend > 0) ? formatVND(localStats.totalSpend / skuTotal) : '-'}
             </div>
-            <div className="stat-sub">Chi tieu / Don</div>
+            <div className="stat-sub">Chi tiêu / Đơn</div>
           </div>
         )}
         {showOrders && (
           <div className="stat return-rate">
-            <div className="stat-label">Ti le hoan {dateLabel}</div>
+            <div className="stat-label">Tỉ lệ hoàn {dateLabel}</div>
             <div className="stat-value" id="sReturnRate">{skuLoading ? '...' : orderReturnStats.denominator > 0 ? formatPercent(orderReturnStats.rate) : ''}</div>
             <div className="stat-sub">
               {skuLoading ? 'Dang tai' : orderReturnStats.denominator > 0 ? `${formatNumber(orderReturnStats.returned + orderReturnStats.returning)} / ${formatNumber(orderReturnStats.denominator)}` : ''}
@@ -339,24 +366,26 @@ export default function Dashboard() {
           {(globalLoading || statsLoading) ? (
             <div className="empty"><span className="spin">...</span><p style={{ marginTop: '10px' }}>Dang tai...</p></div>
           ) : processedCampaigns.length === 0 ? (
-            <div className="empty"><div className="ei">-</div><p>Khong co du lieu cho khoang ngay nay</p></div>
+            <div className="empty"><div className="ei">-</div><p>Không có dữ liệu ngày hôm nay </p></div>
           ) : (
             <table className="tbl excel-style">
               <thead>
                 <tr>
                   <th>Ten Campaign</th>
+                  <th className="text-center" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('duplicateCount')}>Trung<SortIcon field="duplicateCount" sortField={sortField} sortDir={sortDir} /></th>
                   <th>Ngay tao</th>
-                  <th className="text-center">Bat/Tat</th>
+                  <th className="text-center">Tắt/Bật</th>
                   <th>Ten TKQC</th>
-                  <th className="text-center">Trang thai</th>
+                  <th className="text-center">Trạng Thái</th>
+                  {showOrders && <th className="text-center" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('orderCount')}>Tổng Đơn<SortIcon field="orderCount" sortField={sortField} sortDir={sortDir} /></th>}
+                  {showOrders && <th className="text-center" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('metaOrders')}>Đơn Meta<SortIcon field="metaOrders" sortField={sortField} sortDir={sortDir} /></th>}
                   <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('messages')}>
                     {isShopee ? 'Luot click (Gia/click)' : 'Tin nhan (Gia/TN)'}<SortIcon field="messages" sortField={sortField} sortDir={sortDir} />
                   </th>
-                  {showOrders && <th className="text-center" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('orderCount')}>Tong don<SortIcon field="orderCount" sortField={sortField} sortDir={sortDir} /></th>}
-                  {showOrders && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('returnRate')}>Ti le hoan<SortIcon field="returnRate" sortField={sortField} sortDir={sortDir} /></th>}
                   {showOrders && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('costPerOrder')}>CPO<SortIcon field="costPerOrder" sortField={sortField} sortDir={sortDir} /></th>}
-                  <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('spend')}>Da chi tieu<SortIcon field="spend" sortField={sortField} sortDir={sortDir} /></th>
-                  <th className="text-right">Ngan sach</th>
+                  <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('spend')}>Chi Tiêu<SortIcon field="spend" sortField={sortField} sortDir={sortDir} /></th>
+                  <th className="text-right">Ngân Sách</th>
+                  {showOrders && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('returnRate')}>Tỉ lệ Hoàn<SortIcon field="returnRate" sortField={sortField} sortDir={sortDir} /></th>}
                 </tr>
               </thead>
               <tbody>
@@ -383,6 +412,9 @@ export default function Dashboard() {
                         )}
                         <div style={{ fontSize: '10px', color: 'var(--muted2)' }}>{c.campaignId}</div>
                       </td>
+                      <td className="text-center" style={{ fontWeight: 'bold', color: c.sameDayDuplicateCount > 1 ? 'var(--r)' : 'var(--txt)' }}>
+                        {c.sameDayDuplicateCount || 1}
+                      </td>
                       <td style={{ color: 'var(--muted)', fontSize: '12px' }}>{formatDateTime(c.createdTime || c.created_time)}</td>
                       <td className="text-center">
                         <button className={`btn btn-sm ${isActive ? 'btn-danger' : 'btn-g'}`} onClick={() => toggleCampaignStatus(c)} disabled={togglingCampaignId === c.campaignId} title={isActive ? 'Tat camp' : 'Bat camp'} style={{ minWidth: '54px', height: '28px', padding: '0 10px' }}>
@@ -391,26 +423,22 @@ export default function Dashboard() {
                       </td>
                       <td style={{ fontWeight: 500 }}>{c.accountId?.name || '-'}</td>
                       <td className="text-center"><span className={`badge ${isActive ? 'active' : 'paused'}`}>{isActive ? 'ACTIVE' : 'PAUSE'}</span></td>
+                      {showOrders && <td className="text-center" style={{ fontWeight: 'bold', color: 'var(--txt)' }}>{c.orderCount || '-'}</td>}
+                      {showOrders && <td className="text-center" style={{ fontWeight: 'bold', color: c.metaOrders > 0 ? 'var(--txt)' : 'var(--muted2)' }}>{c.metaOrders > 0 ? c.metaOrders : '-'}</td>}
                       <td className="text-right">
                         {isShopee ? (
                           <>
-                            <div style={{ fontWeight: 'bold', color: c.costPerClick > 500 ? 'var(--r)' : 'var(--txt)' }}>{formatVND(c.costPerClick)}</div>
+                            <div style={{ fontWeight: 'bold', color: c.costPerClick > 500 || c.costPerClick === 0 ? 'var(--r)' : 'var(--txt)' }}>{formatVND(c.costPerClick)}</div>
                             <div style={{ fontSize: '11px', color: 'var(--txt)' }}>{formatNumber(c.clicks || 0)} click</div>
                           </>
                         ) : (
                           <>
-                            <div style={{ fontWeight: 'bold', color: c.costPerMessage > 15000 ? 'var(--r)' : 'var(--txt)' }}>{formatVND(c.costPerMessage)}</div>
+                            <div style={{ fontWeight: 'bold', color: c.costPerMessage > 15000 || c.costPerMessage === 0 ? 'var(--r)' : 'var(--txt)' }}>{formatVND(c.costPerMessage)}</div>
                             <div style={{ fontSize: '11px', color: 'var(--txt)' }}>{c.messages} TN</div>
                           </>
                         )}
                       </td>
-                      {showOrders && <td className="text-center" style={{ fontWeight: 'bold', color: 'var(--txt)' }}>{c.orderCount || '-'}</td>}
-                      {showOrders && (
-                        <td className="text-right" style={{ color: c.returnStats?.denominator > 0 ? 'var(--b)' : 'var(--muted2)' }}>
-                          {c.returnStats?.denominator > 0 ? <><div style={{ fontWeight: 'bold' }}>{formatPercent(c.returnRate)}</div><div style={{ fontSize: '11px', color: 'var(--muted2)' }}>{formatNumber((c.returnStats.returned || 0) + (c.returnStats.returning || 0))} / {formatNumber(c.returnStats.denominator)}</div></> : ''}
-                        </td>
-                      )}
-                      {showOrders && <td className="text-right" style={{ color: 'var(--txt)' }}>{c.costPerOrder > 0 ? formatVND(c.costPerOrder) : '-'}</td>}
+                      {showOrders && <td className="text-right" style={{ color: c.costPerOrder > CPO_WARNING_THRESHOLD ? 'var(--r)' : 'var(--txt)', fontWeight: c.costPerOrder > CPO_WARNING_THRESHOLD ? 'bold' : undefined }}>{c.costPerOrder > 0 ? formatVND(c.costPerOrder) : '-'}</td>}
                       <td className="text-right mono-sm">{formatVND(c.spend)}</td>
                       <td className="text-right mono-sm">
                         {editingBudgetId === c.campaignId ? (
@@ -430,6 +458,11 @@ export default function Dashboard() {
                           </button>
                         )}
                       </td>
+                      {showOrders && (
+                        <td className="text-right" style={{ color: c.returnStats?.denominator > 0 ? 'var(--b)' : 'var(--muted2)' }}>
+                          {c.returnStats?.denominator > 0 ? <><div style={{ fontWeight: 'bold' }}>{formatPercent(c.returnRate)}</div><div style={{ fontSize: '11px', color: 'var(--muted2)' }}>{formatNumber((c.returnStats.returned || 0) + (c.returnStats.returning || 0))} / {formatNumber(c.returnStats.denominator)}</div></> : ''}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}

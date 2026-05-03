@@ -29,7 +29,7 @@ export default function AuthScreen() {
               <label>Tài khoản</label>
               <input 
                 type="text" 
-                placeholder="admin" 
+                placeholder="" 
                 value={user}
                 onChange={(e) => setUser(e.target.value)}
               />
@@ -38,7 +38,7 @@ export default function AuthScreen() {
               <label>Mật khẩu</label>
               <input 
                 type="password" 
-                placeholder="admin" 
+                placeholder="" 
                 value={pass}
                 onChange={(e) => setPass(e.target.value)}
               />

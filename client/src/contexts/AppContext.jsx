@@ -9,8 +9,15 @@ export const useAppContext = () => useContext(AppContext);
 const AUTO_REFRESH_MS = 60000;
 
 export const AppProvider = ({ children }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('adsctrl-auth') === '1');
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem('adsctrl-token')));
   const [provider, setProvider] = useState(() => localStorage.getItem('adsctrl-provider') || 'facebook');
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('adsctrl-user') || 'null') || null;
+    } catch {
+      return null;
+    }
+  });
   const [appConfig, setAppConfig] = useState({});
   const [stats, setStats] = useState({});
   const [allAccounts, setAllAccounts] = useState([]);
@@ -23,46 +30,34 @@ export const AppProvider = ({ children }) => {
   const openModal = (type, data = null) => setModalState({ type, data });
   const closeModal = () => setModalState({ type: null, data: null });
 
-  const loginFacebook = async (username, password) => {
-    if (username === 'admin' && password === 'admin') {
-      localStorage.setItem('adsctrl-auth', '1');
-      localStorage.setItem('adsctrl-provider', 'facebook');
-      setIsAuthenticated(true);
-      setProvider('facebook');
-      toast.success('Đăng nhập Facebook thành công');
-      return true;
-    }
-    toast.error('Sai tài khoản hoặc mật khẩu Facebook');
-    return false;
-  };
-
-  const loginShopee = async (username, password) => {
-    if (username === 'admin1' && password === 'admin') {
-      localStorage.setItem('adsctrl-auth', '1');
-      localStorage.setItem('adsctrl-provider', 'shopee');
-      setIsAuthenticated(true);
-      setProvider('shopee');
-      toast.success('Đăng nhập Shopee thành công');
-      return true;
-    }
-    toast.error('Sai tài khoản hoặc mật khẩu Shopee');
-    return false;
-  };
-
   const login = async (username, password, type = 'facebook') => {
-    if (type === 'facebook') {
-      return loginFacebook(username, password);
+    try {
+      const result = await api('POST', '/auth/login', { username, password, provider: type });
+      localStorage.setItem('adsctrl-token', result.token);
+      localStorage.setItem('adsctrl-provider', result.user?.provider || type);
+      localStorage.setItem('adsctrl-user', JSON.stringify(result.user || null));
+      setCurrentUser(result.user || null);
+      setIsAuthenticated(true);
+      setProvider(result.user?.provider || type);
+      toast.success('Dang nhap thanh cong');
+      return true;
+    } catch (error) {
+      toast.error(error.message || 'Sai tai khoan hoac mat khau');
+      return false;
     }
-    if (type === 'shopee') {
-      return loginShopee(username, password);
-    }
-    toast.error('Nhà cung cấp không hợp lệ');
-    return false;
   };
 
   const logout = () => {
+    localStorage.removeItem('adsctrl-token');
     localStorage.removeItem('adsctrl-auth');
     localStorage.removeItem('adsctrl-provider');
+    localStorage.removeItem('adsctrl-user');
+    sessionStorage.clear();
+    setCurrentUser(null);
+    setStats({});
+    setAllAccounts([]);
+    setAllTodayCampaigns([]);
+    setTodayOrderSkuCounts({});
     setIsAuthenticated(false);
     setProvider('facebook');
   };
@@ -72,7 +67,7 @@ export const AppProvider = ({ children }) => {
       const config = await api('GET', '/config');
       setAppConfig(config);
     } catch (e) {
-      console.warn("Failed to load config", e);
+      console.warn('Failed to load config', e);
     }
   }, []);
 
@@ -83,14 +78,18 @@ export const AppProvider = ({ children }) => {
       if (cached) setStats(cached);
       const data = await cachedApi('GET', url);
       setStats(data);
-    } catch (e) {}
+    } catch (e) {
+      if (e.status === 401) logout();
+    }
   }, [provider]);
 
   const loadAccounts = useCallback(async () => {
     try {
       const data = await api('GET', `/accounts?provider=${provider}`);
       setAllAccounts(data);
-    } catch (e) {}
+    } catch (e) {
+      if (e.status === 401) logout();
+    }
   }, [provider]);
 
   const loadTodayCampaigns = useCallback(async () => {
@@ -100,7 +99,9 @@ export const AppProvider = ({ children }) => {
       if (cached) setAllTodayCampaigns(cached);
       const data = await cachedApi('GET', url, null, { timeoutMs: 5 * 60 * 1000 });
       setAllTodayCampaigns(data);
-    } catch (e) {}
+    } catch (e) {
+      if (e.status === 401) logout();
+    }
   }, [provider]);
 
   const loadTodayOrderSkuCounts = useCallback(async () => {
@@ -108,7 +109,9 @@ export const AppProvider = ({ children }) => {
       const today = todayString();
       const data = await api('GET', `/orders/sku-counts?fromDate=${today}`);
       setTodayOrderSkuCounts(data.counts || {});
-    } catch (e) {}
+    } catch (e) {
+      if (e.status === 401) logout();
+    }
   }, []);
 
   const loadLiveData = useCallback(async (options = {}) => {
@@ -138,8 +141,7 @@ export const AppProvider = ({ children }) => {
 
   const refreshAll = useCallback(async (isManual = true) => {
     try {
-      if (isManual) toast.info('Đang làm mới dữ liệu...');
-      // Phải lặp qua từng tài khoản vì backend không có endpoint refresh all
+      if (isManual) toast.info('Dang lam moi du lieu...');
       const accounts = await api('GET', '/accounts');
       let skippedCount = 0;
       let failedCount = 0;
@@ -149,7 +151,7 @@ export const AppProvider = ({ children }) => {
           if (result?.skipped) skippedCount += 1;
         } catch (err) {
           failedCount += 1;
-          console.warn(`Không thể refresh tài khoản ${acc.name}:`, err);
+          console.warn(`Khong the refresh tai khoan ${acc.name}:`, err);
         }
       }
       await loadAll();
@@ -157,9 +159,9 @@ export const AppProvider = ({ children }) => {
         toast.warn(`Da tai xong, bo qua ${failedCount + skippedCount} tai khoan dang loi tam thoi`);
         return;
       }
-      if (isManual) toast.success('Đã tải dữ liệu mới nhất');
+      if (isManual) toast.success('Da tai du lieu moi nhat');
     } catch (e) {
-      if (isManual) toast.error('Lỗi làm mới: ' + e.message);
+      if (isManual) toast.error('Loi lam moi: ' + e.message);
     }
   }, [loadAll]);
 
@@ -175,7 +177,7 @@ export const AppProvider = ({ children }) => {
 
   return (
     <AppContext.Provider value={{
-      provider, isAuthenticated, login, logout,
+      provider, isAuthenticated, currentUser, login, logout,
       appConfig, setAppConfig, loadConfig,
       stats, allAccounts, allTodayCampaigns, todayOrderSkuCounts,
       loading, loadAll, refreshAll, loadAccounts, loadTodayCampaigns, loadTodayOrderSkuCounts,
