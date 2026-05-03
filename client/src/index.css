@@ -2459,6 +2459,27 @@
       contain: content;
     }
 
+    #page-dashboard .dashboard-sticky-summary {
+      position: sticky;
+      top: var(--dashboard-topbar-height, 54px);
+      z-index: 20;
+      background: linear-gradient(180deg, #fbfeff 0%, #eef8ff 100%);
+      padding-bottom: 14px;
+    }
+
+    #page-dashboard .dashboard-sticky-summary .stats-grid {
+      margin-bottom: 14px;
+    }
+
+    #page-dashboard .dashboard-sticky-summary > .card {
+      margin-bottom: 0;
+    }
+
+    #dashCampTable thead th {
+      position: static;
+      background: #f1f8ff;
+    }
+
     #dashCampTable table {
       table-layout: fixed;
     }

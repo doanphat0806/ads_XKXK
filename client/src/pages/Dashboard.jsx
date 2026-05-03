@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState, useEffect } from 'react';
+import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import { formatVND, formatNumber, todayString, dateTimeString, api, cachedApi, readResponseCache } from '../lib/api';
 import DateRangePicker from '../components/DateRangePicker';
@@ -39,11 +39,14 @@ const normalizeCampaignDuplicateKey = (campaign) => {
 const DASHBOARD_CAMPAIGNS_PER_PAGE = 100;
 const CAMPAIGN_RETURN_STATS_FROM_DATE = '2026-02-22';
 const CPO_WARNING_THRESHOLD = 100000;
+const ORDER_REFRESH_MS = 10000;
 
 export default function Dashboard() {
   const { provider, stats: globalStats, loading: globalLoading } = useAppContext();
   const showOrders = provider !== 'shopee';
   const isShopee = provider === 'shopee';
+  const dashboardRef = useRef(null);
+  const stickySummaryRef = useRef(null);
 
   const [sortField, setSortField] = useState('spend');
   const [sortDir, setSortDir] = useState('desc');
@@ -58,7 +61,7 @@ export default function Dashboard() {
   const [returnStatsBySku, setReturnStatsBySku] = useState({});
   const [orderReturnStats, setOrderReturnStats] = useState({ returned: 0, returning: 0, received: 0, denominator: 0, rate: 0 });
   const [skuLoading, setSkuLoading] = useState(false);
-  const [togglingCampaignId, setTogglingCampaignId] = useState('');
+  const [togglingCampaignIds, setTogglingCampaignIds] = useState(() => new Set());
   const [editingCampaignId, setEditingCampaignId] = useState('');
   const [editingCampaignName, setEditingCampaignName] = useState('');
   const [renamingCampaignId, setRenamingCampaignId] = useState('');
@@ -101,16 +104,34 @@ export default function Dashboard() {
 
   const toggleCampaignStatus = async (campaign) => {
     const accountId = campaign.accountId?._id || campaign.accountId;
-    if (!campaign.campaignId || !accountId || togglingCampaignId) return;
-    setTogglingCampaignId(campaign.campaignId);
+    if (!campaign.campaignId || !accountId || togglingCampaignIds.has(campaign.campaignId)) return;
+
+    const previousStatus = String(campaign.status || '').toUpperCase();
+    const nextStatus = previousStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+    setTogglingCampaignIds(ids => new Set(ids).add(campaign.campaignId));
+    setLocalCampaigns(items => items.map(item => (
+      item.campaignId === campaign.campaignId ? { ...item, status: nextStatus } : item
+    )));
+
     try {
-      await api('POST', `/campaigns/${campaign.campaignId}/toggle`, { accountId, currentStatus: campaign.status, date: reportFromDate });
-      toast.success(String(campaign.status || '').toUpperCase() === 'ACTIVE' ? 'Da tat camp' : 'Da bat camp');
-      await loadDashboardData(reportFromDate, reportToDate);
+      const result = await api('POST', `/campaigns/${campaign.campaignId}/toggle`, { accountId, currentStatus: previousStatus, date: reportFromDate });
+      if (result?.newStatus && result.newStatus !== nextStatus) {
+        setLocalCampaigns(items => items.map(item => (
+          item.campaignId === campaign.campaignId ? { ...item, status: result.newStatus } : item
+        )));
+      }
+      toast.success(previousStatus === 'ACTIVE' ? 'Da tat camp' : 'Da bat camp');
     } catch (error) {
+      setLocalCampaigns(items => items.map(item => (
+        item.campaignId === campaign.campaignId ? { ...item, status: previousStatus } : item
+      )));
       toast.error('Loi doi trang thai camp: ' + error.message);
     } finally {
-      setTogglingCampaignId('');
+      setTogglingCampaignIds(ids => {
+        const next = new Set(ids);
+        next.delete(campaign.campaignId);
+        return next;
+      });
     }
   };
 
@@ -181,23 +202,28 @@ export default function Dashboard() {
     }
   };
 
-  const loadSkuCounts = useCallback(async (from, to) => {
+  const loadSkuCounts = useCallback(async (from, to, options = {}) => {
     if (!from || !to || provider === 'shopee') return;
-    setSkuLoading(true);
+    const { silent = false, includeReturnStats = true } = options;
+    if (!silent) setSkuLoading(true);
     try {
       const data = await api('GET', `/orders/sku-counts?fromDate=${from}&toDate=${to}`);
       setSkuCounts(data.counts || {});
       setSkuTotal(data.totalOrders || 0);
       setOrderReturnStats(data.returnStats || { returned: 0, returning: 0, received: 0, denominator: 0, rate: 0 });
-      const returnData = await api('GET', `/orders/sku-counts?fromDate=${CAMPAIGN_RETURN_STATS_FROM_DATE}&toDate=${todayString()}`);
-      setReturnStatsBySku(returnData.returnStatsBySku || {});
+      if (includeReturnStats) {
+        const returnData = await api('GET', `/orders/sku-counts?fromDate=${CAMPAIGN_RETURN_STATS_FROM_DATE}&toDate=${todayString()}`);
+        setReturnStatsBySku(returnData.returnStatsBySku || {});
+      }
     } catch {
-      setSkuCounts({});
-      setSkuTotal(0);
-      setReturnStatsBySku({});
-      setOrderReturnStats({ returned: 0, returning: 0, received: 0, denominator: 0, rate: 0 });
+      if (!silent) {
+        setSkuCounts({});
+        setSkuTotal(0);
+        setReturnStatsBySku({});
+        setOrderReturnStats({ returned: 0, returning: 0, received: 0, denominator: 0, rate: 0 });
+      }
     } finally {
-      setSkuLoading(false);
+      if (!silent) setSkuLoading(false);
     }
   }, [provider]);
 
@@ -205,6 +231,14 @@ export default function Dashboard() {
     loadDashboardData(reportFromDate, reportToDate);
     loadSkuCounts(reportFromDate, reportToDate);
   }, [reportFromDate, reportToDate, loadDashboardData, loadSkuCounts]);
+
+  useEffect(() => {
+    if (provider === 'shopee') return undefined;
+    const interval = setInterval(() => {
+      loadSkuCounts(reportFromDate, reportToDate, { silent: true, includeReturnStats: false });
+    }, ORDER_REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [provider, reportFromDate, reportToDate, loadSkuCounts]);
 
   const getOrderCountForCampaign = useCallback((campaignName) => {
     if (!campaignName || !skuCounts || Object.keys(skuCounts).length === 0) return 0;
@@ -283,10 +317,20 @@ export default function Dashboard() {
   }, [currentPage, processedCampaigns, totalPages]);
   const metaAvgCPM = useMemo(() => {
     if (isShopee) return 0;
-    const totalWeightedCost = processedCampaigns.reduce((sum, campaign) => (
-      sum + Number(campaign.costPerMessage || 0) * Number(campaign.messages || 0)
+    const campaignsWithMessageCost = processedCampaigns
+      .map(campaign => {
+        const rawMessages = Number(campaign.messages || 0);
+        const spend = Number(campaign.spend || 0);
+        const messages = rawMessages > 0 ? rawMessages : (spend > 0 ? 1 : 0);
+        const metaCostPerMessage = Number(campaign.costPerMessage || 0);
+        const costPerMessage = rawMessages > 0 ? metaCostPerMessage : spend;
+        return { messages, costPerMessage };
+      })
+      .filter(campaign => campaign.messages > 0 && campaign.costPerMessage > 0);
+    const totalWeightedCost = campaignsWithMessageCost.reduce((sum, campaign) => (
+      sum + campaign.costPerMessage * campaign.messages
     ), 0);
-    const totalMessages = processedCampaigns.reduce((sum, campaign) => sum + Number(campaign.messages || 0), 0);
+    const totalMessages = campaignsWithMessageCost.reduce((sum, campaign) => sum + campaign.messages, 0);
     return totalMessages > 0 ? totalWeightedCost / totalMessages : 0;
   }, [processedCampaigns, isShopee]);
 
@@ -298,6 +342,26 @@ export default function Dashboard() {
     if (currentPage > totalPages) setCurrentPage(totalPages);
   }, [currentPage, totalPages]);
 
+  useEffect(() => {
+    const dashboard = dashboardRef.current;
+    const stickySummary = stickySummaryRef.current;
+    if (!dashboard || !stickySummary) return;
+
+    const updateStickyOffset = () => {
+      const topbarHeight = document.querySelector('.topbar')?.getBoundingClientRect().height || 54;
+      dashboard.style.setProperty('--dashboard-topbar-height', `${Math.ceil(topbarHeight)}px`);
+    };
+
+    updateStickyOffset();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateStickyOffset) : null;
+    observer?.observe(stickySummary);
+    window.addEventListener('resize', updateStickyOffset);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateStickyOffset);
+    };
+  }, [processedCampaigns.length, reportFromDate, reportToDate, provider]);
+
   const dateLabel = useMemo(() => {
     if (reportFromDate === reportToDate) {
       return reportFromDate === todayString() ? 'hom nay' : reportFromDate.split('-').reverse().join('/');
@@ -306,7 +370,8 @@ export default function Dashboard() {
   }, [reportFromDate, reportToDate]);
 
   return (
-    <div id="page-dashboard">
+    <div id="page-dashboard" ref={dashboardRef}>
+      <div className="dashboard-sticky-summary" ref={stickySummaryRef}>
       <div className="stats-grid section-gap">
         <div className="stat g">
           <div className="stat-label">Tai khoan</div>
@@ -370,6 +435,9 @@ export default function Dashboard() {
             {(skuLoading || statsLoading) && <span className="spin" style={{ fontSize: '14px' }}>...</span>}
           </div>
         </div>
+      </div>
+      </div>
+      <div className="card dashboard-table-card">
         <div className="tbl-wrap" id="dashCampTable">
           {(globalLoading || statsLoading) ? (
             <div className="empty"><span className="spin">...</span><p style={{ marginTop: '10px' }}>Dang tai...</p></div>
@@ -400,6 +468,7 @@ export default function Dashboard() {
                 {visibleCampaigns.map((c, i) => {
                   const isActive = String(c.status || '').toUpperCase() === 'ACTIVE';
                   const budget = c.dailyBudget || c.lifetimeBudget || 0;
+                  const isToggling = togglingCampaignIds.has(c.campaignId);
                   return (
                     <tr key={c.campaignId || i}>
                       <td>
@@ -425,8 +494,8 @@ export default function Dashboard() {
                       </td>
                       <td style={{ color: 'var(--muted)', fontSize: '12px' }}>{formatDateTime(c.createdTime || c.created_time)}</td>
                       <td className="text-center">
-                        <button className={`btn btn-sm ${isActive ? 'btn-danger' : 'btn-g'}`} onClick={() => toggleCampaignStatus(c)} disabled={togglingCampaignId === c.campaignId} title={isActive ? 'Tat camp' : 'Bat camp'} style={{ minWidth: '54px', height: '28px', padding: '0 10px' }}>
-                          {togglingCampaignId === c.campaignId ? '...' : (isActive ? 'Tat' : 'Bat')}
+                        <button className={`btn btn-sm ${isActive ? 'btn-danger' : 'btn-g'}`} onClick={() => toggleCampaignStatus(c)} disabled={isToggling} title={isActive ? 'Tat camp' : 'Bat camp'} style={{ minWidth: '54px', height: '28px', padding: '0 10px' }}>
+                          {isToggling ? '...' : (isActive ? 'Tat' : 'Bat')}
                         </button>
                       </td>
                       <td style={{ fontWeight: 500 }}>{c.accountId?.name || '-'}</td>
