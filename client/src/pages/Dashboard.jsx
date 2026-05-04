@@ -486,6 +486,79 @@ export default function Dashboard() {
     return messageCosts.length > 0 ? totalCost / messageCosts.length : 0;
   }, [processedCampaigns, isShopee]);
 
+  const duplicateCampaignsToPause = useMemo(() => {
+    const groups = processedCampaigns.reduce((items, campaign) => {
+      const key = normalizeCampaignDuplicateKey(campaign);
+      if (!key || (campaign.sameDayDuplicateCount || 0) <= 1) return items;
+      if (String(campaign.status || '').toUpperCase() !== 'ACTIVE') return items;
+      if (!items[key]) items[key] = [];
+      items[key].push(campaign);
+      return items;
+    }, {});
+
+    return Object.values(groups).flatMap(group => {
+      if (group.length <= 1) return [];
+      const sorted = [...group].sort((a, b) => {
+        const aTime = new Date(a.createdTime || a.created_time || 0).getTime() || 0;
+        const bTime = new Date(b.createdTime || b.created_time || 0).getTime() || 0;
+        return aTime - bTime;
+      });
+      return sorted.slice(1);
+    });
+  }, [processedCampaigns]);
+
+  const disableDuplicateCampaigns = useCallback(async () => {
+    if (disablingDuplicates || duplicateCampaignsToPause.length === 0) return;
+
+    const targets = duplicateCampaignsToPause.filter(campaign => {
+      const accountId = campaign.accountId?._id || campaign.accountId;
+      return campaign.campaignId && accountId && !togglingCampaignIdsRef.current.has(campaign.campaignId);
+    });
+    if (targets.length === 0) return;
+
+    setDisablingDuplicates(true);
+    setTogglingCampaignIds(ids => {
+      const next = new Set(ids);
+      targets.forEach(campaign => next.add(campaign.campaignId));
+      return next;
+    });
+    setLocalCampaigns(items => items.map(item => (
+      targets.some(campaign => campaign.campaignId === item.campaignId)
+        ? { ...item, status: 'PAUSED' }
+        : item
+    )));
+
+    let failedCount = 0;
+    for (const campaign of targets) {
+      const accountId = campaign.accountId?._id || campaign.accountId;
+      try {
+        await api('POST', `/campaigns/${campaign.campaignId}/toggle`, {
+          accountId,
+          currentStatus: 'ACTIVE',
+          date: reportFromDate
+        });
+      } catch {
+        failedCount += 1;
+        setLocalCampaigns(items => items.map(item => (
+          item.campaignId === campaign.campaignId ? { ...item, status: 'ACTIVE' } : item
+        )));
+      } finally {
+        setTogglingCampaignIds(ids => {
+          const next = new Set(ids);
+          next.delete(campaign.campaignId);
+          return next;
+        });
+      }
+    }
+
+    if (failedCount > 0) {
+      toast.error(`Loi tat ${failedCount}/${targets.length} camp trung`);
+    } else {
+      toast.success(`Da tat ${targets.length} camp trung`);
+    }
+    setDisablingDuplicates(false);
+  }, [disablingDuplicates, duplicateCampaignsToPause, reportFromDate]);
+
   useEffect(() => {
     setCurrentPage(1);
   }, [reportFromDate, reportToDate, provider, sortField, sortDir, deferredCampaignSearch]);
@@ -611,6 +684,14 @@ export default function Dashboard() {
               aria-label="Tim campaign"
               style={{ width: '260px', maxWidth: '32vw', height: '38px', border: '1px solid var(--border)', borderRadius: '10px', padding: '0 12px', color: 'var(--txt)', background: 'var(--s1)', outline: 'none', boxShadow: '0 2px 10px rgba(15, 23, 42, 0.06)' }}
             />
+            <button
+              className="btn btn-sm dashboard-disable-duplicates-btn"
+              onClick={disableDuplicateCampaigns}
+              disabled={disablingDuplicates || duplicateCampaignsToPause.length === 0}
+              title="Tat cac camp trung, giu lai camp tao som nhat trong moi nhom"
+            >
+              {disablingDuplicates ? 'Dang tat...' : `Tat camp trung (${duplicateCampaignsToPause.length})`}
+            </button>
             {(skuLoading || statsLoading || isSortPending) && <span className="spin" style={{ fontSize: '14px' }}>...</span>}
           </div>
         </div>
