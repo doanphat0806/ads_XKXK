@@ -569,6 +569,8 @@
       border-radius: 6px;
       padding: 8px 10px;
       min-width: 0;
+      max-width: 100%;
+      box-sizing: border-box;
     }
 
     .campaign-create-controls .shopee-cta-preview strong,

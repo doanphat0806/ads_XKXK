@@ -521,7 +521,7 @@ export default function CreateCampaign() {
   };
 
   const campaignFormColumns = selectedProvider === 'shopee'
-    ? 'minmax(240px, 0.95fr) minmax(280px, 1.05fr) minmax(320px, 1.2fr) minmax(150px, 0.7fr) 130px 105px 180px 80px 80px'
+    ? 'minmax(200px, 0.85fr) minmax(250px, 1fr) minmax(280px, 1.1fr) minmax(145px, 0.55fr) 120px 90px 170px 75px 75px'
     : 'minmax(260px, 1fr) 120px minmax(340px, 1.4fr) 150px 190px 90px 90px';
 
   return (
