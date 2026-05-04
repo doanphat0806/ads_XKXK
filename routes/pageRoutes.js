@@ -5,6 +5,7 @@ function registerPageRoutes(app, deps) {
   const {
     axios,
     FacebookPost,
+    User,
     getAppConfig,
     fbGet,
     escapeRegExp,
@@ -155,10 +156,20 @@ async function fetchRecentPostsForPage(page, fallbackToken, options = {}) {
   return mappedPosts;
 }
 
+async function resolvePagesToken(req, getAppConfig) {
+  const [config, user] = await Promise.all([
+    getAppConfig(),
+    req.currentUser?._id && User
+      ? User.findById(req.currentUser._id).select('fbToken').lean()
+      : Promise.resolve(null)
+  ]);
+
+  return String(user?.fbToken || config?.fbToken || '').trim();
+}
+
 app.get('/api/pages', async (req, res) => {
   try {
-    const config = await getAppConfig();
-    const fbToken = config?.fbToken;
+    const fbToken = await resolvePagesToken(req, getAppConfig);
     if (!fbToken) return res.status(400).json({ error: 'Chưa cấu hình Facebook Token dùng chung' });
 
     let allPages = [];
@@ -222,8 +233,7 @@ app.get('/api/posts/saved', async (req, res) => {
 
 app.get('/api/pages/all-posts', async (req, res) => {
   try {
-    const config = await getAppConfig();
-    const fbToken = config?.fbToken;
+    const fbToken = await resolvePagesToken(req, getAppConfig);
     if (!fbToken) return res.status(400).json({ error: 'Missing shared Facebook Token' });
     const postLimit = getPostsPerPageLimit(req.query.provider);
     const perPage = parseBoundedInt(req.query.perPage, postLimit, 1, postLimit);
@@ -237,8 +247,6 @@ app.get('/api/pages/all-posts', async (req, res) => {
     if (cached) {
       return res.json({ ...cached, cached: true });
     }
-    if (!fbToken) return res.status(400).json({ error: 'Chưa cấu hình Facebook Token dùng chung' });
-
     // 1. Get all pages
     let allPages = [];
     const first = await fbGet(fbToken, 'me/accounts', {
@@ -272,7 +280,7 @@ app.get('/api/pages/all-posts', async (req, res) => {
     for (const r of results) {
       if (r.status === 'fulfilled') allPosts = allPosts.concat(r.value);
     }
-    // Sort by date descending
+    // Sort by date descending: newest first
     allPosts.sort((a, b) => new Date(b.createdTime) - new Date(a.createdTime));
     allPosts = allPosts.slice(0, totalLimit);
 
@@ -295,8 +303,7 @@ app.get('/api/pages/all-posts', async (req, res) => {
 
 app.get('/api/pages/:pageId/posts', async (req, res) => {
   try {
-    const config = await getAppConfig();
-    const fbToken = config?.fbToken;
+    const fbToken = await resolvePagesToken(req, getAppConfig);
     if (!fbToken) return res.status(400).json({ error: 'Chưa cấu hình Facebook Token dùng chung' });
 
     const { pageId } = req.params;

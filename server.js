@@ -323,10 +323,23 @@ function getMetaOrdersFromInsight(insight = {}) {
   return values.length ? Math.round(Math.max(...values)) : 0;
 }
 
+const META_MESSAGE_ACTION_TYPES = [
+  'onsite_conversion.messaging_conversation_started_7d',
+  'onsite_conversion.total_messaging_connection',
+  'omni_initiated_conversation'
+];
+
 function isMetaMessageAction(action = {}) {
-  return action.action_type === 'onsite_conversion.messaging_conversation_started_7d' ||
-    action.action_type === 'onsite_conversion.total_messaging_connection' ||
-    action.action_type === 'omni_initiated_conversation';
+  return META_MESSAGE_ACTION_TYPES.includes(String(action.action_type || '').toLowerCase());
+}
+
+function getMetaMessageActionFromInsight(insight = {}) {
+  const actions = Array.isArray(insight.actions) ? insight.actions : [];
+  for (const actionType of META_MESSAGE_ACTION_TYPES) {
+    const found = actions.find(action => String(action.action_type || '').toLowerCase() === actionType);
+    if (found) return found;
+  }
+  return null;
 }
 
 function getMetaCostPerMessageFromInsight(insight = {}) {
@@ -1280,10 +1293,9 @@ function getPauseReason(provider, spend, messages, costPerMessage, clicks, costP
 
 function getCampaignMessageStats(campaign) {
   const spend = parseFloat(campaign.insights?.data?.[0]?.spend || 0);
-  const actions = campaign.insights?.data?.[0]?.actions || [];
-  const msgAction = actions.find(isMetaMessageAction);
+  const msgAction = getMetaMessageActionFromInsight(campaign.insights?.data?.[0] || {});
   const messages = parseInt(msgAction?.value || 0, 10);
-  const costPerMessage = getMetaCostPerMessageFromInsight(campaign.insights?.data?.[0] || {}) || (messages > 0 ? spend / messages : 0);
+  const costPerMessage = getMetaCostPerMessageFromInsight(campaign.insights?.data?.[0] || {});
 
   return { spend, messages, costPerMessage };
 }
@@ -1293,7 +1305,7 @@ function getCampaignRuleStats(campaign) {
   const spend = parseFloat(campaign.spend ?? insight.spend ?? 0);
   const messages = parseInt(campaign.messages ?? 0, 10);
   const clicks = parseInt(campaign.clicks ?? insight.clicks ?? 0, 10);
-  const costPerMessage = messages > 0 ? spend / messages : 0;
+  const costPerMessage = Number(campaign.costPerMessage ?? insight.cost_per_message ?? 0);
   const costPerClick = clicks > 0 ? spend / clicks : 0;
 
   return { spend, messages, costPerMessage, clicks, costPerClick };
@@ -1374,10 +1386,9 @@ async function fetchAccountData(account) {
     const spend = parseFloat(insight.spend || 0);
     const impressions = parseInt(insight.impressions || 0, 10);
     const clicks = parseInt(insight.clicks || 0, 10);
-    const actions = insight.actions || [];
-    const msgAction = actions.find(isMetaMessageAction);
+    const msgAction = getMetaMessageActionFromInsight(insight);
     const messages = parseInt(msgAction?.value || 0, 10);
-    const costPerMessage = getMetaCostPerMessageFromInsight(insight) || (messages > 0 ? spend / messages : 0);
+    const costPerMessage = getMetaCostPerMessageFromInsight(insight);
     const metaOrders = getMetaOrdersFromInsight(insight);
     if (spend <= 0 && impressions <= 0 && clicks <= 0 && messages <= 0) continue;
     metricInsights.push({ ...insight, spend, impressions, clicks, messages, costPerMessage, metaOrders });
@@ -1666,6 +1677,8 @@ async function checkRedisAvailable() {
       maxRetriesPerRequest: null,
       lazyConnect: true
     });
+
+  connection.on('error', () => {});
 
   try {
     await connection.connect();
@@ -3550,6 +3563,7 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
 
     const campaigns = await Campaign.aggregate([
       { $match: match },
+      { $sort: { date: 1, updatedAt: 1, _id: 1 } },
       {
         $group: {
           _id: '$campaignId',
@@ -3564,7 +3578,7 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           messages: { $sum: '$messages' },
           clicks: { $sum: '$clicks' },
           impressions: { $sum: '$impressions' },
-          weightedCostPerMessage: { $sum: { $multiply: ['$costPerMessage', '$messages'] } },
+          costPerMessage: { $last: '$costPerMessage' },
           metaOrders: { $sum: '$metaOrders' }
         }
       },
@@ -3583,9 +3597,7 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           clicks: 1,
           impressions: 1,
           metaOrders: 1,
-          costPerMessage: {
-            $cond: [{ $gt: ['$messages', 0] }, { $divide: ['$weightedCostPerMessage', '$messages'] }, 0]
-          }
+          costPerMessage: 1
         }
       },
       { $sort: { spend: -1 } }
@@ -3628,6 +3640,7 @@ app.get('/api/campaigns/today', async (req, res) => {
     // Nếu là khoảng ngày, ta group theo campaignId để cộng dồn spend/messages
     const campaigns = await Campaign.aggregate([
       { $match: match },
+      { $sort: { date: 1, updatedAt: 1, _id: 1 } },
       {
         $group: {
           _id: '$campaignId',
@@ -3642,7 +3655,7 @@ app.get('/api/campaigns/today', async (req, res) => {
           messages: { $sum: '$messages' },
           clicks: { $sum: '$clicks' },
           impressions: { $sum: '$impressions' },
-          weightedCostPerMessage: { $sum: { $multiply: ['$costPerMessage', '$messages'] } },
+          costPerMessage: { $last: '$costPerMessage' },
           metaOrders: { $sum: '$metaOrders' }
         }
       },
@@ -3675,9 +3688,7 @@ app.get('/api/campaigns/today', async (req, res) => {
           clicks: 1,
           impressions: 1,
           metaOrders: 1,
-          costPerMessage: {
-            $cond: [{ $gt: ['$messages', 0] }, { $divide: ['$weightedCostPerMessage', '$messages'] }, 0]
-          }
+          costPerMessage: 1
         }
       },
       { $sort: { spend: -1 } }
@@ -3724,10 +3735,9 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
     const spend = parseFloat(insight.spend || 0);
     const impressions = parseInt(insight.impressions || 0, 10);
     const clicks = parseInt(insight.clicks || 0, 10);
-    const actions = insight.actions || [];
-    const msgAction = actions.find(isMetaMessageAction);
+    const msgAction = getMetaMessageActionFromInsight(insight);
     const messages = parseInt(msgAction?.value || 0, 10);
-    const costPerMessage = getMetaCostPerMessageFromInsight(insight) || (messages > 0 ? spend / messages : 0);
+    const costPerMessage = getMetaCostPerMessageFromInsight(insight);
     const metaOrders = getMetaOrdersFromInsight(insight);
 
     await upsertDailyCampaign(account._id, insight.campaign_id, date, {
@@ -4416,6 +4426,7 @@ app.get('/api/orders/sync/:jobId', async (req, res) => {
 registerPageRoutes(app, {
   axios,
   FacebookPost,
+  User,
   getAppConfig,
   fbGet,
   escapeRegExp,

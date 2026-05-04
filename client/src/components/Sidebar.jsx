@@ -19,43 +19,42 @@ export default function Sidebar() {
       </NavLink>
 
       <NavLink to="/accounts" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-        <span className="icon">👤</span><span>Tài khoản</span>
+        <span className="icon">👤</span><span>Tai khoan</span>
         {allAccounts.length > 0 && (
           <span className="badge-mini" id="navAccBadge">{allAccounts.length}</span>
         )}
       </NavLink>
-      
+
       <NavLink to="/create-campaign" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-        <span className="icon">🚀</span><span>Lên Camp</span>
+        <span className="icon">🚀</span><span>Len Camp</span>
       </NavLink>
 
       <NavLink to="/campaigns" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-        <span className="icon">📢</span><span>Chiến dịch</span>
+        <span className="icon">📢</span><span>Chien dich</span>
       </NavLink>
 
       <NavLink to="/clone-campaigns" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-        <span className="icon">⧉</span><span>Nhân Camp</span>
+        <span className="icon">⧉</span><span>Nhan Camp</span>
       </NavLink>
 
       {showOrders && (
         <NavLink to="/orders" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="icon">🛒</span><span>Đơn hàng</span>
+          <span className="icon">🛒</span><span>Don hang</span>
         </NavLink>
       )}
 
-
       <NavLink to="/logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-        <span className="icon">📋</span><span>Nhật ký</span>
+        <span className="icon">📋</span><span>Nhat ky</span>
       </NavLink>
 
-      <div className="nav-section">Hệ thống</div>
+      <div className="nav-section">He thong</div>
 
       <div className="nav-item" style={{ cursor: 'pointer' }} onClick={() => openModal('ACCOUNT')}>
-        <span className="icon">➕</span><span>Thêm tài khoản</span>
+        <span className="icon">➕</span><span>Them tai khoan</span>
       </div>
 
       <div className="nav-item" style={{ cursor: 'pointer' }} onClick={() => openModal('CONFIG')}>
-        <span className="icon">⚙️</span><span>Cấu hình API</span>
+        <span className="icon">⚙️</span><span>Cau hinh API</span>
       </div>
 
       <div className="sidebar-footer">

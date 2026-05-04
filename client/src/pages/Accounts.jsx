@@ -29,6 +29,7 @@ export default function Accounts() {
   const { provider, allAccounts, allTodayCampaigns, loadAccounts, openModal } = useAppContext();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedAccounts, setSelectedAccounts] = useState(new Set());
+  const [campaignStatsByAccount, setCampaignStatsByAccount] = useState(() => new Map());
 
   const filteredAccounts = useMemo(() => {
     const term = searchTerm.toLowerCase().trim();
@@ -47,18 +48,35 @@ export default function Accounts() {
     });
   }, [currentAccountIds]);
 
-  const campaignStatsByAccount = useMemo(() => {
-    const statsMap = new Map();
-    for (const campaign of allTodayCampaigns) {
-      const accountId = campaign.accountId?._id || campaign.accountId;
-      if (!accountId) continue;
-      const item = statsMap.get(accountId) || { spend: 0, msgs: 0, active: 0 };
-      item.spend += campaign.spend || 0;
-      item.msgs += campaign.messages || 0;
-      if ((campaign.status || '').toUpperCase() === 'ACTIVE') item.active += 1;
-      statsMap.set(accountId, item);
+  useEffect(() => {
+    let cancelled = false;
+    const computeStats = () => {
+      const statsMap = new Map();
+      for (const campaign of allTodayCampaigns) {
+        const accountId = campaign.accountId?._id || campaign.accountId;
+        if (!accountId) continue;
+        const item = statsMap.get(accountId) || { spend: 0, msgs: 0, active: 0 };
+        item.spend += campaign.spend || 0;
+        item.msgs += campaign.messages || 0;
+        if ((campaign.status || '').toUpperCase() === 'ACTIVE') item.active += 1;
+        statsMap.set(accountId, item);
+      }
+      if (!cancelled) setCampaignStatsByAccount(statsMap);
+    };
+
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(computeStats, { timeout: 250 });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback(idleId);
+      };
     }
-    return statsMap;
+
+    const timeoutId = window.setTimeout(computeStats, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
   }, [allTodayCampaigns]);
 
   const handleSelect = (id, checked) => {

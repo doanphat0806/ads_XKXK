@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import React, { useCallback, useDeferredValue, useMemo, useState, useEffect, useRef, useTransition } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import { formatVND, formatNumber, todayString, dateTimeString, api, cachedApi, readResponseCache } from '../lib/api';
 import DateRangePicker from '../components/DateRangePicker';
@@ -36,7 +36,9 @@ const normalizeCampaignDuplicateKey = (campaign) => {
   return `${createdDate || 'NO_DATE'}:${name}`;
 };
 
-const DASHBOARD_CAMPAIGNS_PER_PAGE = 100;
+const DASHBOARD_CAMPAIGNS_PER_PAGE = 500;
+const DASHBOARD_INITIAL_RENDER_ROWS = 300;
+const DASHBOARD_RENDER_BATCH_ROWS = 300;
 const CAMPAIGN_RETURN_STATS_FROM_DATE = '2026-02-22';
 const CPO_WARNING_THRESHOLD = 100000;
 const ORDER_REFRESH_MS = 10000;
@@ -182,9 +184,11 @@ export default function Dashboard() {
   const [editingBudgetId, setEditingBudgetId] = useState('');
   const [editingBudget, setEditingBudget] = useState('');
   const [savingBudgetId, setSavingBudgetId] = useState('');
-  const [campaignSearchInput, setCampaignSearchInput] = useState('');
   const [campaignSearch, setCampaignSearch] = useState('');
-  const [bulkPausingDuplicates, setBulkPausingDuplicates] = useState(false);
+  const [disablingDuplicates, setDisablingDuplicates] = useState(false);
+  const [renderLimit, setRenderLimit] = useState(DASHBOARD_INITIAL_RENDER_ROWS);
+  const deferredCampaignSearch = useDeferredValue(campaignSearch);
+  const [isSortPending, startSortTransition] = useTransition();
 
   useEffect(() => {
     editingCampaignNameRef.current = editingCampaignName;
@@ -207,11 +211,13 @@ export default function Dashboard() {
   }, [togglingCampaignIds]);
 
   const handleSort = (field) => {
-    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else {
-      setSortField(field);
-      setSortDir('desc');
-    }
+    startSortTransition(() => {
+      if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+      else {
+        setSortField(field);
+        setSortDir('desc');
+      }
+    });
   };
 
   const loadDashboardData = useCallback(async (from, to) => {
@@ -237,6 +243,39 @@ export default function Dashboard() {
       setStatsLoading(false);
     }
   }, [provider]);
+
+  const toggleCampaignStatus = useCallback(async (campaign) => {
+    const accountId = campaign.accountId?._id || campaign.accountId;
+    if (!campaign.campaignId || !accountId || togglingCampaignIdsRef.current.has(campaign.campaignId)) return;
+
+    const previousStatus = String(campaign.status || '').toUpperCase();
+    const nextStatus = previousStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+    setTogglingCampaignIds(ids => new Set(ids).add(campaign.campaignId));
+    setLocalCampaigns(items => items.map(item => (
+      item.campaignId === campaign.campaignId ? { ...item, status: nextStatus } : item
+    )));
+
+    try {
+      const result = await api('POST', `/campaigns/${campaign.campaignId}/toggle`, { accountId, currentStatus: previousStatus, date: reportFromDate });
+      if (result?.newStatus && result.newStatus !== nextStatus) {
+        setLocalCampaigns(items => items.map(item => (
+          item.campaignId === campaign.campaignId ? { ...item, status: result.newStatus } : item
+        )));
+      }
+      toast.success(previousStatus === 'ACTIVE' ? 'Da tat camp' : 'Da bat camp');
+    } catch (error) {
+      setLocalCampaigns(items => items.map(item => (
+        item.campaignId === campaign.campaignId ? { ...item, status: previousStatus } : item
+      )));
+      toast.error('Loi doi trang thai camp: ' + error.message);
+    } finally {
+      setTogglingCampaignIds(ids => {
+        const next = new Set(ids);
+        next.delete(campaign.campaignId);
+        return next;
+      });
+    }
+  }, [reportFromDate]);
 
   const startRenameCampaign = useCallback((campaign) => {
     if (renamingCampaignIdRef.current) return;
@@ -343,41 +382,37 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [provider, reportFromDate, reportToDate, loadSkuCounts]);
 
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      setCampaignSearch(campaignSearchInput);
-    }, 300);
-    return () => clearTimeout(timeoutId);
-  }, [campaignSearchInput]);
+  const hasSkuCounts = useMemo(() => Object.keys(skuCounts || {}).length > 0, [skuCounts]);
+  const hasReturnStatsBySku = useMemo(() => Object.keys(returnStatsBySku || {}).length > 0, [returnStatsBySku]);
 
-  const campaignSkuKeys = useMemo(() => {
-    const keys = new Map();
-    for (const campaign of localCampaigns) {
-      if (!campaign.campaignId || !campaign.name) continue;
-      const normalizedName = String(campaign.name).toUpperCase().replace(/\s+/g, '').trim();
-      if (!normalizedName) continue;
-      keys.set(campaign.campaignId, 'MS' + normalizedName);
-    }
-    return keys;
-  }, [localCampaigns]);
+  const getOrderCountForCampaign = useCallback((campaignName) => {
+    if (!campaignName || !hasSkuCounts) return 0;
+    const normName = String(campaignName).toUpperCase().replace(/\s+/g, '').trim();
+    return Number(skuCounts['MS' + normName] || 0);
+  }, [skuCounts, hasSkuCounts]);
+
+  const getReturnStatsForCampaign = useCallback((campaignName) => {
+    if (!campaignName || !hasReturnStatsBySku) return EMPTY_RETURN_STATS;
+    const normName = String(campaignName).toUpperCase().replace(/\s+/g, '').trim();
+    return returnStatsBySku['MS' + normName] || EMPTY_RETURN_STATS;
+  }, [returnStatsBySku, hasReturnStatsBySku]);
 
   const filteredCampaigns = useMemo(() => {
-    const search = campaignSearch.trim().toLowerCase();
+    const search = deferredCampaignSearch.trim().toLowerCase();
     return localCampaigns
-      .filter(campaign => Number(campaign.spend || 0) > 0)
-      .filter(campaign => {
+      .filter(c => Number(c.spend || 0) > 0)
+      .filter(c => {
         if (!search) return true;
-        return [campaign.name, campaign.campaignId, campaign.accountId?.name, campaign.accountId?.adAccountId].some(value =>
+        return [c.name, c.campaignId, c.accountId?.name, c.accountId?.adAccountId].some(value =>
           String(value || '').toLowerCase().includes(search)
         );
       });
-  }, [localCampaigns, campaignSearch]);
+  }, [localCampaigns, deferredCampaignSearch]);
 
   const enrichedCampaigns = useMemo(() => {
     return filteredCampaigns.map(campaign => {
-      const campaignKey = campaignSkuKeys.get(campaign.campaignId);
-      const orderCount = showOrders && campaignKey ? Number(skuCounts[campaignKey] || 0) : 0;
-      const returnStats = showOrders && campaignKey ? (returnStatsBySku[campaignKey] || EMPTY_RETURN_STATS) : EMPTY_RETURN_STATS;
+      const orderCount = showOrders ? getOrderCountForCampaign(campaign.name) : 0;
+      const returnStats = showOrders ? getReturnStatsForCampaign(campaign.name) : EMPTY_RETURN_STATS;
       const metaOrders = showOrders ? Number(campaign.metaOrders || 0) : 0;
       const spend = Number(campaign.spend || 0);
       const clicks = Number(campaign.clicks || 0);
@@ -395,7 +430,7 @@ export default function Dashboard() {
         metaOrders
       };
     });
-  }, [filteredCampaigns, campaignSkuKeys, showOrders, skuCounts, returnStatsBySku]);
+  }, [filteredCampaigns, getOrderCountForCampaign, getReturnStatsForCampaign, showOrders]);
 
   const processedCampaigns = useMemo(() => {
     const duplicateCounts = enrichedCampaigns.reduce((counts, campaign) => {
@@ -437,167 +472,50 @@ export default function Dashboard() {
   }, [enrichedCampaigns, sortField, sortDir, isShopee]);
 
   const totalPages = Math.max(1, Math.ceil(processedCampaigns.length / DASHBOARD_CAMPAIGNS_PER_PAGE));
-  const visibleCampaigns = useMemo(() => {
+  const pageCampaigns = useMemo(() => {
     const page = Math.min(currentPage, totalPages);
     return processedCampaigns.slice((page - 1) * DASHBOARD_CAMPAIGNS_PER_PAGE, page * DASHBOARD_CAMPAIGNS_PER_PAGE);
   }, [currentPage, processedCampaigns, totalPages]);
-
+  const visibleCampaigns = useMemo(() => pageCampaigns.slice(0, renderLimit), [pageCampaigns, renderLimit]);
   const metaAvgCPM = useMemo(() => {
     if (isShopee) return 0;
-    const campaignsWithMessageCost = enrichedCampaigns
-      .map(campaign => {
-        const rawMessages = Number(campaign.messages || 0);
-        const spend = Number(campaign.spend || 0);
-        const messages = rawMessages > 0 ? rawMessages : (spend > 0 ? 1 : 0);
-        const metaCostPerMessage = Number(campaign.costPerMessage || 0);
-        const costPerMessage = rawMessages > 0 ? metaCostPerMessage : spend;
-        return { messages, costPerMessage };
-      })
-      .filter(campaign => campaign.messages > 0 && campaign.costPerMessage > 0);
-    const totalWeightedCost = campaignsWithMessageCost.reduce((sum, campaign) => sum + campaign.costPerMessage * campaign.messages, 0);
-    const totalMessages = campaignsWithMessageCost.reduce((sum, campaign) => sum + campaign.messages, 0);
-    return totalMessages > 0 ? totalWeightedCost / totalMessages : 0;
-  }, [enrichedCampaigns, isShopee]);
-
-  const duplicatePausePlan = useMemo(() => {
-    const groups = new Map();
-    for (const campaign of processedCampaigns) {
-      const key = normalizeCampaignDuplicateKey(campaign);
-      if (!key) continue;
-      const items = groups.get(key) || [];
-      items.push(campaign);
-      groups.set(key, items);
-    }
-
-    const campaignsToPause = [];
-    for (const items of groups.values()) {
-      const activeItems = items.filter(campaign => String(campaign.status || '').toUpperCase() === 'ACTIVE');
-      if (activeItems.length <= 1) continue;
-      const sortedActiveItems = [...activeItems].sort((a, b) => {
-        const spendDiff = Number(b.spend || 0) - Number(a.spend || 0);
-        if (spendDiff !== 0) return spendDiff;
-        const createdDiff = new Date(b.createdTime || b.created_time || 0).getTime() - new Date(a.createdTime || a.created_time || 0).getTime();
-        if (createdDiff !== 0) return createdDiff;
-        return String(a.campaignId || '').localeCompare(String(b.campaignId || ''));
-      });
-      campaignsToPause.push(...sortedActiveItems.slice(1));
-    }
-
-    return {
-      total: campaignsToPause.length,
-      campaigns: campaignsToPause
-    };
-  }, [processedCampaigns]);
-
-  const toggleCampaignStatus = useCallback(async (campaign) => {
-    const accountId = campaign.accountId?._id || campaign.accountId;
-    if (!campaign.campaignId || !accountId || togglingCampaignIdsRef.current.has(campaign.campaignId)) return;
-
-    const previousStatus = String(campaign.status || '').toUpperCase();
-    const nextStatus = previousStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
-    setTogglingCampaignIds(ids => {
-      const next = new Set(ids);
-      next.add(campaign.campaignId);
-      return next;
-    });
-    setLocalCampaigns(items => items.map(item => (
-      item.campaignId === campaign.campaignId ? { ...item, status: nextStatus } : item
-    )));
-
-    try {
-      const result = await api('POST', `/campaigns/${campaign.campaignId}/toggle`, { accountId, currentStatus: previousStatus, date: reportFromDate });
-      if (result?.newStatus && result.newStatus !== nextStatus) {
-        setLocalCampaigns(items => items.map(item => (
-          item.campaignId === campaign.campaignId ? { ...item, status: result.newStatus } : item
-        )));
-      }
-      toast.success(previousStatus === 'ACTIVE' ? 'Da tat camp' : 'Da bat camp');
-    } catch (error) {
-      setLocalCampaigns(items => items.map(item => (
-        item.campaignId === campaign.campaignId ? { ...item, status: previousStatus } : item
-      )));
-      toast.error('Loi doi trang thai camp: ' + error.message);
-    } finally {
-      setTogglingCampaignIds(ids => {
-        const next = new Set(ids);
-        next.delete(campaign.campaignId);
-        return next;
-      });
-    }
-  }, [reportFromDate]);
-
-  const pauseDuplicateCampaigns = useCallback(async () => {
-    if (bulkPausingDuplicates) return;
-
-    const targets = duplicatePausePlan.campaigns.filter(campaign => campaign.campaignId && (campaign.accountId?._id || campaign.accountId));
-    if (!targets.length) {
-      toast.info('Khong co camp trung dang chay de tat');
-      return;
-    }
-
-    setBulkPausingDuplicates(true);
-    const targetIds = new Set(targets.map(campaign => campaign.campaignId));
-    const previousStatuses = new Map(targets.map(campaign => [campaign.campaignId, String(campaign.status || '').toUpperCase()]));
-
-    setTogglingCampaignIds(ids => {
-      const next = new Set(ids);
-      targetIds.forEach(id => next.add(id));
-      return next;
-    });
-    setLocalCampaigns(items => items.map(item => (
-      targetIds.has(item.campaignId) ? { ...item, status: 'PAUSED' } : item
-    )));
-
-    let successCount = 0;
-    let failedCount = 0;
-
-    try {
-      for (const campaign of targets) {
-        const accountId = campaign.accountId?._id || campaign.accountId;
-        const previousStatus = previousStatuses.get(campaign.campaignId) || 'ACTIVE';
-
-        try {
-          const result = await api('POST', `/campaigns/${campaign.campaignId}/toggle`, { accountId, currentStatus: previousStatus, date: reportFromDate });
-          const newStatus = String(result?.newStatus || 'PAUSED').toUpperCase();
-          if (newStatus !== 'PAUSED') {
-            failedCount += 1;
-            setLocalCampaigns(items => items.map(item => (
-              item.campaignId === campaign.campaignId ? { ...item, status: newStatus } : item
-            )));
-          } else {
-            successCount += 1;
-          }
-        } catch {
-          failedCount += 1;
-          setLocalCampaigns(items => items.map(item => (
-            item.campaignId === campaign.campaignId ? { ...item, status: previousStatus } : item
-          )));
-        } finally {
-          setTogglingCampaignIds(ids => {
-            const next = new Set(ids);
-            next.delete(campaign.campaignId);
-            return next;
-          });
-        }
-      }
-    } finally {
-      setBulkPausingDuplicates(false);
-    }
-
-    if (successCount && !failedCount) {
-      toast.success(`Da tat ${successCount} camp trung dang chay`);
-      return;
-    }
-    if (successCount && failedCount) {
-      toast.warn(`Da tat ${successCount} camp trung, ${failedCount} camp loi`);
-      return;
-    }
-    toast.error('Khong tat duoc camp trung nao');
-  }, [bulkPausingDuplicates, duplicatePausePlan.campaigns, reportFromDate]);
+    const messageCosts = processedCampaigns
+      .map(campaign => Number(campaign.costPerMessage || 0))
+      .filter(cost => cost > 0);
+    const totalCost = messageCosts.reduce((sum, cost) => sum + cost, 0);
+    return messageCosts.length > 0 ? totalCost / messageCosts.length : 0;
+  }, [processedCampaigns, isShopee]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [reportFromDate, reportToDate, provider, sortField, sortDir, campaignSearch]);
+  }, [reportFromDate, reportToDate, provider, sortField, sortDir, deferredCampaignSearch]);
+
+  useEffect(() => {
+    setRenderLimit(DASHBOARD_INITIAL_RENDER_ROWS);
+  }, [currentPage, processedCampaigns]);
+
+  useEffect(() => {
+    if (renderLimit >= pageCampaigns.length) return undefined;
+    let cancelled = false;
+    const addRows = () => {
+      if (cancelled) return;
+      setRenderLimit(limit => Math.min(limit + DASHBOARD_RENDER_BATCH_ROWS, pageCampaigns.length));
+    };
+
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(addRows, { timeout: 200 });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback(idleId);
+      };
+    }
+
+    const timeoutId = window.setTimeout(addRows, 16);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [renderLimit, pageCampaigns.length]);
 
   useEffect(() => {
     if (currentPage > totalPages) setCurrentPage(totalPages);
@@ -633,78 +551,70 @@ export default function Dashboard() {
   return (
     <div id="page-dashboard" ref={dashboardRef}>
       <div className="dashboard-sticky-summary" ref={stickySummaryRef}>
-        <div className="stats-grid section-gap">
-          <div className="stat g">
-            <div className="stat-label">Tai khoan</div>
-            <div className="stat-value g" id="sAccounts">{localStats.totalAccounts ?? globalStats.totalAccounts ?? '-'}</div>
-            <div className="stat-sub">{localStats.connectedAccounts ?? globalStats.connectedAccounts ?? 0} ket noi</div>
-          </div>
-          <div className="stat b">
-            <div className="stat-label">Camp dang chay</div>
-            <div className="stat-value b" id="sActive">{localStats.activeCount !== undefined ? formatNumber(localStats.activeCount) : '-'}</div>
-            <div className="stat-sub">Tong: {formatNumber(processedCampaigns.length)} camp</div>
-          </div>
-          <div className="stat o">
-            <div className="stat-label">Chi tieu {dateLabel}</div>
-            <div className="stat-value o stat-value-compact" id="sSpend">{localStats.totalSpend ? formatVND(localStats.totalSpend) : '-'}</div>
-          </div>
-          <div className="stat p">
-            <div className="stat-label">{isShopee ? 'Luot click' : 'Tin nhan'} {dateLabel}</div>
-            <div className="stat-value p" id="sMessages">{isShopee ? formatNumber(localStats.totalClicks || 0) : (localStats.totalMessages ? formatNumber(localStats.totalMessages) : '-')}</div>
-            <div className="stat-sub">{!isShopee && metaAvgCPM > 0 ? `CPM: ${formatVND(metaAvgCPM)}` : '-'}</div>
-          </div>
-          {showOrders && (
-            <div className="stat g2" style={{ borderColor: 'var(--g2)' }}>
-              <div className="stat-label">Don hang {dateLabel}</div>
-              <div className="stat-value g2" id="sOrders" style={{ color: 'var(--g2)' }}>{skuLoading ? '...' : skuTotal}</div>
-              <div className="stat-sub">Tu Google Sheet</div>
-            </div>
-          )}
-          {showOrders && (
-            <div className="stat r" style={{ borderColor: 'var(--r)' }}>
-              <div className="stat-label">CPO {dateLabel}</div>
-              <div className="stat-value" id="sCPO" style={{ color: 'var(--r)', fontSize: skuLoading ? '1.4rem' : undefined }}>
-                {skuLoading ? '...' : (skuTotal > 0 && localStats.totalSpend > 0) ? formatVND(localStats.totalSpend / skuTotal) : '-'}
-              </div>
-              <div className="stat-sub">Chi tiêu / Đơn</div>
-            </div>
-          )}
-          {showOrders && (
-            <div className="stat return-rate">
-              <div className="stat-label">Tỉ lệ hoàn {dateLabel}</div>
-              <div className="stat-value" id="sReturnRate">{skuLoading ? '...' : orderReturnStats.denominator > 0 ? formatPercent(orderReturnStats.rate) : ''}</div>
-              <div className="stat-sub">
-                {skuLoading ? 'Dang tai' : orderReturnStats.denominator > 0 ? `${formatNumber(orderReturnStats.returned + orderReturnStats.returning)} / ${formatNumber(orderReturnStats.denominator)}` : ''}
-              </div>
-            </div>
-          )}
+      <div className="stats-grid section-gap">
+        <div className="stat g">
+          <div className="stat-label">Tai khoan</div>
+          <div className="stat-value g" id="sAccounts">{localStats.totalAccounts ?? globalStats.totalAccounts ?? '-'}</div>
+          <div className="stat-sub">{localStats.connectedAccounts ?? globalStats.connectedAccounts ?? 0} ket noi</div>
         </div>
+        <div className="stat b">
+          <div className="stat-label">Camp dang chay</div>
+          <div className="stat-value b" id="sActive">{localStats.activeCount !== undefined ? formatNumber(localStats.activeCount) : '-'}</div>
+          <div className="stat-sub">Tong: {formatNumber(processedCampaigns.length)} camp</div>
+        </div>
+        <div className="stat o">
+          <div className="stat-label">Chi tieu {dateLabel}</div>
+          <div className="stat-value o stat-value-compact" id="sSpend">{localStats.totalSpend ? formatVND(localStats.totalSpend) : '-'}</div>
+        </div>
+        <div className="stat p">
+          <div className="stat-label">{isShopee ? 'Luot click' : 'Tin nhan'} {dateLabel}</div>
+          <div className="stat-value p" id="sMessages">{isShopee ? formatNumber(localStats.totalClicks || 0) : (localStats.totalMessages ? formatNumber(localStats.totalMessages) : '-')}</div>
+          <div className="stat-sub">{!isShopee && metaAvgCPM > 0 ? `Chi phi/luot tro chuyen: ${formatVND(metaAvgCPM)}` : '-'}</div>
+        </div>
+        {showOrders && (
+          <div className="stat g2" style={{ borderColor: 'var(--g2)' }}>
+            <div className="stat-label">Don hang {dateLabel}</div>
+            <div className="stat-value g2" id="sOrders" style={{ color: 'var(--g2)' }}>{skuLoading ? '...' : skuTotal}</div>
+            <div className="stat-sub">Tu Google Sheet</div>
+          </div>
+        )}
+        {showOrders && (
+          <div className="stat r" style={{ borderColor: 'var(--r)' }}>
+            <div className="stat-label">CPO {dateLabel}</div>
+            <div className="stat-value" id="sCPO" style={{ color: 'var(--r)', fontSize: skuLoading ? '1.4rem' : undefined }}>
+              {skuLoading ? '...' : (skuTotal > 0 && localStats.totalSpend > 0) ? formatVND(localStats.totalSpend / skuTotal) : '-'}
+            </div>
+            <div className="stat-sub">Chi tiêu / Đơn</div>
+          </div>
+        )}
+        {showOrders && (
+          <div className="stat return-rate">
+            <div className="stat-label">Tỉ lệ hoàn {dateLabel}</div>
+            <div className="stat-value" id="sReturnRate">{skuLoading ? '...' : orderReturnStats.denominator > 0 ? formatPercent(orderReturnStats.rate) : ''}</div>
+            <div className="stat-sub">
+              {skuLoading ? 'Dang tai' : orderReturnStats.denominator > 0 ? `${formatNumber(orderReturnStats.returned + orderReturnStats.returning)} / ${formatNumber(orderReturnStats.denominator)}` : ''}
+            </div>
+          </div>
+        )}
+      </div>
 
-        <div className="card">
-          <div className="card-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
-              <div className="card-title" style={{ margin: 0 }}>Bao cao chi tiet {dateLabel}</div>
-              <DateRangePicker fromDate={reportFromDate} toDate={reportToDate} onChange={(from, to) => { setReportFromDate(from); setReportToDate(to); }} centered />
-              <input
-                type="search"
-                value={campaignSearchInput}
-                onChange={e => setCampaignSearchInput(e.target.value)}
-                placeholder="Tim camp, ID, tai khoan..."
-                aria-label="Tim campaign"
-                style={{ width: '260px', maxWidth: '32vw', height: '38px', border: '1px solid var(--border)', borderRadius: '10px', padding: '0 12px', color: 'var(--txt)', background: 'var(--s1)', outline: 'none', boxShadow: '0 2px 10px rgba(15, 23, 42, 0.06)' }}
-              />
-              <button
-                className="btn btn-danger btn-sm"
-                onClick={pauseDuplicateCampaigns}
-                disabled={!duplicatePausePlan.total || bulkPausingDuplicates || globalLoading || statsLoading}
-                title="Giữ lại camp ACTIVE chi tiêu cao nhất, tắt các camp ACTIVE trùng còn lại"
-              >
-                {bulkPausingDuplicates ? 'Dang tat camp trung...' : `Tat camp trung${duplicatePausePlan.total ? ` (${duplicatePausePlan.total})` : ''}`}
-              </button>
-              {(skuLoading || statsLoading) && <span className="spin" style={{ fontSize: '14px' }}>...</span>}
-            </div>
+      <div className="card">
+        <div className="card-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+            <div className="card-title" style={{ margin: 0 }}>Bao cao chi tiet {dateLabel}</div>
+            <DateRangePicker fromDate={reportFromDate} toDate={reportToDate} onChange={(from, to) => { setReportFromDate(from); setReportToDate(to); }} centered />
+            <input
+              type="search"
+              value={campaignSearch}
+              onChange={e => setCampaignSearch(e.target.value)}
+              placeholder="Tim camp, ID, tai khoan..."
+              aria-label="Tim campaign"
+              style={{ width: '260px', maxWidth: '32vw', height: '38px', border: '1px solid var(--border)', borderRadius: '10px', padding: '0 12px', color: 'var(--txt)', background: 'var(--s1)', outline: 'none', boxShadow: '0 2px 10px rgba(15, 23, 42, 0.06)' }}
+            />
+            {(skuLoading || statsLoading || isSortPending) && <span className="spin" style={{ fontSize: '14px' }}>...</span>}
           </div>
         </div>
+      </div>
       </div>
 
       <div className="card dashboard-table-card">
@@ -726,7 +636,7 @@ export default function Dashboard() {
                   {showOrders && <th className="text-center" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('orderCount')}>Tổng Đơn<SortIcon field="orderCount" sortField={sortField} sortDir={sortDir} /></th>}
                   {showOrders && <th className="text-center" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('metaOrders')}>Đơn Meta<SortIcon field="metaOrders" sortField={sortField} sortDir={sortDir} /></th>}
                   <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('messages')}>
-                    {isShopee ? 'Luot click (Gia/click)' : 'Tin nhan (Gia/TN)'}<SortIcon field="messages" sortField={sortField} sortDir={sortDir} />
+                    {isShopee ? 'Luot click (Gia/click)' : 'Bat dau tro chuyen (Gia/BDCT)'}<SortIcon field="messages" sortField={sortField} sortDir={sortDir} />
                   </th>
                   {showOrders && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('costPerOrder')}>CPO<SortIcon field="costPerOrder" sortField={sortField} sortDir={sortDir} /></th>}
                   <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('spend')}>Chi Tiêu<SortIcon field="spend" sortField={sortField} sortDir={sortDir} /></th>
@@ -745,15 +655,15 @@ export default function Dashboard() {
                   const isSavingBudget = savingBudgetId === campaignId;
                   return (
                     <CampaignRow
-                      key={campaignId || `${campaign.accountId?._id || ''}-${campaign.name || ''}`}
+                      key={campaignId}
                       campaign={campaign}
                       isActive={isActive}
                       isToggling={isToggling}
                       isEditingCampaign={isEditingCampaign}
-                      editingCampaignName={isEditingCampaign ? editingCampaignName : ''}
+                      editingCampaignName={editingCampaignName}
                       isRenamingCampaign={isRenamingCampaign}
                       isEditingBudget={isEditingBudget}
-                      editingBudget={isEditingBudget ? editingBudget : ''}
+                      editingBudget={editingBudget}
                       isSavingBudget={isSavingBudget}
                       isShopee={isShopee}
                       showOrders={showOrders}

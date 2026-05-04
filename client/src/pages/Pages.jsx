@@ -5,8 +5,8 @@ import { toast } from 'react-toastify';
 
 const SAVED_POSTS_LIMIT = 5000;
 const FB_REFRESH_POSTS_LIMIT = 5000;
-const FACEBOOK_POSTS_PER_PAGE_LIMIT = 500;
-const SHOPEE_POSTS_PER_PAGE_LIMIT = 500;
+const FACEBOOK_POSTS_PER_PAGE_LIMIT = 150;
+const SHOPEE_POSTS_PER_PAGE_LIMIT = 150;
 const POSTS_AUTO_REFRESH_MS = 5 * 60 * 1000;
 const FACEBOOK_DEFAULT_DAILY_BUDGET = 300000;
 const FACEBOOK_DEFAULT_AGE_MIN = 18;
@@ -134,7 +134,9 @@ export default function CreateCampaign() {
   );
   const [creatingCampaigns, setCreatingCampaigns] = useState(false);
   const [campaignCreateResult, setCampaignCreateResult] = useState(null);
+  const savedPostsLoadingRef = useRef(false);
   const allPostsLoadingRef = useRef(false);
+  const pagePostsLoadingRef = useRef(false);
 
   const quickAccountOptions = useMemo(() => {
     return [...allAccounts].sort((a, b) => {
@@ -242,8 +244,8 @@ export default function CreateCampaign() {
   // â”€â”€ Load ALL posts from ALL pages â”€â”€
   const loadSavedPosts = useCallback(async (options = {}) => {
     const { silent = false } = options;
-    if (allPostsLoadingRef.current) return;
-    allPostsLoadingRef.current = true;
+    if (savedPostsLoadingRef.current) return;
+    savedPostsLoadingRef.current = true;
     if (!silent) setLoadingAllPosts(true);
     try {
       const params = new URLSearchParams({
@@ -255,7 +257,7 @@ export default function CreateCampaign() {
     } catch (e) {
       if (!silent) toast.error('Loi tai bai viet da luu: ' + e.message);
     } finally {
-      allPostsLoadingRef.current = false;
+      savedPostsLoadingRef.current = false;
       if (!silent) setLoadingAllPosts(false);
     }
   }, [postsPerPageLimit]);
@@ -293,14 +295,55 @@ export default function CreateCampaign() {
     }
   }, [loadSavedPosts, postsPerPageLimit, selectedProvider]);
 
+  const loadSelectedPagePosts = useCallback(async (page, options = {}) => {
+    if (!page) return;
+    const { refresh = false, silent = false } = options;
+    const pageCacheKey = `${selectedProvider}:${page.id}:${postsPerPageLimit}`;
+
+    if (!refresh && pagePostCache[pageCacheKey]) {
+      setPagePosts(pagePostCache[pageCacheKey]);
+      setVisiblePostCount(postsPerPageLimit);
+      return;
+    }
+
+    if (pagePostsLoadingRef.current) return;
+    pagePostsLoadingRef.current = true;
+    if (!silent) setLoadingPosts(true);
+    try {
+      const params = new URLSearchParams({
+        limit: String(postsPerPageLimit),
+        provider: selectedProvider
+      });
+      if (refresh) params.set('refresh', '1');
+      const data = await api('GET', `/pages/${page.id}/posts?${params.toString()}`);
+      const posts = data.posts || [];
+      setPagePosts(posts);
+      setAllPosts(prev => mergePostsById(prev, posts));
+      setVisiblePostCount(postsPerPageLimit);
+      setPagePostCache(prev => ({ ...prev, [pageCacheKey]: posts }));
+    } catch (e) {
+      if (!silent) {
+        if (isPagePostPermissionError(e)) {
+          toast.info('Token/App chua co quyen doc bai viet Page. Hay dung bai viet da luu hoac cap quyen pages_read_engagement.');
+        } else {
+          toast.error('Loi tai bai viet: ' + e.message);
+        }
+      }
+    } finally {
+      pagePostsLoadingRef.current = false;
+      if (!silent) setLoadingPosts(false);
+    }
+  }, [pagePostCache, postsPerPageLimit, selectedProvider]);
+
   useEffect(() => {
     loadPages();
     loadSavedPosts();
+    loadAllPosts(true, { silent: true });
     const interval = setInterval(() => {
       loadSavedPosts({ silent: true });
     }, POSTS_AUTO_REFRESH_MS);
     return () => clearInterval(interval);
-  }, [loadPages, loadSavedPosts]);
+  }, [loadAllPosts, loadPages, loadSavedPosts]);
 
   // â”€â”€ Load Posts for a specific Page â”€â”€
   const selectPage = async (page) => {
@@ -312,35 +355,8 @@ export default function CreateCampaign() {
       return;
     }
     setSelectedPage(page);
-    const pageCacheKey = `${selectedProvider}:${page.id}:${postsPerPageLimit}`;
-    if (pagePostCache[pageCacheKey]) {
-      setPagePosts(pagePostCache[pageCacheKey]);
-      setVisiblePostCount(postsPerPageLimit);
-      return;
-    }
-
     setPagePosts([]);
-    setLoadingPosts(true);
-    try {
-      const params = new URLSearchParams({
-        limit: String(postsPerPageLimit),
-        provider: selectedProvider
-      });
-      const data = await api('GET', `/pages/${page.id}/posts?${params.toString()}`);
-      const posts = data.posts || [];
-      setPagePosts(posts);
-      setAllPosts(prev => mergePostsById(prev, posts));
-      setVisiblePostCount(postsPerPageLimit);
-      setPagePostCache(prev => ({ ...prev, [pageCacheKey]: posts }));
-    } catch (e) {
-      if (isPagePostPermissionError(e)) {
-        toast.info('Token/App chua co quyen doc bai viet Page. Hay dung bai viet da luu hoac cap quyen pages_read_engagement.');
-      } else {
-        toast.error('Loi tai bai viet: ' + e.message);
-      }
-    } finally {
-      setLoadingPosts(false);
-    }
+    await loadSelectedPagePosts(page);
   };
 
   const showAllPages = () => {
@@ -357,6 +373,18 @@ export default function CreateCampaign() {
       setVisiblePostCount(postsPerPageLimit);
     }
   }, [hasShopeePageScope, postsPerPageLimit, selectedPage, selectedProvider, shopeeLinkedPageIdSet]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (selectedPage) {
+        loadSelectedPagePosts(selectedPage, { refresh: true, silent: true });
+      } else {
+        loadAllPosts(true, { silent: true });
+      }
+    }, POSTS_AUTO_REFRESH_MS);
+
+    return () => clearInterval(interval);
+  }, [loadAllPosts, loadSelectedPagePosts, selectedPage]);
 
   const createCampaignsFromCodes = async () => {
     const campaignNameLines = splitNonEmptyLines(campaignCodes);
@@ -446,7 +474,7 @@ export default function CreateCampaign() {
           (p.message || '').toLowerCase().includes(q) ||
           (p.pageName || '').toLowerCase().includes(q) ||
           (p.id || '').toLowerCase().includes(q)
-        );
+      );
       });
   }, [rawPosts, searchPost]);
 
