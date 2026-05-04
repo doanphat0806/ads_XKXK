@@ -563,6 +563,34 @@
       max-height: 240px;
     }
 
+    .campaign-create-controls .shopee-cta-preview {
+      background: var(--s3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      min-width: 0;
+    }
+
+    .campaign-create-controls .shopee-cta-preview strong,
+    .campaign-create-controls .shopee-cta-preview span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .campaign-create-controls .shopee-cta-preview strong {
+      color: var(--txt);
+      font-size: 12px;
+      margin-bottom: 2px;
+    }
+
+    .campaign-create-controls .shopee-cta-preview span {
+      color: var(--muted2);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+
     .form-group {
       display: flex;
       flex-direction: column;

@@ -8,6 +8,20 @@ export function getAuthToken() {
   return localStorage.getItem('adsctrl-token') || '';
 }
 
+function isHtmlResponse(text) {
+  return /<\s*(html|head|body|title|center|h1)\b/i.test(String(text || ''));
+}
+
+function getHttpErrorMessage(status, text) {
+  if (status === 502 || status === 503 || status === 504) {
+    return 'May chu xu ly qua lau hoac tam thoi khong phan hoi. Vui long kiem tra lai du lieu sau it phut.';
+  }
+  if (isHtmlResponse(text)) {
+    return `May chu tra ve loi HTML (HTTP ${status}). Vui long thu lai sau.`;
+  }
+  return text || `API error ${status}`;
+}
+
 const responseCache = new Map();
 const RESPONSE_CACHE_PREFIX = 'adsctrl:api-cache:';
 const RESPONSE_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
@@ -74,12 +88,12 @@ export async function api(method, path, body = null, options = {}) {
     try {
       data = JSON.parse(text);
     } catch {
-      data = { error: text };
+      data = { error: getHttpErrorMessage(res.status, text) };
     }
   }
 
   if (!res.ok) {
-    const error = new Error(data?.error || `API error ${res.status}`);
+    const error = new Error(data?.error || getHttpErrorMessage(res.status, text));
     error.status = res.status;
     if (data && typeof data === 'object') {
       Object.assign(error, data);

@@ -206,6 +206,9 @@ const {
   ORDER_SHEET_SYNC_JOB_BACKOFF_MS
 } = require('./config/appConstants');
 
+const SHOPEE_DEFAULT_CALL_TO_ACTION_TYPE = 'SHOP_NOW';
+const SHOPEE_CALL_TO_ACTION_TYPES = new Set(['SHOP_NOW', 'NO_BUTTON']);
+
 function normalizeProvider(value) {
   return String(value || 'facebook').trim().toLowerCase() === 'shopee' ? 'shopee' : 'facebook';
 }
@@ -255,6 +258,7 @@ const AUTH_TOKEN_TTL_MS = parseBoundedInt(process.env.AUTH_TOKEN_TTL_MS, 7 * 24 
 const AUTH_SECRET = String(process.env.AUTH_SECRET || process.env.SESSION_SECRET || process.env.FB_APP_SECRET || 'adsctrl-local-auth-secret');
 const DEFAULT_LOGIN_USERS = [
   { username: 'admin', password: process.env.USER_ADMIN_PASSWORD || 'admin', displayName: 'Admin', provider: 'facebook' },
+  { username: 'admin1', password: process.env.USER_ADMIN1_PASSWORD || 'admin', displayName: 'Shopee Admin', provider: 'shopee' },
   { username: 'user2', password: process.env.USER2_PASSWORD || 'admin', displayName: 'User 2', provider: 'facebook' },
   { username: 'user3', password: process.env.USER3_PASSWORD || 'admin', displayName: 'User 3', provider: 'facebook' },
   { username: 'user4', password: process.env.USER4_PASSWORD || 'admin', displayName: 'User 4', provider: 'facebook' }
@@ -479,6 +483,16 @@ function extractShopeeShortLinkCode(value) {
   return match?.[1] || '';
 }
 
+function normalizeShopeeCallToActionType(value) {
+  const normalized = String(value || SHOPEE_DEFAULT_CALL_TO_ACTION_TYPE).trim().toUpperCase();
+  return SHOPEE_CALL_TO_ACTION_TYPES.has(normalized) ? normalized : SHOPEE_DEFAULT_CALL_TO_ACTION_TYPE;
+}
+
+function getDestinationUrlFromLookupTerm(value) {
+  const raw = String(value || '').trim();
+  return /^https?:\/\//i.test(raw) ? raw : '';
+}
+
 function buildPostLookupTerms(value) {
   const raw = String(value || '').trim();
   const shortCode = extractShopeeShortLinkCode(raw);
@@ -503,7 +517,7 @@ function parseCampaignCreateItems(value) {
       const key = `${campaignName}\u0000${lookupTerm}`;
       if (!seen.has(key)) {
         seen.add(key);
-        items.push({ campaignName, lookupTerm });
+        items.push({ campaignName, lookupTerm, destinationUrl: getDestinationUrlFromLookupTerm(lookupTerm) });
       }
       continue;
     }
@@ -515,7 +529,7 @@ function parseCampaignCreateItems(value) {
       const key = `${lookupTerm}\u0000${lookupTerm}`;
       if (!seen.has(key)) {
         seen.add(key);
-        items.push({ campaignName: lookupTerm, lookupTerm });
+        items.push({ campaignName: lookupTerm, lookupTerm, destinationUrl: getDestinationUrlFromLookupTerm(lookupTerm) });
       }
     }
   }
@@ -3303,6 +3317,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
     const destinationType = isShopee ? 'UNDEFINED' : DEFAULT_AD_SET_DESTINATION_TYPE;
     const optimizationGoal = isShopee ? 'LINK_CLICKS' : DEFAULT_AD_SET_OPTIMIZATION_GOAL;
     const campaignBidStrategy = isShopee ? SHOPEE_CAMPAIGN_BID_STRATEGY : DEFAULT_CAMPAIGN_BID_STRATEGY;
+    const shopeeCallToActionType = normalizeShopeeCallToActionType(req.body.callToActionType);
 
     const scheduledStart = parseVietnamCampaignStart(req.body.startTime);
     const campaignDate = todayStr();
@@ -3325,6 +3340,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
     const processCampaignItem = async (item) => {
       const code = item.campaignName;
       const lookupTerm = item.lookupTerm;
+      const destinationUrl = getDestinationUrlFromLookupTerm(item.destinationUrl || lookupTerm);
       let matchedPostInfo = null;
       try {
         const lookupTerms = buildPostLookupTerms(lookupTerm);
@@ -3419,6 +3435,11 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
           }
         };
 
+        if (isShopee && shopeeCallToActionType !== 'NO_BUTTON' && destinationUrl) {
+          creativePayload.call_to_action_type = shopeeCallToActionType;
+          creativePayload.link_url = destinationUrl;
+        }
+
         const creative = await fbPost(fbToken, `${acctId}/adcreatives`, creativePayload, FB_CAMPAIGN_CREATE_REQUEST_OPTIONS);
 
         const ad = await fbPost(fbToken, `${acctId}/ads`, {
@@ -3455,6 +3476,8 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
             optimizationGoal,
             campaignBidStrategy,
             bidAmount: isShopee ? shopeeBidAmount : undefined,
+            callToActionType: isShopee ? shopeeCallToActionType : undefined,
+            destinationUrl: isShopee ? destinationUrl : undefined,
             adName: finalAdName,
             campaignId: campaign.id,
             adSetId: adSet.id,
@@ -3481,6 +3504,8 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
             optimizationGoal,
             campaignBidStrategy,
             bidAmount: isShopee ? shopeeBidAmount : undefined,
+            callToActionType: isShopee ? shopeeCallToActionType : undefined,
+            destinationUrl: isShopee ? destinationUrl : undefined,
             postPageId: matchedPostInfo?.pageId,
             postPageName: matchedPostInfo?.pageName,
             postId: matchedPostInfo?.postId

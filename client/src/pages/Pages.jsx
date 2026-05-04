@@ -15,6 +15,10 @@ const SHOPEE_DEFAULT_DAILY_BUDGET = 50000;
 const SHOPEE_DEFAULT_BID_AMOUNT = 500;
 const SHOPEE_DEFAULT_AGE_MIN = 20;
 const SHOPEE_DEFAULT_AGE_MAX = 44;
+const SHOPEE_CTA_OPTIONS = [
+  { value: 'SHOP_NOW', label: 'Mua ngay' },
+  { value: 'NO_BUTTON', label: 'Khong them' }
+];
 const AD_NAME_PREFIX_OPTIONS = ['PHAT', 'BINH', 'HIEU'];
 const AD_STATUS_OPTIONS = ['Sale', 'Sẵn', 'Win', 'Test'];
 
@@ -121,6 +125,7 @@ export default function CreateCampaign() {
   const [adNameStatus, setAdNameStatus] = useState('Test');
   const [campaignCodes, setCampaignCodes] = useState('');
   const [campaignLinks, setCampaignLinks] = useState('');
+  const [shopeeCallToActionType, setShopeeCallToActionType] = useState('SHOP_NOW');
   const [dailyBudget, setDailyBudget] = useState(
     isInitialShopeeProvider ? SHOPEE_DEFAULT_DAILY_BUDGET : FACEBOOK_DEFAULT_DAILY_BUDGET
   );
@@ -430,7 +435,9 @@ export default function CreateCampaign() {
         startTime: campaignStartTime,
         ageMin,
         ageMax,
-        ...(selectedProvider === 'shopee' ? { bidAmount } : { adNamePrefix, adNameStatus }),
+        ...(selectedProvider === 'shopee'
+          ? { bidAmount, callToActionType: shopeeCallToActionType }
+          : { adNamePrefix, adNameStatus }),
         pageId: selectedPage?.id || ''
       }, {
         timeoutMs: 15 * 60 * 1000
@@ -449,7 +456,12 @@ export default function CreateCampaign() {
         }
       }
     } catch (e) {
-      toast.error('Loi tao camp: ' + e.message);
+      if (e.status === 504) {
+        toast.warn('Tao camp bi qua thoi gian cho. Camp co the da tao xong, dang tai lai danh sach de kiem tra.');
+        loadTodayCampaigns();
+      } else {
+        toast.error('Loi tao camp: ' + e.message);
+      }
     } finally {
       setCreatingCampaigns(false);
     }
@@ -509,7 +521,7 @@ export default function CreateCampaign() {
   };
 
   const campaignFormColumns = selectedProvider === 'shopee'
-    ? 'minmax(240px, 0.9fr) minmax(300px, 1.15fr) minmax(340px, 1.35fr) 140px 110px 180px 80px 80px'
+    ? 'minmax(240px, 0.95fr) minmax(280px, 1.05fr) minmax(320px, 1.2fr) minmax(150px, 0.7fr) 130px 105px 180px 80px 80px'
     : 'minmax(260px, 1fr) 120px minmax(340px, 1.4fr) 150px 190px 90px 90px';
 
   return (
@@ -632,6 +644,25 @@ export default function CreateCampaign() {
                   onChange={e => setCampaignLinks(e.target.value)}
                   placeholder="Moi dong mot link, vi du: https://s.shopee.vn/5AmboEuNpt"
                 />
+              </div>
+            )}
+            {selectedProvider === 'shopee' && (
+              <div className="form-group shopee-cta-field" style={{ marginBottom: 0 }}>
+                <label>Nut keu goi hanh dong</label>
+                <select
+                  value={shopeeCallToActionType}
+                  onChange={e => setShopeeCallToActionType(e.target.value)}
+                >
+                  {SHOPEE_CTA_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                {shopeeCallToActionType === 'SHOP_NOW' && (
+                  <div className="shopee-cta-preview">
+                    <strong>Mua ngay</strong>
+                    <span>{splitNonEmptyLines(campaignLinks)[0] || 'Link san pham theo tung dong'}</span>
+                  </div>
+                )}
               </div>
             )}
             <div className="form-group" style={{ marginBottom: 0 }}>
