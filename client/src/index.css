@@ -38,6 +38,12 @@
 
     html {
       scroll-behavior: smooth;
+      min-height: 100%;
+    }
+
+    html,
+    body {
+      width: 100%;
     }
 
     body {
@@ -47,6 +53,13 @@
       min-height: 100vh;
       display: flex;
       overflow-x: hidden;
+    }
+
+    #root {
+      width: 100%;
+      min-height: 100vh;
+      display: flex;
+      min-width: 0;
     }
 
     /* Custom Scrollbar */
@@ -68,6 +81,7 @@
     .auth-screen {
       min-height: 100vh;
       width: 100%;
+      flex: 1 1 auto;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -540,8 +554,32 @@
     .campaign-create-controls {
       padding: 14px 16px;
       display: grid;
+      grid-template-columns: var(--campaign-form-columns);
       gap: 12px;
       align-items: start;
+    }
+
+    .create-campaign-layout {
+      display: grid;
+      grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+      gap: 16px;
+      min-height: calc(100vh - 140px);
+      min-width: 0;
+    }
+
+    .create-campaign-pages-panel,
+    .create-campaign-posts-panel {
+      display: flex;
+      flex-direction: column;
+      max-height: calc(100vh - 140px);
+      min-width: 0;
+    }
+
+    .post-card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+      gap: 12px;
+      min-width: 0;
     }
 
     .campaign-create-controls .form-group {
@@ -591,6 +629,71 @@
       color: var(--muted2);
       font-family: var(--mono);
       font-size: 10px;
+    }
+
+    .campaign-create-controls textarea,
+    .campaign-create-controls input,
+    .campaign-create-controls select {
+      width: 100%;
+      min-width: 0;
+    }
+
+    .campaign-create-controls label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @media (max-width: 1700px) {
+      .campaign-create-controls {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+      }
+
+      .campaign-create-controls .campaign-codes-field,
+      .campaign-create-controls .shopee-cta-field {
+        grid-column: span 2;
+      }
+    }
+
+    @media (max-width: 1280px) {
+      .campaign-create-controls {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .campaign-create-controls .campaign-codes-field,
+      .campaign-create-controls .shopee-cta-field {
+        grid-column: span 1;
+      }
+
+      .create-campaign-layout {
+        grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+      }
+    }
+
+    @media (max-width: 1100px) {
+      .create-campaign-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .create-campaign-layout > .card {
+        grid-column: auto !important;
+      }
+
+      .create-campaign-pages-panel,
+      .create-campaign-posts-panel {
+        max-height: none;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .campaign-create-controls {
+        grid-template-columns: 1fr;
+        padding: 12px;
+      }
+
+      .campaign-create-controls .campaign-codes-field,
+      .campaign-create-controls .shopee-cta-field {
+        grid-column: auto;
+      }
     }
 
     .form-group {

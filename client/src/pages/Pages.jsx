@@ -526,7 +526,7 @@ export default function CreateCampaign() {
 
   return (
     <div id="page-create-campaign">
-      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '16px', minHeight: 'calc(100vh - 140px)' }}>
+      <div className="create-campaign-layout">
         <div className="card" style={{ gridColumn: '1 / -1', overflow: 'visible' }}>
           <div className="card-header">
             <div className="card-title">Tao camp tu ma san pham</div>
@@ -536,7 +536,7 @@ export default function CreateCampaign() {
           </div>
           <div
             className={`campaign-create-controls ${selectedProvider === 'shopee' ? 'shopee' : 'facebook'}`}
-            style={{ gridTemplateColumns: campaignFormColumns }}
+            style={{ '--campaign-form-columns': campaignFormColumns }}
           >
             <div className="form-group campaign-codes-field" style={{ marginBottom: 0 }}>
               <label>Tai khoan quang cao</label>
@@ -753,7 +753,7 @@ export default function CreateCampaign() {
         </div>
 
         {/* â”€â”€ Left: Pages List â”€â”€ */}
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 140px)' }}>
+        <div className="card create-campaign-pages-panel">
           <div className="card-header" style={{ flexShrink: 0 }}>
             <div className="card-title">Pages ({filteredPages.length})</div>
             <button className="btn btn-ghost btn-sm" onClick={loadPages} disabled={loadingPages}>
@@ -892,7 +892,7 @@ export default function CreateCampaign() {
         </div>
 
         {/* â”€â”€ Right: Posts â”€â”€ */}
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 140px)' }}>
+        <div className="card create-campaign-posts-panel">
           <div className="card-header" style={{ flexShrink: 0 }}>
             <div className="card-title" style={{ gap: '12px' }}>
               <span>{selectedPage ? `Bai viet - ${selectedPage.name}` : 'Tat ca bai viet'}</span>
@@ -954,7 +954,7 @@ export default function CreateCampaign() {
               </div>
             ) : (
               <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '12px' }}>
+              <div className="post-card-grid">
                 {visiblePosts.map(post => (
                   <div
                     key={post.id}
