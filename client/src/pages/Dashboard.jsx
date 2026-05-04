@@ -23,17 +23,9 @@ const formatDateTime = (value) => {
   if (Number.isNaN(date.getTime())) return '-';
   return dateTimeString(date);
 };
-const campaignCreatedDateKey = (value) => {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
-};
 const normalizeCampaignDuplicateKey = (campaign) => {
   const name = String(campaign.name || '').toUpperCase().replace(/\s+/g, '').trim();
-  if (!name) return '';
-  const createdDate = campaignCreatedDateKey(campaign.createdTime || campaign.created_time);
-  return `${createdDate || 'NO_DATE'}:${name}`;
+  return name;
 };
 
 const DASHBOARD_CAMPAIGNS_PER_PAGE = 500;
