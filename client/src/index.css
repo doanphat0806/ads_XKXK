@@ -567,6 +567,28 @@
       min-width: 0;
     }
 
+    #page-create-campaign {
+      min-width: 0;
+      overflow-x: hidden;
+    }
+
+    #page-create-campaign .card-header {
+      min-width: 0;
+      gap: 10px;
+    }
+
+    #page-create-campaign .card-title {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    #page-create-campaign .card-title span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .create-campaign-pages-panel,
     .create-campaign-posts-panel {
       display: flex;
@@ -672,6 +694,7 @@
     @media (max-width: 1100px) {
       .create-campaign-layout {
         grid-template-columns: 1fr;
+        min-height: auto;
       }
 
       .create-campaign-layout > .card {
@@ -682,9 +705,41 @@
       .create-campaign-posts-panel {
         max-height: none;
       }
+
+      .create-campaign-pages-panel {
+        max-height: 420px;
+      }
     }
 
     @media (max-width: 720px) {
+      #page-create-campaign .card {
+        border-radius: 14px;
+      }
+
+      #page-create-campaign .card-header {
+        align-items: flex-start;
+        flex-wrap: wrap;
+        padding: 12px;
+      }
+
+      #page-create-campaign .card-header > .btn,
+      #page-create-campaign .card-header > div:not(.card-title) .btn {
+        min-height: 32px;
+      }
+
+      #page-create-campaign .card-title {
+        flex-basis: 100%;
+        font-size: 11px;
+        letter-spacing: 0.7px;
+      }
+
+      #page-create-campaign .card-header > div:not(.card-title) {
+        width: 100%;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
       .campaign-create-controls {
         grid-template-columns: 1fr;
         padding: 12px;
@@ -693,6 +748,32 @@
       .campaign-create-controls .campaign-codes-field,
       .campaign-create-controls .shopee-cta-field {
         grid-column: auto;
+      }
+
+      .campaign-create-controls .quick-account-row {
+        margin-right: -12px;
+        padding-right: 12px;
+      }
+
+      .campaign-create-controls .quick-account-btn {
+        max-width: 96px;
+        padding: 6px 8px;
+      }
+
+      .create-campaign-layout {
+        gap: 12px;
+      }
+
+      .create-campaign-pages-panel {
+        max-height: 360px;
+      }
+
+      .post-card-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .post-card-grid > div {
+        border-radius: 8px !important;
       }
     }
 
