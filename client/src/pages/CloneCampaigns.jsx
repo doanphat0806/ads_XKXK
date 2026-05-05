@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { toast } from 'react-toastify';
 import { CalendarClock, CheckSquare, Copy, RefreshCw, Square, X } from 'lucide-react';
 import { useAppContext } from '../contexts/AppContext';
-import { api, cachedApi, readResponseCache, formatVND, formatNumber, todayString } from '../lib/api';
+import { api, cachedApi, readResponseCache, formatVND, formatNumber, todayString, displayDateTime24, normalizeDateTime24Input } from '../lib/api';
 
 function getDefaultDuplicateStartTime() {
   const start = new Date(Date.now() + 10 * 60 * 1000 + 7 * 60 * 60 * 1000);
@@ -24,11 +24,12 @@ function getCampaignSelectionKey(campaign) {
 
 function getDateTimeMs(value) {
   if (!value) return null;
-  const timestamp = new Date(value).getTime();
+  const timestamp = new Date(normalizeDateTime24Input(value)).getTime();
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function formatScheduleValue(value) {
+  if (value) return displayDateTime24(value);
   return value ? value.replace('T', ' ') : 'Không đặt';
 }
 
@@ -277,18 +278,24 @@ export default function CloneCampaigns() {
           <label className="duplicate-field">
             <span>Bắt đầu</span>
             <input
-              type="datetime-local"
-              value={duplicateStartTime}
-              onChange={event => setDuplicateStartTime(event.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="\d{4}-\d{2}-\d{2} \d{2}:\d{2}"
+              placeholder="YYYY-MM-DD HH:mm"
+              value={displayDateTime24(duplicateStartTime)}
+              onChange={event => setDuplicateStartTime(normalizeDateTime24Input(event.target.value))}
               disabled={duplicating}
             />
           </label>
           <label className="duplicate-field">
             <span>Kết thúc</span>
             <input
-              type="datetime-local"
-              value={duplicateEndTime}
-              onChange={event => setDuplicateEndTime(event.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="\d{4}-\d{2}-\d{2} \d{2}:\d{2}"
+              placeholder="YYYY-MM-DD HH:mm"
+              value={displayDateTime24(duplicateEndTime)}
+              onChange={event => setDuplicateEndTime(normalizeDateTime24Input(event.target.value))}
               disabled={duplicating}
             />
           </label>

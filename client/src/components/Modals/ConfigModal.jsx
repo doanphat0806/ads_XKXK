@@ -198,11 +198,11 @@ export default function ConfigModal() {
           <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <div className="form-group">
               <label>Bắt đầu</label>
-              <input type="time" value={autoRules.start} onChange={e => setAutoRules({ ...autoRules, start: e.target.value })} />
+              <input type="text" inputMode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:mm" value={autoRules.start} onChange={e => setAutoRules({ ...autoRules, start: e.target.value })} />
             </div>
             <div className="form-group">
               <label>Kết thúc</label>
-              <input type="time" value={autoRules.end} onChange={e => setAutoRules({ ...autoRules, end: e.target.value })} />
+              <input type="text" inputMode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:mm" value={autoRules.end} onChange={e => setAutoRules({ ...autoRules, end: e.target.value })} />
             </div>
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>

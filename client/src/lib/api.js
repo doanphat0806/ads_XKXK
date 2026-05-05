@@ -125,6 +125,13 @@ export const todayString = () => {
   return vnTime.toISOString().split('T')[0];
 };
 
+export const displayDateTime24 = (value) => String(value || '').replace('T', ' ');
+
+export const normalizeDateTime24Input = (value) => String(value || '')
+  .replace(/^\s+/, '')
+  .replace(/\s+/, 'T')
+  .replace(/\s+$/, '');
+
 export const timeString = (d) => new Date(d).toLocaleTimeString('vi-VN', {
   hour: '2-digit',
   minute: '2-digit',

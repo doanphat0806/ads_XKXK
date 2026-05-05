@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { api } from '../lib/api';
+import { api, displayDateTime24, normalizeDateTime24Input } from '../lib/api';
 import { useAppContext } from '../contexts/AppContext';
 import { toast } from 'react-toastify';
 
@@ -700,9 +700,12 @@ export default function CreateCampaign() {
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label>Thoi gian bat dau (gio VN)</label>
               <input
-                type="datetime-local"
-                value={campaignStartTime}
-                onChange={e => setCampaignStartTime(e.target.value)}
+                type="text"
+                inputMode="numeric"
+                pattern="\d{4}-\d{2}-\d{2} \d{2}:\d{2}"
+                placeholder="YYYY-MM-DD HH:mm"
+                value={displayDateTime24(campaignStartTime)}
+                onChange={e => setCampaignStartTime(normalizeDateTime24Input(e.target.value))}
               />
             </div>
             <div className="form-group" style={{ marginBottom: 0 }}>
