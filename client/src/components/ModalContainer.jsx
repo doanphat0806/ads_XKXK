@@ -5,7 +5,6 @@ import AutomationModal from './Modals/AutomationModal';
 import ConfigModal from './Modals/ConfigModal';
 import BulkAddModal from './Modals/BulkAddModal';
 import ShopeePagesModal from './Modals/ShopeePagesModal';
-import ThemeModal from './Modals/ThemeModal';
 
 export default function ModalContainer() {
   const { modalState, closeModal } = useAppContext();
@@ -24,8 +23,6 @@ export default function ModalContainer() {
         return <BulkAddModal />;
       case 'SHOPEE_PAGES':
         return <ShopeePagesModal />;
-      case 'THEME':
-        return <ThemeModal />;
       default:
         return null;
     }

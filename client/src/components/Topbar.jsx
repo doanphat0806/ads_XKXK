@@ -43,7 +43,6 @@ export default function Topbar({ title }) {
           {new Date().toLocaleDateString('vi-VN')}
         </span>
         <button className="btn btn-ghost btn-sm" onClick={() => openModal('CONFIG')}>Token / API key</button>
-        <button className="btn btn-ghost btn-sm" onClick={() => openModal('THEME')}>Mau</button>
         <button className="btn btn-ghost btn-sm" onClick={refreshAll}>Lam moi</button>
         <button
           className="btn btn-ghost btn-sm"

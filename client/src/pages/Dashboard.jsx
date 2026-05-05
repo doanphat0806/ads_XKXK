@@ -28,6 +28,11 @@ const normalizeCampaignDuplicateKey = (campaign) => {
   return name;
 };
 
+const keepCurrentSortStatus = (campaign) => ({
+  ...campaign,
+  sortStatus: String(campaign.sortStatus || campaign.status || '').toUpperCase()
+});
+
 const DASHBOARD_CAMPAIGNS_PER_PAGE = 500;
 const DASHBOARD_INITIAL_RENDER_ROWS = 300;
 const DASHBOARD_RENDER_BATCH_ROWS = 300;
@@ -222,7 +227,7 @@ export default function Dashboard() {
       const cachedStats = readResponseCache(`GET:${statsUrl}`);
       const cachedCampaigns = readResponseCache(`GET:${campaignsUrl}`);
       if (cachedStats) setLocalStats(cachedStats);
-      if (cachedCampaigns) setLocalCampaigns(cachedCampaigns);
+      if (cachedCampaigns) setLocalCampaigns(cachedCampaigns.map(keepCurrentSortStatus));
       if (cachedStats && cachedCampaigns) setStatsLoading(false);
 
       const [sData, cData] = await Promise.all([
@@ -230,7 +235,7 @@ export default function Dashboard() {
         cachedApi('GET', campaignsUrl, null, { timeoutMs: 5 * 60 * 1000 })
       ]);
       setLocalStats(sData);
-      setLocalCampaigns(cData);
+      setLocalCampaigns(cData.map(keepCurrentSortStatus));
     } catch (e) {
       console.error('Failed to load dashboard data', e);
     } finally {
@@ -460,8 +465,8 @@ export default function Dashboard() {
 
     return [...campaignsWithDuplicates].sort((a, b) => {
       const dir = sortDir === 'asc' ? 1 : -1;
-      const statusA = String(a.status || '').toUpperCase() === 'ACTIVE' ? 1 : 0;
-      const statusB = String(b.status || '').toUpperCase() === 'ACTIVE' ? 1 : 0;
+      const statusA = String(a.sortStatus || a.status || '').toUpperCase() === 'ACTIVE' ? 1 : 0;
+      const statusB = String(b.sortStatus || b.status || '').toUpperCase() === 'ACTIVE' ? 1 : 0;
       if (statusA !== statusB) return statusB - statusA;
       if (sortField === 'duplicateCount') return dir * ((a.sameDayDuplicateCount || 1) - (b.sameDayDuplicateCount || 1));
       if (sortField === 'orderCount') return dir * ((a.orderCount || 0) - (b.orderCount || 0));
