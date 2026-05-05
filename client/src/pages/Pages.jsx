@@ -11,13 +11,13 @@ const POSTS_AUTO_REFRESH_MS = 5 * 60 * 1000;
 const FACEBOOK_DEFAULT_DAILY_BUDGET = 300000;
 const FACEBOOK_DEFAULT_AGE_MIN = 18;
 const FACEBOOK_DEFAULT_AGE_MAX = 50;
-const SHOPEE_DEFAULT_DAILY_BUDGET = 50000;
+const SHOPEE_DEFAULT_DAILY_BUDGET = 150000;
 const SHOPEE_DEFAULT_BID_AMOUNT = 500;
 const SHOPEE_DEFAULT_AGE_MIN = 20;
-const SHOPEE_DEFAULT_AGE_MAX = 44;
+const SHOPEE_DEFAULT_AGE_MAX = 50;
 const SHOPEE_CTA_OPTIONS = [
-  { value: 'SHOP_NOW', label: 'Mua ngay' },
-  { value: 'NO_BUTTON', label: 'Khong them' }
+  { value: 'NO_BUTTON', label: 'Khong them' },
+  { value: 'SHOP_NOW', label: 'Mua ngay' }
 ];
 const AD_NAME_PREFIX_OPTIONS = ['PHAT', 'BINH', 'HIEU'];
 const AD_STATUS_OPTIONS = ['Sale', 'Sẵn', 'Win', 'Test'];
@@ -125,7 +125,7 @@ export default function CreateCampaign() {
   const [adNameStatus, setAdNameStatus] = useState('Test');
   const [campaignCodes, setCampaignCodes] = useState('');
   const [campaignLinks, setCampaignLinks] = useState('');
-  const [shopeeCallToActionType, setShopeeCallToActionType] = useState('SHOP_NOW');
+  const [shopeeCallToActionType, setShopeeCallToActionType] = useState('NO_BUTTON');
   const [dailyBudget, setDailyBudget] = useState(
     isInitialShopeeProvider ? SHOPEE_DEFAULT_DAILY_BUDGET : FACEBOOK_DEFAULT_DAILY_BUDGET
   );

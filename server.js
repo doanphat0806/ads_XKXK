@@ -206,7 +206,7 @@ const {
   ORDER_SHEET_SYNC_JOB_BACKOFF_MS
 } = require('./config/appConstants');
 
-const SHOPEE_DEFAULT_CALL_TO_ACTION_TYPE = 'SHOP_NOW';
+const SHOPEE_DEFAULT_CALL_TO_ACTION_TYPE = 'NO_BUTTON';
 const SHOPEE_CALL_TO_ACTION_TYPES = new Set(['SHOP_NOW', 'NO_BUTTON']);
 
 function normalizeProvider(value) {
@@ -3410,7 +3410,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
             ...(isShopee ? {
               publisher_platforms: ['facebook', 'instagram', 'messenger'],
               facebook_positions: ['feed', 'facebook_reels', 'facebook_reels_overlay', 'profile_feed', 'notification', 'instream_video', 'marketplace', 'story', 'search'],
-              instagram_positions: ['stream', 'ig_search', 'profile_reels', 'story', 'explore', 'reels', 'explore_home', 'profile_feed'],
+              instagram_positions: ['stream', 'ig_search', 'story', 'explore', 'reels', 'explore_home', 'profile_feed'],
               messenger_positions: ['story'],
               device_platforms: ['mobile', 'desktop']
             } : {
