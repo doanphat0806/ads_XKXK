@@ -471,12 +471,8 @@ export default function Dashboard() {
   const visibleCampaigns = useMemo(() => pageCampaigns.slice(0, renderLimit), [pageCampaigns, renderLimit]);
   const metaAvgCPM = useMemo(() => {
     if (isShopee) return 0;
-    const messageCosts = processedCampaigns
-      .map(campaign => Number(campaign.costPerMessage || 0))
-      .filter(cost => cost > 0);
-    const totalCost = messageCosts.reduce((sum, cost) => sum + cost, 0);
-    return messageCosts.length > 0 ? totalCost / messageCosts.length : 0;
-  }, [processedCampaigns, isShopee]);
+    return Number(localStats.avgCPM || 0);
+  }, [localStats.avgCPM, isShopee]);
 
   const duplicateCampaignsToPause = useMemo(() => {
     const groups = processedCampaigns.reduce((items, campaign) => {
