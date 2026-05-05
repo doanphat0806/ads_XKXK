@@ -31,6 +31,7 @@ const normalizeCampaignDuplicateKey = (campaign) => {
 const DASHBOARD_CAMPAIGNS_PER_PAGE = 500;
 const DASHBOARD_INITIAL_RENDER_ROWS = 300;
 const DASHBOARD_RENDER_BATCH_ROWS = 300;
+const CAMPAIGN_TOGGLE_RELOAD_DELAY_MS = 2 * 60 * 1000;
 const CAMPAIGN_RETURN_STATS_FROM_DATE = '2026-02-22';
 const CPO_WARNING_THRESHOLD = 100000;
 const ORDER_REFRESH_MS = 10000;
@@ -155,6 +156,7 @@ export default function Dashboard() {
   const editingBudgetRef = useRef('');
   const savingBudgetIdsRef = useRef(new Set());
   const togglingCampaignIdsRef = useRef(new Set());
+  const toggleReloadTimerRef = useRef(null);
 
   const [sortField, setSortField] = useState('spend');
   const [sortDir, setSortDir] = useState('desc');
@@ -236,6 +238,24 @@ export default function Dashboard() {
     }
   }, [provider]);
 
+  const reloadDashboardNow = useCallback(() => {
+    if (toggleReloadTimerRef.current) {
+      window.clearTimeout(toggleReloadTimerRef.current);
+      toggleReloadTimerRef.current = null;
+    }
+    loadDashboardData(reportFromDate, reportToDate);
+  }, [loadDashboardData, reportFromDate, reportToDate]);
+
+  const scheduleToggleReload = useCallback(() => {
+    if (toggleReloadTimerRef.current) {
+      window.clearTimeout(toggleReloadTimerRef.current);
+    }
+    toggleReloadTimerRef.current = window.setTimeout(() => {
+      toggleReloadTimerRef.current = null;
+      loadDashboardData(reportFromDate, reportToDate);
+    }, CAMPAIGN_TOGGLE_RELOAD_DELAY_MS);
+  }, [loadDashboardData, reportFromDate, reportToDate]);
+
   const toggleCampaignStatus = useCallback(async (campaign) => {
     const accountId = campaign.accountId?._id || campaign.accountId;
     if (!campaign.campaignId || !accountId || togglingCampaignIdsRef.current.has(campaign.campaignId)) return;
@@ -255,6 +275,7 @@ export default function Dashboard() {
         )));
       }
       toast.success(previousStatus === 'ACTIVE' ? 'Da tat camp' : 'Da bat camp');
+      scheduleToggleReload();
     } catch (error) {
       setLocalCampaigns(items => items.map(item => (
         item.campaignId === campaign.campaignId ? { ...item, status: previousStatus } : item
@@ -267,7 +288,7 @@ export default function Dashboard() {
         return next;
       });
     }
-  }, [reportFromDate]);
+  }, [reportFromDate, scheduleToggleReload]);
 
   const startRenameCampaign = useCallback((campaign) => {
     if (renamingCampaignIdRef.current) return;
@@ -543,9 +564,16 @@ export default function Dashboard() {
       toast.error(`Loi tat ${failedCount}/${targets.length} camp trung`);
     } else {
       toast.success(`Da tat ${targets.length} camp trung`);
+      scheduleToggleReload();
     }
     setDisablingDuplicates(false);
-  }, [disablingDuplicates, duplicateCampaignsToPause, reportFromDate]);
+  }, [disablingDuplicates, duplicateCampaignsToPause, reportFromDate, scheduleToggleReload]);
+
+  useEffect(() => {
+    return () => {
+      if (toggleReloadTimerRef.current) window.clearTimeout(toggleReloadTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -664,6 +692,9 @@ export default function Dashboard() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
             <div className="card-title" style={{ margin: 0 }}>Bao cao chi tiet {dateLabel}</div>
             <DateRangePicker fromDate={reportFromDate} toDate={reportToDate} onChange={(from, to) => { setReportFromDate(from); setReportToDate(to); }} centered />
+            <button className="btn btn-ghost btn-sm" onClick={reloadDashboardNow} disabled={statsLoading}>
+              Reload
+            </button>
             <input
               type="search"
               value={campaignSearch}

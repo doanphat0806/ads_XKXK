@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import { api, apiUrl, cachedApi, readResponseCache, formatVND, formatNumber, todayString } from '../lib/api';
 import { toast } from 'react-toastify';
@@ -9,6 +9,7 @@ function normalizeStatus(status) {
 }
 
 const CAMPAIGNS_PER_PAGE = 500;
+const CAMPAIGN_TOGGLE_RELOAD_DELAY_MS = 2 * 60 * 1000;
 
 function offsetDateString(dateKey, days) {
   const date = new Date(`${dateKey}T00:00:00Z`);
@@ -35,6 +36,7 @@ export default function Campaigns() {
   const [syncing, setSyncing] = useState(false);
   const [syncJob, setSyncJob] = useState(null);
   const [exporting, setExporting] = useState(false);
+  const toggleReloadTimerRef = useRef(null);
 
   const loadCampaigns = useCallback(async (showLoader = true) => {
     if (showLoader || campaigns.length === 0) {
@@ -64,6 +66,24 @@ export default function Campaigns() {
     }
   }, [filterAcc, filterFromDate, filterToDate, provider, campaigns.length]);
 
+  const reloadCampaignsNow = useCallback((showLoader = true) => {
+    if (toggleReloadTimerRef.current) {
+      window.clearTimeout(toggleReloadTimerRef.current);
+      toggleReloadTimerRef.current = null;
+    }
+    loadCampaigns(showLoader);
+  }, [loadCampaigns]);
+
+  const scheduleToggleReload = useCallback(() => {
+    if (toggleReloadTimerRef.current) {
+      window.clearTimeout(toggleReloadTimerRef.current);
+    }
+    toggleReloadTimerRef.current = window.setTimeout(() => {
+      toggleReloadTimerRef.current = null;
+      loadCampaigns(true);
+    }, CAMPAIGN_TOGGLE_RELOAD_DELAY_MS);
+  }, [loadCampaigns]);
+
   useEffect(() => {
     setFilterAcc('');
   }, [provider]);
@@ -72,12 +92,25 @@ export default function Campaigns() {
     loadCampaigns(false);
   }, [loadCampaigns]);
 
+  useEffect(() => {
+    return () => {
+      if (toggleReloadTimerRef.current) window.clearTimeout(toggleReloadTimerRef.current);
+    };
+  }, []);
+
   const toggleCampaignStatus = async (campaignId, accountId, currentStatus) => {
+    const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
     try {
+      setCampaigns(items => items.map(item => (
+        item.campaignId === campaignId ? { ...item, status: nextStatus } : item
+      )));
       await api('POST', `/campaigns/${campaignId}/toggle`, { accountId, currentStatus, date: filterFromDate });
       toast.success(currentStatus === 'ACTIVE' ? 'Đã tạm dừng' : 'Đã bật');
-      loadCampaigns();
+      scheduleToggleReload();
     } catch (error) {
+      setCampaigns(items => items.map(item => (
+        item.campaignId === campaignId ? { ...item, status: currentStatus } : item
+      )));
       toast.error('Lỗi: ' + error.message);
     }
   };
@@ -318,7 +351,7 @@ export default function Campaigns() {
                 ? `${(currentPage - 1) * CAMPAIGNS_PER_PAGE + 1}-${Math.min(currentPage * CAMPAIGNS_PER_PAGE, filteredCampaigns.length)} / ${filteredCampaigns.length}`
                 : '0 / 0'}
             </span>
-            <button className="btn btn-ghost btn-sm" onClick={() => loadCampaigns(true)}>↻</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => reloadCampaignsNow(true)}>↻</button>
           </div>
         </div>
         <div className="tbl-wrap">
