@@ -418,12 +418,19 @@ export default function Campaigns() {
                       </td>
                       <td className="text-right mono-sm" style={{ color: 'var(--muted2)' }}>{formatNumber(campaign.clicks || 0)}</td>
                       <td>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => toggleCampaignStatus(campaign.campaignId, campaign.accountId?._id || campaign.accountId, statusNormalized)}
+                        <label
+                          className="tgl"
+                          title={statusNormalized === 'ACTIVE' ? 'Tat camp' : 'Bat camp'}
                         >
+                          <input
+                            type="checkbox"
+                            checked={statusNormalized === 'ACTIVE'}
+                            onChange={() => toggleCampaignStatus(campaign.campaignId, campaign.accountId?._id || campaign.accountId, statusNormalized)}
+                          />
+                          <div className="tgl-track"></div>
+                          <div className="tgl-thumb"></div>
                           {statusNormalized === 'ACTIVE' ? '⏸' : '▶'}
-                        </button>
+                        </label>
                       </td>
                     </tr>
                   );
