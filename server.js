@@ -435,8 +435,30 @@ function parseSignedState(prefix, state = '') {
 }
 
 function getGoogleOAuthConfig(req) {
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI ||
-    `${req.protocol}://${req.get('host')}/api/google/oauth/callback`;
+  const runtimeRedirectUri = `${req.protocol}://${req.get('host')}/api/google/oauth/callback`;
+  const configuredRedirectUri = String(process.env.GOOGLE_REDIRECT_URI || '').trim();
+  let redirectUri = runtimeRedirectUri;
+
+  if (configuredRedirectUri) {
+    try {
+      const configuredUrl = new URL(configuredRedirectUri);
+      const runtimeUrl = new URL(runtimeRedirectUri);
+      const configuredHost = configuredUrl.host.toLowerCase();
+      const runtimeHost = runtimeUrl.host.toLowerCase();
+      const configuredIsLocalhost = ['localhost', '127.0.0.1'].includes(configuredUrl.hostname.toLowerCase());
+      const runtimeIsLocalhost = ['localhost', '127.0.0.1'].includes(runtimeUrl.hostname.toLowerCase());
+
+      if (
+        configuredHost === runtimeHost ||
+        (configuredIsLocalhost && runtimeIsLocalhost)
+      ) {
+        redirectUri = configuredRedirectUri;
+      }
+    } catch {
+      redirectUri = runtimeRedirectUri;
+    }
+  }
+
   return {
     clientId: String(process.env.GOOGLE_CLIENT_ID || '').trim(),
     clientSecret: String(process.env.GOOGLE_CLIENT_SECRET || '').trim(),
