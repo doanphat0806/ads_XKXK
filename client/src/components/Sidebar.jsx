@@ -43,6 +43,14 @@ export default function Sidebar() {
         </NavLink>
       )}
 
+      <NavLink to="/inventory" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <span className="icon">K</span><span>Kho</span>
+      </NavLink>
+
+      <NavLink to="/google-sheets" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <span className="icon">G</span><span>Google Sheet</span>
+      </NavLink>
+
       <NavLink to="/logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <span className="icon">📋</span><span>Nhat ky</span>
       </NavLink>

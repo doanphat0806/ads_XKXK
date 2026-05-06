@@ -137,10 +137,15 @@ const Config = require('./models/Config');
 const User = require('./models/User');
 const FacebookToken = require('./models/FacebookToken');
 const Order = require('./models/Order');
+const InventoryItem = require('./models/InventoryItem');
 const FacebookPost = require('./models/FacebookPost');
 const {
   buildOrderQuery,
+  getOrderItemsFromRaw,
+  getOrderItemSku,
+  getOrderItemQuantity,
   useSheetOrders,
+  normalizeStatusKey,
   buildOrderSkuStats,
   fetchOrderSheetRows,
   getOrderSheetOrders,
@@ -156,6 +161,12 @@ const {
   startFacebookTokenCron,
   FACEBOOK_TOKEN_KEY
 } = require('./services/facebookTokenService');
+const {
+  fetchInventorySheetItems,
+  fetchInventorySheetRowsWithGoogleAccess,
+  fetchInventorySheetItemsWithGoogleAccess,
+  updateInventorySheetSalePriceWithGoogleAccess
+} = require('./services/inventorySheetService');
 const {
   DEFAULT_CAMPAIGN_DAILY_BUDGET,
   SHOPEE_CAMPAIGN_DAILY_BUDGET,
@@ -394,6 +405,94 @@ function parseAuthToken(token = '') {
   }
 }
 
+const GOOGLE_OAUTH_SCOPES = [
+  'openid',
+  'email',
+  'profile',
+  'https://www.googleapis.com/auth/drive.metadata.readonly',
+  'https://www.googleapis.com/auth/spreadsheets'
+];
+
+function createSignedState(prefix, data = {}) {
+  const payload = Buffer.from(JSON.stringify({
+    ...data,
+    exp: Date.now() + 10 * 60 * 1000,
+    nonce: crypto.randomBytes(12).toString('hex')
+  })).toString('base64url');
+  return `${payload}.${signAuthPayload(`${prefix}:${payload}`)}`;
+}
+
+function parseSignedState(prefix, state = '') {
+  const [payload, signature] = String(state || '').split('.');
+  if (!payload || !signature || signAuthPayload(`${prefix}:${payload}`) !== signature) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!data?.exp || Date.now() > data.exp) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function getGoogleOAuthConfig(req) {
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI ||
+    `${req.protocol}://${req.get('host')}/api/google/oauth/callback`;
+  return {
+    clientId: String(process.env.GOOGLE_CLIENT_ID || '').trim(),
+    clientSecret: String(process.env.GOOGLE_CLIENT_SECRET || '').trim(),
+    redirectUri
+  };
+}
+
+function requireGoogleOAuthConfig(req) {
+  const config = getGoogleOAuthConfig(req);
+  if (!config.clientId || !config.clientSecret) {
+    throw new Error('Chua cau hinh GOOGLE_CLIENT_ID va GOOGLE_CLIENT_SECRET trong .env');
+  }
+  return config;
+}
+
+async function refreshGoogleAccessToken(user, req) {
+  if (!user?.googleRefreshToken) {
+    throw new Error('Chua dang nhap Google hoac thieu refresh token');
+  }
+
+  const { clientId, clientSecret } = requireGoogleOAuthConfig(req);
+  const response = await axios.post('https://oauth2.googleapis.com/token', new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    refresh_token: user.googleRefreshToken,
+    grant_type: 'refresh_token'
+  }).toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  });
+
+  const tokenData = response.data || {};
+  const expiresAt = new Date(Date.now() + Number(tokenData.expires_in || 3600) * 1000);
+  await User.findByIdAndUpdate(user._id, {
+    googleAccessToken: tokenData.access_token || '',
+    googleTokenExpiresAt: expiresAt,
+    googleTokenScope: tokenData.scope || user.googleTokenScope || '',
+    updatedAt: new Date()
+  });
+
+  return tokenData.access_token;
+}
+
+async function getGoogleAccessToken(req) {
+  const user = await User.findById(req.currentUser._id)
+    .select('googleAccessToken googleRefreshToken googleTokenExpiresAt googleTokenScope')
+    .lean();
+  if (!user) throw new Error('Tai khoan khong hop le');
+
+  const expiresAt = user.googleTokenExpiresAt ? new Date(user.googleTokenExpiresAt).getTime() : 0;
+  if (user.googleAccessToken && expiresAt - Date.now() > 60 * 1000) {
+    return user.googleAccessToken;
+  }
+
+  return refreshGoogleAccessToken(user, req);
+}
+
 function getBearerToken(req) {
   const header = String(req.get('authorization') || '');
   const match = header.match(/^Bearer\s+(.+)$/i);
@@ -413,7 +512,7 @@ function userScopedCacheKey(req, key) {
 }
 
 async function authenticateApiRequest(req, res, next) {
-  if (req.path === '/auth/login' || req.path === '/facebook/oauth/callback' || req.path === '/webhooks/pancake') {
+  if (req.path === '/auth/login' || req.path === '/facebook/oauth/callback' || req.path === '/google/oauth/callback' || req.path === '/webhooks/pancake') {
     return next();
   }
 
@@ -563,6 +662,117 @@ function buildAdName(code, prefix = DEFAULT_AD_NAME_PREFIX, status = 'Test') {
   const cleanCode = String(code || '').replace(/\s+/g, ' ').trim();
   const productLabel = `${DEFAULT_POST_LABEL_PREFIX} ${cleanCode}`;
   return `${String(prefix || DEFAULT_AD_NAME_PREFIX).trim()}__${productLabel}__${normalizeAdNameStatus(status)}`;
+}
+
+function normalizeBarcode(value) {
+  return String(value || '').replace(/\s+/g, '').trim();
+}
+
+function normalizeInventoryProductCode(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+function extractInventoryProductCode(value) {
+  const raw = String(value || '')
+    .replace(/["']/g, ' ')
+    .replace(/,\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!raw) return '';
+
+  let tokens = raw.split(' ').filter(Boolean);
+  if (tokens[0] && String(tokens[0]).toUpperCase() === 'MS' && tokens[1] && /[A-Z]*\d/i.test(tokens[1])) {
+    tokens = tokens.slice(1);
+  }
+
+  return normalizeInventoryProductCode(tokens[0] || '');
+}
+
+const INVENTORY_SIZE_SET = new Set(['S', 'M', 'L', 'XL', 'FZ']);
+
+function normalizeInventorySize(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (!normalized) return '';
+  if (normalized === 'FREE' || normalized === 'FREESIZE') return 'FZ';
+  return INVENTORY_SIZE_SET.has(normalized) ? normalized : '';
+}
+
+function parseInventorySheetIdentity(value) {
+  const raw = String(value || '')
+    .replace(/["']/g, ' ')
+    .replace(/,\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!raw) return { productCode: '', size: '' };
+
+  let tokens = raw.split(' ').filter(Boolean);
+  if (tokens[0] && String(tokens[0]).toUpperCase() === 'MS' && tokens[1] && /[A-Z]*\d/i.test(tokens[1])) {
+    tokens = tokens.slice(1);
+  }
+
+  const productCode = normalizeInventoryProductCode(tokens[0] || '');
+  const size = tokens
+    .slice(1)
+    .map(normalizeInventorySize)
+    .find(Boolean) || '';
+
+  return { productCode, size };
+}
+
+function isPendingInventoryOrderStatus(value) {
+  const status = normalizeStatusKey(value);
+  return status.includes('cho hang');
+}
+
+async function buildInventoryPendingOrderCounts() {
+  const orders = useSheetOrders()
+    ? await getOrderSheetOrders({ limit: 200000 })
+    : await Order.find(buildOrderQuery({})).select('rawData orderId status').limit(200000).lean();
+
+  const byCode = new Map();
+  const byCodeSize = new Map();
+
+  for (const order of orders) {
+    const rawStatus = order.status || order.rawData?.status_name || order.rawData?.status || '';
+    if (!isPendingInventoryOrderStatus(rawStatus)) continue;
+
+    for (const item of getOrderItemsFromRaw(order.rawData || {})) {
+      const productCode = extractInventoryProductCode(getOrderItemSku(item));
+      if (!productCode) continue;
+
+      const size = normalizeInventorySize(
+        item.size ||
+        item.variation_value ||
+        item.variation_info?.detail ||
+        item.variation_info?.size
+      );
+      const quantity = getOrderItemQuantity(item);
+
+      byCode.set(productCode, (byCode.get(productCode) || 0) + quantity);
+      if (size) {
+        const key = `${productCode}\u0000${size}`;
+        byCodeSize.set(key, (byCodeSize.get(key) || 0) + quantity);
+      }
+    }
+  }
+
+  return { byCode, byCodeSize };
+}
+
+async function syncInventorySalePriceToSheet(req, items, salePrice, options = {}) {
+  const rowNumbers = Array.from(new Set(
+    (items || [])
+      .flatMap(item => Array.isArray(item?.sheetRowNumbers) ? item.sheetRowNumbers : [])
+      .map(value => Number(value))
+      .filter(Number.isFinite)
+  )).sort((a, b) => a - b);
+
+  if (!rowNumbers.length) {
+    return { updated: 0, skipped: true };
+  }
+
+  const googleAccessToken = await getGoogleAccessToken(req);
+  return updateInventorySheetSalePriceWithGoogleAccess(googleAccessToken, rowNumbers, salePrice, options);
 }
 
 async function buildAccountPayload(input = {}) {
@@ -2179,6 +2389,150 @@ app.get('/api/auth/me', authenticateApiRequest, async (req, res) => {
       provider: req.currentUser.provider
     }
   });
+});
+
+app.get('/api/google/oauth/start', async (req, res) => {
+  try {
+    const { clientId, redirectUri } = requireGoogleOAuthConfig(req);
+    const state = createSignedState('google-oauth', { userId: String(req.currentUser._id) });
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: GOOGLE_OAUTH_SCOPES.join(' '),
+      access_type: 'offline',
+      prompt: 'consent',
+      include_granted_scopes: 'true',
+      state
+    });
+
+    res.json({ ok: true, url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/google/oauth/callback', async (req, res) => {
+  const htmlEscape = (value) => String(value || '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+
+  try {
+    const { code, state, error } = req.query;
+    if (error) throw new Error(String(error));
+    if (!code) throw new Error('Google khong tra ve code');
+
+    const stateData = parseSignedState('google-oauth', state);
+    if (!stateData?.userId || !mongoose.Types.ObjectId.isValid(stateData.userId)) {
+      throw new Error('Google OAuth state khong hop le hoac da het han');
+    }
+
+    const { clientId, clientSecret, redirectUri } = requireGoogleOAuthConfig(req);
+    const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+      code: String(code),
+      grant_type: 'authorization_code'
+    }).toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    });
+
+    const tokenData = tokenResponse.data || {};
+    if (!tokenData.access_token) throw new Error('Google khong tra ve access token');
+
+    let profile = {};
+    try {
+      const profileResponse = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+      });
+      profile = profileResponse.data || {};
+    } catch (profileError) {
+      console.warn(`Google profile fetch failed: ${profileError.message}`);
+    }
+
+    const update = {
+      googleAccessToken: tokenData.access_token,
+      googleTokenExpiresAt: new Date(Date.now() + Number(tokenData.expires_in || 3600) * 1000),
+      googleEmail: profile.email || '',
+      googleName: profile.name || '',
+      googleTokenScope: tokenData.scope || '',
+      updatedAt: new Date()
+    };
+    if (tokenData.refresh_token) update.googleRefreshToken = tokenData.refresh_token;
+
+    await User.findByIdAndUpdate(stateData.userId, update);
+
+    res.type('html').send(`<!doctype html>
+<html><head><meta charset="utf-8"><title>Google connected</title></head>
+<body><script>window.location.href='/google-sheets?google=connected';</script></body></html>`);
+  } catch (callbackError) {
+    res.type('html').status(400).send(`<!doctype html>
+<html><head><meta charset="utf-8"><title>Google error</title></head>
+<body>
+  <p>Google login error: ${htmlEscape(callbackError.message)}</p>
+  <script>
+    setTimeout(function () {
+      window.location.href='/google-sheets?google=error&message=' + encodeURIComponent(${JSON.stringify(callbackError.message)});
+    }, 1200);
+  </script>
+</body></html>`);
+  }
+});
+
+app.get('/api/google/status', async (req, res) => {
+  try {
+    const user = await User.findById(req.currentUser._id)
+      .select('googleAccessToken googleRefreshToken googleTokenExpiresAt googleEmail googleName')
+      .lean();
+
+    res.json({
+      ok: true,
+      connected: Boolean(user?.googleAccessToken || user?.googleRefreshToken),
+      email: user?.googleEmail || '',
+      name: user?.googleName || '',
+      expiresAt: user?.googleTokenExpiresAt || null
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/google/sheets', async (req, res) => {
+  try {
+    const accessToken = await getGoogleAccessToken(req);
+    const pageSize = parseBoundedInt(req.query.pageSize, 100, 1, 1000);
+    const search = String(req.query.search || '').trim();
+    const qParts = [
+      "mimeType='application/vnd.google-apps.spreadsheet'",
+      'trashed=false'
+    ];
+    if (search) {
+      qParts.push(`name contains '${search.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`);
+    }
+
+    const response = await axios.get('https://www.googleapis.com/drive/v3/files', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      params: {
+        q: qParts.join(' and '),
+        pageSize,
+        orderBy: 'modifiedTime desc',
+        fields: 'files(id,name,mimeType,modifiedTime,webViewLink,owners(displayName,emailAddress))',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true
+      }
+    });
+
+    res.json({ ok: true, files: response.data?.files || [] });
+  } catch (error) {
+    const status = error.response?.status || 500;
+    const detail = error.response?.data?.error?.message || error.message;
+    res.status(status === 401 ? 401 : 500).json({ error: detail });
+  }
 });
 
 app.get('/api/accounts', async (req, res) => {
@@ -4462,6 +4816,251 @@ app.get('/api/orders/sku-counts', async (req, res) => {
 
 // ── Đồng bộ đơn hàng từ Google Sheet ──
 
+app.get('/api/inventory', async (req, res) => {
+  try {
+    const { search = '' } = req.query;
+    const filter = withUserFilter(req);
+    const term = String(search || '').trim();
+
+    if (term) {
+      const regex = new RegExp(escapeRegExp(term), 'i');
+      filter.$or = [{ barcode: regex }, { name: regex }];
+    }
+
+    const items = await InventoryItem.find(filter)
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    res.json({ ok: true, items });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/inventory/sheet-rows', async (req, res) => {
+  try {
+    const googleAccessToken = await getGoogleAccessToken(req);
+    const [rows, pendingCounts] = await Promise.all([
+      fetchInventorySheetRowsWithGoogleAccess(googleAccessToken),
+      buildInventoryPendingOrderCounts()
+    ]);
+    const search = String(req.query.search || '').trim().toLowerCase();
+    const warehouse = String(req.query.warehouse || '').trim().toLowerCase();
+    const filteredRows = rows
+      .filter(row => (
+        !search || (
+          String(row.barcode || '').toLowerCase().includes(search) ||
+          String(row.name || '').toLowerCase().includes(search) ||
+          String(row.warehouseName || '').toLowerCase().includes(search)
+        )
+      ))
+      .filter(row => (
+        !warehouse || String(row.warehouseName || '').toLowerCase().includes(warehouse)
+      ))
+      .map(row => {
+        const identity = parseInventorySheetIdentity(row.barcode || row.name || '');
+        const pendingQuantity = identity.productCode
+          ? (identity.size
+              ? (pendingCounts.byCodeSize.get(`${identity.productCode}\u0000${identity.size}`) || 0)
+              : (pendingCounts.byCode.get(identity.productCode) || 0))
+          : 0;
+        return { ...row, pendingQuantity };
+      });
+
+    res.json({ ok: true, rows: filteredRows, total: filteredRows.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/inventory/scan', async (req, res) => {
+  try {
+    const barcode = normalizeBarcode(req.body?.barcode);
+    const quantity = parseBoundedInt(req.body?.quantity, 1, 1, 100000);
+    const name = String(req.body?.name || '').trim();
+    const note = String(req.body?.note || '').trim();
+
+    if (!barcode) return res.status(400).json({ error: 'Thieu ma vach' });
+
+    const now = new Date();
+    const setFields = { updatedAt: now };
+    if (name) setFields.name = name;
+    if (req.body?.salePrice !== undefined) setFields.salePrice = String(req.body.salePrice || '').trim();
+    const insertFields = { createdAt: now };
+    if (!name) insertFields.name = '';
+
+    const item = await InventoryItem.findOneAndUpdate(
+      withUserFilter(req, { barcode }),
+      {
+        $inc: { quantity },
+        $set: setFields,
+        $setOnInsert: insertFields,
+        $push: {
+          scans: {
+            $each: [{ quantity, note, scannedAt: now }],
+            $slice: -50
+          }
+        }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    ).lean();
+
+    res.json({ ok: true, item });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/inventory/import-sheet', async (req, res) => {
+  try {
+    let sheetItems = [];
+    let source = 'public';
+    try {
+      const googleAccessToken = await getGoogleAccessToken(req);
+      sheetItems = await fetchInventorySheetItemsWithGoogleAccess(googleAccessToken, { refresh: true });
+      source = 'google_oauth';
+    } catch (googleError) {
+      if (
+        !/google|token|scope|permission|access|sheet/i.test(String(googleError.message || '')) &&
+        googleError.response?.status !== 401 &&
+        googleError.response?.status !== 403
+      ) {
+        throw googleError;
+      }
+      sheetItems = await fetchInventorySheetItems();
+    }
+
+    const now = new Date();
+    const sheetBarcodes = new Set(sheetItems.map(item => String(item.barcode || '').trim()).filter(Boolean));
+    const operations = sheetItems.map(item => ({
+        updateOne: {
+          filter: withUserFilter(req, { barcode: item.barcode }),
+          update: {
+            $set: {
+              warehouseName: item.warehouseName || '',
+              name: item.name || '',
+              salePrice: item.salePrice || '',
+              sheetRowNumbers: Array.isArray(item.rowNumbers) ? item.rowNumbers : (item.rowNumber ? [item.rowNumber] : []),
+              quantity: item.quantity,
+              updatedAt: now
+          },
+          $setOnInsert: { createdAt: now }
+        },
+        upsert: true
+      }
+    }));
+
+    if (operations.length) {
+      await InventoryItem.bulkWrite(operations, { ordered: false });
+    }
+
+    const deleteFilter = withUserFilter(req, sheetBarcodes.size
+      ? { barcode: { $nin: Array.from(sheetBarcodes) } }
+      : {});
+    const deleteResult = await InventoryItem.deleteMany(deleteFilter);
+
+    const items = await InventoryItem.find(withUserFilter(req))
+      .sort({ updatedAt: -1 })
+      .limit(1000)
+      .lean();
+
+    res.json({
+      ok: true,
+      imported: sheetItems.length,
+      deleted: deleteResult.deletedCount || 0,
+      source,
+      items
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/inventory/price-by-code', async (req, res) => {
+  try {
+    const productCode = normalizeInventoryProductCode(req.body?.productCode);
+    const salePrice = String(req.body?.salePrice || '').trim();
+    if (!productCode) {
+      return res.status(400).json({ error: 'Thieu ma san pham' });
+    }
+
+    const inventoryItems = await InventoryItem.find(withUserFilter(req))
+      .select('_id barcode sheetRowNumbers')
+      .lean();
+    const matchedItems = inventoryItems
+      .filter(item => extractInventoryProductCode(item.barcode) === productCode);
+    const matchedIds = matchedItems.map(item => item._id);
+
+    if (!matchedIds.length) {
+      return res.status(404).json({ error: 'Khong tim thay san pham theo ma nay' });
+    }
+
+    const now = new Date();
+    await syncInventorySalePriceToSheet(req, matchedItems, salePrice);
+
+    await InventoryItem.updateMany(
+      withUserFilter(req, { _id: { $in: matchedIds } }),
+      { $set: { salePrice, updatedAt: now } }
+    );
+
+    const items = await InventoryItem.find(withUserFilter(req, { _id: { $in: matchedIds } }))
+      .sort({ barcode: 1 })
+      .lean();
+
+    res.json({ ok: true, updated: items.length, productCode, salePrice, items });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/inventory/:id', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'ID san pham khong hop le' });
+    }
+
+    const currentItem = await InventoryItem.findOne(withUserFilter(req, { _id: req.params.id }))
+      .lean();
+    if (!currentItem) return res.status(404).json({ error: 'Khong tim thay san pham trong kho' });
+
+    const update = { updatedAt: new Date() };
+    if (req.body?.name !== undefined) update.name = String(req.body.name || '').trim();
+    if (req.body?.salePrice !== undefined) update.salePrice = String(req.body.salePrice || '').trim();
+    if (req.body?.quantity !== undefined) update.quantity = parseBoundedInt(req.body.quantity, 0, 0, 100000000);
+
+    if (
+      req.body?.salePrice !== undefined &&
+      String(update.salePrice || '') !== String(currentItem.salePrice || '')
+    ) {
+      await syncInventorySalePriceToSheet(req, [currentItem], update.salePrice);
+    }
+
+    const item = await InventoryItem.findOneAndUpdate(
+      withUserFilter(req, { _id: req.params.id }),
+      { $set: update },
+      { new: true }
+    ).lean();
+
+    res.json({ ok: true, item });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/inventory/:id', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'ID san pham khong hop le' });
+    }
+
+    const result = await InventoryItem.deleteOne(withUserFilter(req, { _id: req.params.id }));
+    if (!result.deletedCount) return res.status(404).json({ error: 'Khong tim thay san pham trong kho' });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/orders/sync', async (req, res) => {
   try {
     const { fromDate, toDate } = req.body;
@@ -4593,6 +5192,7 @@ async function ensureApplicationIndexes() {
     Account.createIndexes(),
     Log.createIndexes(),
     Order.createIndexes(),
+    InventoryItem.createIndexes(),
     FacebookPost.createIndexes(),
     Config.createIndexes()
   ]);

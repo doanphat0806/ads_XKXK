@@ -1672,6 +1672,307 @@
       box-shadow: 0 4px 20px rgba(0,0,0,0.1);
     }
 
+    #page-inventory {
+      min-width: 0;
+    }
+
+    #page-inventory .inventory-stats {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .inventory-scan-panel {
+      padding: 16px 18px;
+    }
+
+    .inventory-scan-grid {
+      grid-template-columns: minmax(260px, 2fr) minmax(150px, 0.8fr) minmax(220px, 1.4fr) auto;
+      align-items: end;
+    }
+
+    .inventory-scan-action {
+      justify-content: flex-end;
+    }
+
+    .inventory-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .inventory-search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .inventory-search input,
+    .inventory-inline-input,
+    .inventory-qty-input {
+      background: var(--s3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--txt);
+      font-family: var(--mono);
+      font-size: 12px;
+      outline: none;
+      padding: 8px 10px;
+      min-width: 0;
+    }
+
+    .inventory-search input:focus,
+    .inventory-inline-input:focus,
+    .inventory-qty-input:focus {
+      border-color: var(--g);
+      box-shadow: 0 0 0 3px rgba(34, 209, 122, 0.08);
+    }
+
+    .inventory-inline-input {
+      width: min(360px, 100%);
+    }
+
+    .inventory-qty-input {
+      width: 120px;
+      text-align: right;
+      font-weight: 700;
+    }
+
+    .inventory-sheet-table {
+      min-width: 1320px;
+      border-collapse: separate;
+      border-spacing: 0;
+      background: #f3f3f3;
+      color: #111111;
+      font-size: 14px;
+      table-layout: fixed;
+    }
+
+    .inventory-sheet-table thead th {
+      background: #eef3f8;
+      color: #163047;
+      border-right: 1px solid #c7d4e2;
+      border-bottom: 2px solid #c7d4e2;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 800;
+      padding: 10px 8px;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .inventory-sheet-table thead tr:first-child th {
+      padding-top: 12px;
+      padding-bottom: 8px;
+    }
+
+    .inventory-sheet-table thead tr:last-child th {
+      padding-top: 4px;
+      padding-bottom: 6px;
+    }
+
+    .inventory-sort-btn {
+      border: 0;
+      background: transparent;
+      padding: 0;
+      margin: 0;
+      color: inherit;
+      font: inherit;
+      font-weight: 800;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .inventory-sheet-table .inventory-sheet-col-warehouse {
+      background: #eef3f8;
+    }
+
+    .inventory-sheet-table tbody tr {
+      background: #ffffff;
+    }
+
+    .inventory-sheet-table tbody td {
+      border-right: 1px solid #d9e3ec;
+      border-bottom: 1px solid #d9e3ec;
+      padding: 6px 8px;
+      color: #163047;
+      background: #ffffff;
+      vertical-align: middle;
+      transition: none;
+    }
+
+    .inventory-sheet-row:hover td {
+      background: #ffffff;
+    }
+
+    .inventory-sheet-warehouse {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+      background: #f3f6f9 !important;
+      font-weight: 800;
+      text-align: center;
+      min-width: 92px;
+      width: 92px;
+      box-shadow: none;
+      text-transform: none;
+    }
+
+    .inventory-sheet-code {
+      min-width: 220px;
+      font-family: var(--display);
+      font-size: 18px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .inventory-sheet-color {
+      min-width: 84px;
+      text-align: center;
+      font-weight: 600;
+    }
+
+    .inventory-sheet-size-cell,
+    .inventory-sheet-total,
+    .inventory-sheet-price {
+      min-width: 44px;
+      text-align: center;
+      font-family: var(--mono);
+      padding-left: 4px;
+      padding-right: 4px;
+    }
+
+    .inventory-sheet-total {
+      min-width: 62px;
+      font-weight: 700;
+    }
+
+    .inventory-sheet-price {
+      min-width: 68px;
+    }
+
+    .inventory-sheet-stock {
+      min-width: 68px;
+      text-align: center;
+      font-family: var(--mono);
+    }
+
+    .inventory-sheet-updated {
+      min-width: 132px;
+      text-align: center;
+      font-family: var(--mono);
+      color: var(--muted2);
+      white-space: nowrap;
+    }
+
+    .inventory-sheet-action {
+      min-width: 86px;
+      text-align: center;
+    }
+
+    .inventory-sheet-table .inventory-inline-input,
+    .inventory-sheet-table .inventory-qty-input {
+      width: 100%;
+      min-width: 0;
+      border-radius: 4px;
+      border: 1px solid transparent;
+      background: transparent;
+      padding: 4px 6px;
+      box-shadow: none;
+      color: #163047;
+      transition: none;
+    }
+
+    .inventory-sheet-table .inventory-inline-input {
+      min-width: 160px;
+      font-size: 13px;
+    }
+
+    .inventory-sheet-table .inventory-qty-input {
+      min-width: 56px;
+      text-align: center;
+      padding-left: 4px;
+      padding-right: 4px;
+    }
+
+    .inventory-sheet-table .inventory-inline-input:focus,
+    .inventory-sheet-table .inventory-qty-input:focus {
+      border-color: #3b78ff;
+      background: #ffffff;
+      box-shadow: none;
+    }
+
+    #page-inventory .tbl-wrap {
+      contain: layout paint;
+    }
+
+    .inventory-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px 16px 16px;
+      border-top: 1px solid #d9e3ec;
+      color: var(--muted2);
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+
+    .inventory-pagination-label {
+      min-width: 68px;
+      text-align: center;
+      font-family: var(--mono);
+      font-weight: 700;
+      color: var(--txt);
+    }
+
+    .inventory-pagination-note {
+      margin-left: 6px;
+    }
+
+    .google-sheet-status {
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .google-sheet-account {
+      margin-top: 8px;
+      color: var(--muted2);
+      font-size: 12px;
+    }
+
+    .google-sheet-name {
+      font-weight: 700;
+      color: var(--txt);
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 1100px) {
+      #page-inventory .inventory-stats,
+      .inventory-scan-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .inventory-scan-action {
+        align-items: stretch;
+      }
+
+      .inventory-scan-action .btn {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .inventory-sheet-table {
+        min-width: 1180px;
+      }
+    }
+
     .section-title {
       font-size: 14px;
       font-weight: 700;

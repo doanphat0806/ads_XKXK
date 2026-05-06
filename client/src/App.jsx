@@ -13,6 +13,8 @@ import Campaigns from './pages/Campaigns';
 import CloneCampaigns from './pages/CloneCampaigns';
 import Orders from './pages/Orders';
 import Logs from './pages/Logs';
+import Inventory from './pages/Inventory';
+import GoogleSheets from './pages/GoogleSheets';
 import CreateCampaign from './pages/Pages';
 import ModalContainer from './components/ModalContainer';
 
@@ -32,6 +34,8 @@ function AppContent() {
       case '/clone-campaigns': return 'Nhân Camp';
       case '/orders': return 'Đơn hàng';
       case '/logs': return 'Nhật ký';
+      case '/inventory': return 'Kho';
+      case '/google-sheets': return 'Google Sheets';
       case '/create-campaign': return 'Page';
       default: return 'Dashboard';
     }
@@ -53,6 +57,8 @@ function AppContent() {
             <Route path="/campaigns" element={<Campaigns />} />
             <Route path="/clone-campaigns" element={<CloneCampaigns />} />
             <Route path="/orders" element={<Orders />} />
+            <Route path="/inventory" element={<Inventory />} />
+            <Route path="/google-sheets" element={<GoogleSheets />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/create-campaign" element={<CreateCampaign />} />
           </Routes>

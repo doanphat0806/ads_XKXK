@@ -10,6 +10,12 @@ const UserSchema = new mongoose.Schema({
   fbTokenLastRefreshTime: { type: Date },
   fbTokenLastDebugTime: { type: Date },
   fbTokenLastRefreshError: { type: String, default: '' },
+  googleAccessToken: { type: String, default: '' },
+  googleRefreshToken: { type: String, default: '' },
+  googleTokenExpiresAt: { type: Date },
+  googleEmail: { type: String, default: '' },
+  googleName: { type: String, default: '' },
+  googleTokenScope: { type: String, default: '' },
   active: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }

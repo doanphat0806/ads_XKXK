@@ -429,6 +429,7 @@ module.exports = {
   getOrderItemSku,
   getOrderItemQuantity,
   normalizeSkuKey,
+  normalizeStatusKey,
   classifyReturnStatus,
   useSheetOrders,
   buildOrderSkuStats,
