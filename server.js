@@ -1683,6 +1683,12 @@ async function runAutoControl(account) {
             throw e;
           }
         }
+        await Campaign.findOneAndUpdate(
+          { accountId: account._id, campaignId: campaignGraphId, date: todayStr() },
+          { $set: { status: 'PAUSED', updatedAt: new Date() } },
+          { new: true }
+        );
+        clearCampaignReadCache();
         await addLog(
           account._id,
           account.name,
