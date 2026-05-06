@@ -17,7 +17,8 @@ export default function ConfigModal() {
     dailyZero: 25000, dailyHighCost: 20000, dailyHighSpend: 50000,
     lifetimeZero: 25000, lifetimeHighCost: 20000, lifetimeHighSpend: 50000,
     dailyClickLimit: 0, lifetimeClickLimit: 0,
-    dailyCpcLimit: 600, lifetimeCpcLimit: 600
+    dailyCpcLimit: 600, lifetimeCpcLimit: 600,
+    autoPauseCpoLimit: 100000
   });
 
   useEffect(() => {
@@ -39,7 +40,8 @@ export default function ConfigModal() {
         dailyClickLimit: appConfig.dailyClickLimit || 0,
         lifetimeClickLimit: appConfig.lifetimeClickLimit || 0,
         dailyCpcLimit: appConfig.dailyCpcLimit || 600,
-        lifetimeCpcLimit: appConfig.lifetimeCpcLimit || 600
+        lifetimeCpcLimit: appConfig.lifetimeCpcLimit || 600,
+        autoPauseCpoLimit: appConfig.autoPauseCpoLimit ?? 100000
       });
     }
   }, [appConfig, isShopee]);
@@ -231,6 +233,7 @@ export default function ConfigModal() {
                   <div className="form-group"><label>Chi tiêu tối đa khi 0-1 TN</label><input type="number" min="0" placeholder="25000" value={autoLimits.dailyZero} onChange={e => setAutoLimits({ ...autoLimits, dailyZero: e.target.value })} /></div>
                   <div className="form-group"><label>Giá TN tối đa</label><input type="number" min="0" placeholder="20000" value={autoLimits.dailyHighCost} onChange={e => setAutoLimits({ ...autoLimits, dailyHighCost: e.target.value })} /></div>
                   <div className="form-group"><label>Chi tiêu tối đa khi TN đắt</label><input type="number" min="0" placeholder="50000" value={autoLimits.dailyHighSpend} onChange={e => setAutoLimits({ ...autoLimits, dailyHighSpend: e.target.value })} /></div>
+                  <div className="form-group"><label>CPO toi da de giu camp co don</label><input type="number" min="0" placeholder="100000" value={autoLimits.autoPauseCpoLimit} onChange={e => setAutoLimits({ ...autoLimits, autoPauseCpoLimit: e.target.value })} /></div>
                 </>
               )}
             </div>
@@ -261,7 +264,8 @@ export default function ConfigModal() {
               lifetimeHighCostPerMessageLimit: Number(autoLimits.lifetimeHighCost),
               lifetimeHighCostSpendLimit: Number(autoLimits.lifetimeHighSpend),
               lifetimeClickLimit: Number(autoLimits.lifetimeClickLimit || 0),
-              lifetimeCpcLimit: Number(autoLimits.lifetimeCpcLimit || 0)
+              lifetimeCpcLimit: Number(autoLimits.lifetimeCpcLimit || 0),
+              autoPauseCpoLimit: Number(autoLimits.autoPauseCpoLimit || 0)
             }, 'Đã lưu giới hạn tự động')}>Lưu giới hạn</button>
           </div>
         </section>

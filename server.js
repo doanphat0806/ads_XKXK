@@ -208,6 +208,7 @@ const {
 
 const SHOPEE_DEFAULT_CALL_TO_ACTION_TYPE = 'NO_BUTTON';
 const SHOPEE_CALL_TO_ACTION_TYPES = new Set(['SHOP_NOW', 'NO_BUTTON']);
+const AUTO_PAUSE_CPO_LIMIT = 100000;
 
 function normalizeProvider(value) {
   return String(value || 'facebook').trim().toLowerCase() === 'shopee' ? 'shopee' : 'facebook';
@@ -1305,6 +1306,67 @@ function getPauseReason(provider, spend, messages, costPerMessage, clicks, costP
   return null;
 }
 
+function getCampaignSkuCandidates(campaignName) {
+  const rawName = String(campaignName || '').toUpperCase().trim();
+  const compactName = rawName.replace(/\s+/g, '');
+  const firstNineChars = rawName.slice(0, 9).replace(/\s+/g, '');
+  const firstToken = rawName.split(/\s+/)[0]?.replace(/\s+/g, '') || '';
+
+  return [...new Set([firstNineChars, firstToken, compactName].filter(Boolean))]
+    .map(code => `MS${code}`);
+}
+
+function getOrderCountForCampaignName(campaignName, skuCounts = {}) {
+  for (const skuKey of getCampaignSkuCandidates(campaignName)) {
+    const count = Number(skuCounts[skuKey] || 0);
+    if (count > 0) return count;
+  }
+  return 0;
+}
+
+async function getTodayOrderSkuCountsForAuto(account) {
+  if (normalizeProvider(account.provider) === 'shopee') return {};
+
+  try {
+    const today = todayStr();
+    const orders = await getOrderSheetOrders({ fromDate: today, toDate: today, limit: 200000 });
+    return buildOrderSkuStats(orders).counts || {};
+  } catch (error) {
+    await addLog(
+      account._id,
+      account.name,
+      'warn',
+      `Khong lay duoc don hang de tinh CPO auto: ${error.message}`
+    );
+    return {};
+  }
+}
+
+function getAutoPauseDecision({ provider, campaignName, spend, messages, costPerMessage, clicks, costPerClick, limits, budgetType, skuCounts }) {
+  const normalizedProvider = normalizeProvider(provider);
+  const basePauseReason = getPauseReason(provider, spend, messages, costPerMessage, clicks, costPerClick, limits, budgetType);
+  if (normalizedProvider !== 'facebook') {
+    return { pauseReason: basePauseReason, orderCount: 0, costPerOrder: 0 };
+  }
+
+  const cpoLimit = Number(limits?.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT);
+  const orderCount = getOrderCountForCampaignName(campaignName, skuCounts);
+  const costPerOrder = orderCount > 0 ? spend / orderCount : 0;
+  if (cpoLimit > 0 && orderCount > 0 && costPerOrder > cpoLimit) {
+    return {
+      pauseReason: `CPO ${Math.round(costPerOrder).toLocaleString()}d > ${cpoLimit.toLocaleString()}d (${orderCount} don)`,
+      orderCount,
+      costPerOrder
+    };
+  }
+
+  if (orderCount > 0) {
+    return { pauseReason: null, orderCount, costPerOrder };
+  }
+
+  return { pauseReason: basePauseReason, orderCount, costPerOrder };
+}
+
 function getCampaignMessageStats(campaign) {
   const spend = parseFloat(campaign.insights?.data?.[0]?.spend || 0);
   const msgAction = getMetaMessageActionFromInsight(campaign.insights?.data?.[0] || {});
@@ -1524,14 +1586,26 @@ async function runAutoControl(account) {
 
     let campaignsToPause = [];
     if (isWithinAutoRuleTimeWindow(ruleStart, ruleEnd)) {
+      const skuCounts = await getTodayOrderSkuCountsForAuto(account);
       campaignsToPause = campaigns
         .filter(campaign => campaign.status === 'ACTIVE')
         .map(campaign => {
           const { spend, messages, costPerMessage, clicks, costPerClick } = getCampaignRuleStats(campaign);
           const isLifetime = !!campaign.lifetimeBudget || !!campaign.lifetime_budget && parseFloat(campaign.lifetime_budget) > 0;
           const budgetType = isLifetime ? 'LIFETIME' : 'DAILY';
-          const pauseReason = getPauseReason(account.provider, spend, messages, costPerMessage, clicks, costPerClick, config, budgetType);
-          return pauseReason ? { campaign, spend, messages, costPerMessage, clicks, costPerClick, pauseReason } : null;
+          const { pauseReason, orderCount, costPerOrder } = getAutoPauseDecision({
+            provider: account.provider,
+            campaignName: campaign.name,
+            spend,
+            messages,
+            costPerMessage,
+            clicks,
+            costPerClick,
+            limits: config,
+            budgetType,
+            skuCounts
+          });
+          return pauseReason ? { campaign, spend, messages, costPerMessage, clicks, costPerClick, orderCount, costPerOrder, pauseReason } : null;
         })
         .filter(Boolean);
     } else {
@@ -1613,7 +1687,7 @@ async function runAutoControl(account) {
           account._id,
           account.name,
           'warn',
-          `Da tam dung: ${item.campaign.name} · ${item.pauseReason} · tieu ${item.spend.toLocaleString()}d · tin nhan ${item.messages}`
+          `Da tam dung: ${item.campaign.name} · ${item.pauseReason} · tieu ${item.spend.toLocaleString()}d · tin nhan ${item.messages} · don ${item.orderCount || 0}`
         );
       }
 
@@ -2239,7 +2313,8 @@ app.get('/api/config', async (req, res) => {
       lifetimeHighCostPerMessageLimit: config?.lifetimeHighCostPerMessageLimit || 20000,
       lifetimeHighCostSpendLimit: config?.lifetimeHighCostSpendLimit || 50000,
       lifetimeClickLimit: config?.lifetimeClickLimit || 0,
-      lifetimeCpcLimit: config?.lifetimeCpcLimit || 600
+      lifetimeCpcLimit: config?.lifetimeCpcLimit || 600,
+      autoPauseCpoLimit: config?.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -2411,6 +2486,7 @@ app.put('/api/auto-limits', async (req, res) => {
       lifetimeHighCostSpendLimit: Number(req.body.lifetimeHighCostSpendLimit),
       lifetimeClickLimit: Number(req.body.lifetimeClickLimit || 0),
       lifetimeCpcLimit: Number(req.body.lifetimeCpcLimit || 0),
+      autoPauseCpoLimit: Number(req.body.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT),
       updatedAt: new Date()
     };
 

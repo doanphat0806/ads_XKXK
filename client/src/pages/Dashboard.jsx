@@ -28,6 +28,16 @@ const normalizeCampaignDuplicateKey = (campaign) => {
   return name;
 };
 
+const getCampaignSkuCandidates = (campaignName) => {
+  const rawName = String(campaignName || '').toUpperCase().trim();
+  const compactName = rawName.replace(/\s+/g, '');
+  const firstNineChars = rawName.slice(0, 9).replace(/\s+/g, '');
+  const firstToken = rawName.split(/\s+/)[0]?.replace(/\s+/g, '') || '';
+
+  return [...new Set([firstNineChars, firstToken, compactName].filter(Boolean))]
+    .map(code => `MS${code}`);
+};
+
 const keepCurrentSortStatus = (campaign) => ({
   ...campaign,
   sortStatus: String(campaign.sortStatus || campaign.status || '').toUpperCase()
@@ -405,14 +415,20 @@ export default function Dashboard() {
 
   const getOrderCountForCampaign = useCallback((campaignName) => {
     if (!campaignName || !hasSkuCounts) return 0;
-    const normName = String(campaignName).toUpperCase().replace(/\s+/g, '').trim();
-    return Number(skuCounts['MS' + normName] || 0);
+    for (const skuKey of getCampaignSkuCandidates(campaignName)) {
+      const count = Number(skuCounts[skuKey] || 0);
+      if (count > 0) return count;
+    }
+    return 0;
   }, [skuCounts, hasSkuCounts]);
 
   const getReturnStatsForCampaign = useCallback((campaignName) => {
     if (!campaignName || !hasReturnStatsBySku) return EMPTY_RETURN_STATS;
-    const normName = String(campaignName).toUpperCase().replace(/\s+/g, '').trim();
-    return returnStatsBySku['MS' + normName] || EMPTY_RETURN_STATS;
+    for (const skuKey of getCampaignSkuCandidates(campaignName)) {
+      const stats = returnStatsBySku[skuKey];
+      if (stats) return stats;
+    }
+    return EMPTY_RETURN_STATS;
   }, [returnStatsBySku, hasReturnStatsBySku]);
 
   const filteredCampaigns = useMemo(() => {
