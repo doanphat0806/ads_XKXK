@@ -21,5 +21,7 @@ const InventoryItemSchema = new mongoose.Schema({
 
 InventoryItemSchema.index({ ownerUserId: 1, barcode: 1 }, { unique: true, name: 'inventory_owner_barcode_unique' });
 InventoryItemSchema.index({ ownerUserId: 1, updatedAt: -1 }, { name: 'inventory_owner_updatedAt' });
+InventoryItemSchema.index({ ownerUserId: 1, warehouseName: 1, barcode: 1 }, { name: 'inventory_owner_warehouse_barcode' });
+InventoryItemSchema.index({ ownerUserId: 1, warehouseName: 1, updatedAt: -1 }, { name: 'inventory_owner_warehouse_updatedAt' });
 
 module.exports = mongoose.model('InventoryItem', InventoryItemSchema);
