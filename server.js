@@ -956,6 +956,12 @@ function parseVietnamCampaignEnd(value) {
   return buildVietnamCampaignStart(year, month, day, hour, minute);
 }
 
+function campaignDateFromScheduledStart(scheduledStart) {
+  const startUtc = new Date(scheduledStart?.utc || '');
+  if (Number.isNaN(startUtc.getTime())) return todayStr();
+  return new Date(startUtc.getTime() + VN_OFFSET_MS).toISOString().split('T')[0];
+}
+
 function parseCampaignAgeRange(ageMinValue, ageMaxValue, defaultAgeMin = 22, defaultAgeMax = 45) {
   const ageMin = parseBoundedInt(ageMinValue, defaultAgeMin, 13, 65);
   const ageMax = parseBoundedInt(ageMaxValue, defaultAgeMax, 13, 65);
@@ -1619,6 +1625,99 @@ function getCampaignRuleStats(campaign) {
   return { spend, messages, costPerMessage, clicks, costPerClick };
 }
 
+function normalizeCampaignDuplicateKey(campaign) {
+  return String(campaign?.name || '')
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .trim();
+}
+
+function hasScheduledCampaignStarted(campaign) {
+  if (!campaign?.scheduledStartTimeUtc) return false;
+  const startMs = new Date(campaign.scheduledStartTimeUtc).getTime();
+  return Number.isFinite(startMs) && startMs <= Date.now();
+}
+
+function isAfterVietnamTime(hour = 21, minute = 0) {
+  const now = new Date(Date.now() + VN_OFFSET_MS);
+  const currentMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const thresholdMinutes = hour * 60 + minute;
+  return currentMinutes >= thresholdMinutes;
+}
+
+function buildScheduledPauseTargets(campaigns = []) {
+  if (!isAfterVietnamTime(21, 0)) return [];
+
+  const groups = campaigns.reduce((map, campaign) => {
+    const key = normalizeCampaignDuplicateKey(campaign);
+    if (!key) return map;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(campaign);
+    return map;
+  }, new Map());
+
+  const items = [];
+  for (const group of groups.values()) {
+    if (group.length <= 1) continue;
+
+    const activeNonScheduled = group.filter(campaign =>
+      String(campaign.status || '').toUpperCase() === 'ACTIVE' &&
+      !campaign.isScheduled
+    );
+    if (!activeNonScheduled.length) continue;
+
+    const scheduledActive = group.filter(campaign =>
+      String(campaign.status || '').toUpperCase() === 'ACTIVE' &&
+      campaign.isScheduled &&
+      hasScheduledCampaignStarted(campaign)
+    );
+    if (!scheduledActive.length) continue;
+
+    const keeper = [...activeNonScheduled].sort((a, b) => {
+      const aTime = new Date(a.createdTime || a.created_time || 0).getTime() || 0;
+      const bTime = new Date(b.createdTime || b.created_time || 0).getTime() || 0;
+      return aTime - bTime;
+    })[0];
+
+    for (const campaign of scheduledActive) {
+      if (String(campaign.campaignId || '') === String(keeper.campaignId || '')) continue;
+      items.push({
+        campaign,
+        keeper,
+        pauseReason: `Camp len lich trung voi camp dang chay ${keeper.name || keeper.campaignId}`
+      });
+    }
+  }
+
+  return items;
+}
+
+async function fetchCampaignMetaMap(fbToken, campaignIds = []) {
+  const campaignMetaById = new Map();
+  const normalizedIds = [...new Set((campaignIds || []).map(id => String(id || '').trim()).filter(Boolean))];
+  for (const chunk of chunkArray(normalizedIds, 50)) {
+    const metaResponse = await fbGet(fbToken, '', {
+      ids: chunk.join(','),
+      fields: 'id,name,status,daily_budget,lifetime_budget,created_time'
+    });
+    for (const campaign of Object.values(metaResponse || {})) {
+      if (!campaign?.id) continue;
+      const isLifetime = !!campaign.lifetime_budget && parseFloat(campaign.lifetime_budget) > 0;
+      const dailyBudget = parseFloat(campaign.daily_budget || 0);
+      const lifetimeBudget = parseFloat(campaign.lifetime_budget || 0);
+      campaignMetaById.set(String(campaign.id), {
+        name: campaign.name,
+        status: campaign.status,
+        dailyBudget: isLifetime ? 0 : dailyBudget,
+        lifetimeBudget: isLifetime ? lifetimeBudget : 0,
+        budgetType: isLifetime ? 'LIFETIME' : 'DAILY',
+        createdTime: campaign.created_time ? new Date(campaign.created_time) : undefined
+      });
+    }
+  }
+  return campaignMetaById;
+}
+
 async function fetchShopeeAccountData(account) {
   const today = todayStr();
   let campaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
@@ -1637,25 +1736,7 @@ async function fetchShopeeAccountData(account) {
       campaignIds.add(String(insight.campaign_id));
     }
 
-    const campaignMetaById = new Map();
-    for (const chunk of chunkArray([...campaignIds], 50)) {
-      const metaResponse = await fbGet(fbToken, '', {
-        ids: chunk.join(','),
-        fields: 'id,name,status,daily_budget,lifetime_budget,created_time'
-      });
-      for (const campaign of Object.values(metaResponse || {})) {
-        if (!campaign?.id) continue;
-        const isLifetime = !!campaign.lifetime_budget && parseFloat(campaign.lifetime_budget) > 0;
-        campaignMetaById.set(String(campaign.id), {
-          name: campaign.name,
-          status: campaign.status,
-          dailyBudget: isLifetime ? 0 : parseFloat(campaign.daily_budget || 0),
-          lifetimeBudget: isLifetime ? parseFloat(campaign.lifetime_budget || 0) : 0,
-          budgetType: isLifetime ? 'LIFETIME' : 'DAILY',
-          createdTime: campaign.created_time ? new Date(campaign.created_time) : undefined
-        });
-      }
-    }
+    const campaignMetaById = await fetchCampaignMetaMap(fbToken, [...campaignIds]);
 
     for (const insight of metricInsights) {
       const campaignId = String(insight.campaign_id);
@@ -1684,9 +1765,9 @@ async function fetchAccountData(account) {
   const { fbToken } = await getEffectiveSecrets(account);
   if (!fbToken) throw new Error('Thieu Facebook Access Token');
 
+  const existingCampaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
   const todayInsights = await fetchAccountInsightsInRange(account, today, today);
   const seenCampaignIds = new Set();
-  const campaignMetaById = new Map();
   const metricInsights = [];
 
   for (const insight of todayInsights) {
@@ -1703,29 +1784,14 @@ async function fetchAccountData(account) {
     seenCampaignIds.add(String(insight.campaign_id));
   }
 
+  const allCampaignIds = new Set([
+    ...seenCampaignIds,
+    ...existingCampaigns.map(campaign => String(campaign.campaignId || '').trim()).filter(Boolean)
+  ]);
+  const campaignMetaById = await fetchCampaignMetaMap(fbToken, [...allCampaignIds]);
+
   let insightTotalSpend = 0;
   let insightTotalMessages = 0;
-  const campaignIds = [...seenCampaignIds];
-  for (const chunk of chunkArray(campaignIds, 50)) {
-    const metaResponse = await fbGet(fbToken, '', {
-      ids: chunk.join(','),
-      fields: 'id,name,status,daily_budget,lifetime_budget,created_time'
-    });
-    for (const campaign of Object.values(metaResponse || {})) {
-      if (!campaign?.id) continue;
-      const isLifetime = !!campaign.lifetime_budget && parseFloat(campaign.lifetime_budget) > 0;
-      const dailyBudget = parseFloat(campaign.daily_budget || 0);
-      const lifetimeBudget = parseFloat(campaign.lifetime_budget || 0);
-      campaignMetaById.set(String(campaign.id), {
-        name: campaign.name,
-        status: campaign.status,
-        dailyBudget: isLifetime ? 0 : dailyBudget,
-        lifetimeBudget: isLifetime ? lifetimeBudget : 0,
-        budgetType: isLifetime ? 'LIFETIME' : 'DAILY',
-        createdTime: campaign.created_time ? new Date(campaign.created_time) : undefined
-      });
-    }
-  }
 
   const campaigns = [];
   for (const insight of metricInsights) {
@@ -1735,6 +1801,7 @@ async function fetchAccountData(account) {
     insightTotalSpend += spend;
     insightTotalMessages += messages;
     const meta = campaignMetaById.get(campaignId) || {};
+    const existingCampaign = existingCampaigns.find(campaign => String(campaign.campaignId || '').trim() === campaignId) || {};
 
     await upsertDailyCampaign(account._id, campaignId, today, {
       ...meta,
@@ -1744,7 +1811,14 @@ async function fetchAccountData(account) {
       clicks,
       messages,
       costPerMessage,
-      metaOrders: insight.metaOrders || 0
+      metaOrders: insight.metaOrders || 0,
+      isScheduled: Boolean(existingCampaign.isScheduled),
+      scheduledStartTime: existingCampaign.scheduledStartTime || '',
+      scheduledStartTimeUtc: existingCampaign.scheduledStartTimeUtc,
+      scheduledStartTimeDisplay: existingCampaign.scheduledStartTimeDisplay || '',
+      scheduledEndTime: existingCampaign.scheduledEndTime || '',
+      scheduledEndTimeUtc: existingCampaign.scheduledEndTimeUtc,
+      scheduledEndTimeDisplay: existingCampaign.scheduledEndTimeDisplay || ''
     });
 
     campaigns.push({
@@ -1758,6 +1832,8 @@ async function fetchAccountData(account) {
       messages,
       clicks,
       impressions,
+      isScheduled: Boolean(existingCampaign.isScheduled),
+      scheduledStartTimeUtc: existingCampaign.scheduledStartTimeUtc,
       insights: {
         data: [{
           spend,
@@ -1769,12 +1845,51 @@ async function fetchAccountData(account) {
     });
   }
 
-  const staleCampaignResult = await Campaign.deleteMany({
-    accountId: account._id,
-    date: today,
-    campaignId: { $nin: [...seenCampaignIds] }
-  });
-  if (staleCampaignResult.deletedCount) clearCampaignReadCache();
+  for (const storedCampaign of existingCampaigns) {
+    const campaignId = String(storedCampaign.campaignId || '').trim();
+    if (!campaignId || seenCampaignIds.has(campaignId)) continue;
+
+    const meta = campaignMetaById.get(campaignId) || {};
+    await upsertDailyCampaign(account._id, campaignId, today, {
+      ...meta,
+      spend: Number(storedCampaign.spend || 0),
+      impressions: Number(storedCampaign.impressions || 0),
+      clicks: Number(storedCampaign.clicks || 0),
+      messages: Number(storedCampaign.messages || 0),
+      costPerMessage: Number(storedCampaign.costPerMessage || 0),
+      metaOrders: Number(storedCampaign.metaOrders || 0),
+      isScheduled: Boolean(storedCampaign.isScheduled),
+      scheduledStartTime: storedCampaign.scheduledStartTime || '',
+      scheduledStartTimeUtc: storedCampaign.scheduledStartTimeUtc,
+      scheduledStartTimeDisplay: storedCampaign.scheduledStartTimeDisplay || '',
+      scheduledEndTime: storedCampaign.scheduledEndTime || '',
+      scheduledEndTimeUtc: storedCampaign.scheduledEndTimeUtc,
+      scheduledEndTimeDisplay: storedCampaign.scheduledEndTimeDisplay || ''
+    });
+
+    campaigns.push({
+      id: campaignId,
+      name: meta.name || storedCampaign.name,
+      status: meta.status || storedCampaign.status,
+      daily_budget: Number(meta.dailyBudget ?? storedCampaign.dailyBudget ?? 0),
+      lifetime_budget: Number(meta.lifetimeBudget ?? storedCampaign.lifetimeBudget ?? 0),
+      created_time: meta.createdTime || storedCampaign.createdTime,
+      spend: Number(storedCampaign.spend || 0),
+      messages: Number(storedCampaign.messages || 0),
+      clicks: Number(storedCampaign.clicks || 0),
+      impressions: Number(storedCampaign.impressions || 0),
+      isScheduled: Boolean(storedCampaign.isScheduled),
+      scheduledStartTimeUtc: storedCampaign.scheduledStartTimeUtc,
+      insights: {
+        data: [{
+          spend: Number(storedCampaign.spend || 0),
+          impressions: Number(storedCampaign.impressions || 0),
+          clicks: Number(storedCampaign.clicks || 0),
+          actions: []
+        }]
+      }
+    });
+  }
 
   const totalSpend = insightTotalSpend;
 
@@ -1795,6 +1910,7 @@ async function runAutoControl(account) {
       ? await fetchShopeeAccountData(account)
       : await fetchAccountData(account);
     const { fbToken, claudeKey } = await getEffectiveSecrets(account);
+    const today = todayStr();
 
     await Account.findByIdAndUpdate(account._id, {
       lastChecked: new Date(),
@@ -1849,9 +1965,11 @@ async function runAutoControl(account) {
       );
     }
 
+    const storedCampaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
+    const scheduledPauseTargets = buildScheduledPauseTargets(storedCampaigns);
+
     if (claudeKey) {
       try {
-        const today = todayStr();
         const todayCampaigns = await Campaign.find({ accountId: account._id, date: today });
         const totalMsg = todayCampaigns.reduce((sum, campaign) => sum + campaign.messages, 0);
         const avgCPM = totalMsg > 0 ? totalSpend / totalMsg : 0;
@@ -1887,7 +2005,7 @@ async function runAutoControl(account) {
         if (isShopee) {
           await fbPost(fbToken, campaignGraphId, { status: 'PAUSED' });
           await Campaign.findOneAndUpdate(
-            { accountId: account._id, campaignId: campaignGraphId, date: todayStr() },
+            { accountId: account._id, campaignId: campaignGraphId, date: today },
             { $set: { status: 'PAUSED', updatedAt: new Date() } },
             { new: true }
           );
@@ -1916,7 +2034,7 @@ async function runAutoControl(account) {
           }
         }
         await Campaign.findOneAndUpdate(
-          { accountId: account._id, campaignId: campaignGraphId, date: todayStr() },
+          { accountId: account._id, campaignId: campaignGraphId, date: today },
           { $set: { status: 'PAUSED', updatedAt: new Date() } },
           { new: true }
         );
@@ -1937,6 +2055,27 @@ async function runAutoControl(account) {
           ? 'Shopee campaign cần tạm dừng theo rule mới'
           : `Tam dung ${campaignsToPause.length} chien dich theo rule moi`
       );
+    }
+
+    if (scheduledPauseTargets.length > 0) {
+      for (const item of scheduledPauseTargets) {
+        const campaignGraphId = item.campaign.id || item.campaign.campaignId;
+        if (!campaignGraphId) continue;
+
+        await fbPost(fbToken, campaignGraphId, { status: 'PAUSED' });
+        await Campaign.findOneAndUpdate(
+          { accountId: account._id, campaignId: campaignGraphId, date: today },
+          { $set: { status: 'PAUSED', updatedAt: new Date() } },
+          { new: true }
+        );
+        clearCampaignReadCache();
+        await addLog(
+          account._id,
+          account.name,
+          'warn',
+          `Auto tat camp len lich ${item.campaign.name || campaignGraphId}: ${item.pauseReason}`
+        );
+      }
     }
   } catch (error) {
     if (!isMongoReady()) return;
@@ -3578,6 +3717,7 @@ async function processCampaignDuplicateExactRequest(body = {}, onProgress = null
     start_time: cloneStart.fbStartTime,
     ...(cloneEnd ? { end_time: cloneEnd.fbStartTime } : {})
   };
+  const scheduledCampaignDate = campaignDateFromScheduledStart(cloneStart);
 
   const copied = [];
   const errors = [];
@@ -3597,12 +3737,19 @@ async function processCampaignDuplicateExactRequest(body = {}, onProgress = null
         const copyResult = await duplicateCampaignExactQueued(fbToken, campaign, copyOptions);
         const copiedCampaignId = copyResult.copiedCampaignId;
 
-        await upsertDailyCampaign(accountIdValue, copiedCampaignId, todayStr(), {
+        await upsertDailyCampaign(accountIdValue, copiedCampaignId, scheduledCampaignDate, {
           name: copyResult.copiedCampaignName || campaign.name || campaign.campaignId,
           status: 'ACTIVE',
           dailyBudget: campaign.dailyBudget || 0,
           lifetimeBudget: campaign.lifetimeBudget || 0,
-          budgetType: campaign.budgetType || (campaign.lifetimeBudget > 0 ? 'LIFETIME' : 'DAILY')
+          budgetType: campaign.budgetType || (campaign.lifetimeBudget > 0 ? 'LIFETIME' : 'DAILY'),
+          isScheduled: true,
+          scheduledStartTime: cloneStart.fbStartTime,
+          scheduledStartTimeUtc: cloneStart.utc,
+          scheduledStartTimeDisplay: cloneStart.display,
+          scheduledEndTime: cloneEnd?.fbStartTime || '',
+          scheduledEndTimeUtc: cloneEnd?.utc,
+          scheduledEndTimeDisplay: cloneEnd?.display || ''
         });
 
         copied.push({
@@ -3778,7 +3925,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
     const shopeeCallToActionType = normalizeShopeeCallToActionType(req.body.callToActionType);
 
     const scheduledStart = parseVietnamCampaignStart(req.body.startTime);
-    const campaignDate = todayStr();
+    const campaignDate = campaignDateFromScheduledStart(scheduledStart);
 
     const created = [];
     const errors = [];
@@ -3911,7 +4058,11 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
           name: baseName,
           status: 'ACTIVE',
           dailyBudget,
-          budgetType: 'DAILY'
+          budgetType: 'DAILY',
+          isScheduled: true,
+          scheduledStartTime: scheduledStart.fbStartTime,
+          scheduledStartTimeUtc: scheduledStart.utc,
+          scheduledStartTimeDisplay: scheduledStart.display
         });
 
         await addLog(
@@ -4033,13 +4184,7 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
     }
     const match = {
       accountId: new mongoose.Types.ObjectId(req.params.id),
-      date: { $gte: fDate, $lte: tDate },
-      $or: [
-        { spend: { $gt: 0 } },
-        { impressions: { $gt: 0 } },
-        { clicks: { $gt: 0 } },
-        { messages: { $gt: 0 } }
-      ]
+      date: { $gte: fDate, $lte: tDate }
     };
     const ownedAccount = await Account.findOne(withUserFilter(req, { _id: req.params.id })).select('_id').lean();
     if (!ownedAccount) return res.json([]);
@@ -4104,13 +4249,7 @@ app.get('/api/campaigns/today', async (req, res) => {
     if (cached) return res.json(cached);
 
     let match = {
-      date: { $gte: fDate, $lte: tDate },
-      $or: [
-        { spend: { $gt: 0 } },
-        { impressions: { $gt: 0 } },
-        { clicks: { $gt: 0 } },
-        { messages: { $gt: 0 } }
-      ]
+      date: { $gte: fDate, $lte: tDate }
     };
     if (provider) {
       const accountIds = (await Account.find(withUserFilter(req, buildAccountProviderFilter(provider))).select('_id')).map(a => a._id);

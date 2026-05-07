@@ -15,6 +15,13 @@ const CampaignSchema = new mongoose.Schema({
   messages: { type: Number, default: 0 },
   costPerMessage: { type: Number, default: 0 },
   metaOrders: { type: Number, default: 0 },
+  isScheduled: { type: Boolean, default: false },
+  scheduledStartTime: { type: String, default: '' },
+  scheduledStartTimeUtc: { type: Date },
+  scheduledStartTimeDisplay: { type: String, default: '' },
+  scheduledEndTime: { type: String, default: '' },
+  scheduledEndTimeUtc: { type: Date },
+  scheduledEndTimeDisplay: { type: String, default: '' },
   date: { type: String, required: true },
   updatedAt: { type: Date, default: Date.now }
 }, { autoIndex: false });
