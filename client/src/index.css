@@ -1701,6 +1701,15 @@
       justify-content: flex-end;
     }
 
+    .inventory-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      width: 100%;
+    }
+
     .inventory-search {
       display: flex;
       align-items: center;
@@ -1709,7 +1718,15 @@
       justify-content: flex-end;
     }
 
+    .inventory-quick-price {
+      display: grid;
+      grid-template-columns: minmax(110px, 140px) minmax(110px, 140px) auto;
+      gap: 8px;
+      align-items: center;
+    }
+
     .inventory-search input,
+    .inventory-quick-price input,
     .inventory-inline-input,
     .inventory-qty-input {
       background: var(--s3);
@@ -1957,6 +1974,16 @@
       #page-inventory .inventory-stats,
       .inventory-scan-grid {
         grid-template-columns: 1fr;
+      }
+
+      .inventory-toolbar,
+      .inventory-search {
+        justify-content: stretch;
+      }
+
+      .inventory-quick-price {
+        grid-template-columns: 1fr;
+        width: 100%;
       }
 
       .inventory-scan-action {

@@ -553,6 +553,51 @@ async function getAppConfig() {
   return Config.findOne({ key: 'app' });
 }
 
+function pickDefinedValue(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return undefined;
+}
+
+function mergeAutoConfig(globalConfig = {}, userConfig = {}) {
+  return {
+    autoRuleStartTime: pickDefinedValue(userConfig.autoRuleStartTime, globalConfig.autoRuleStartTime, '00:00'),
+    autoRuleEndTime: pickDefinedValue(userConfig.autoRuleEndTime, globalConfig.autoRuleEndTime, '09:00'),
+    shopeeAutoRuleStartTime: pickDefinedValue(userConfig.shopeeAutoRuleStartTime, globalConfig.shopeeAutoRuleStartTime, userConfig.autoRuleStartTime, globalConfig.autoRuleStartTime, '00:00'),
+    shopeeAutoRuleEndTime: pickDefinedValue(userConfig.shopeeAutoRuleEndTime, globalConfig.shopeeAutoRuleEndTime, userConfig.autoRuleEndTime, globalConfig.autoRuleEndTime, '09:00'),
+    scheduledDuplicatePauseTime: pickDefinedValue(userConfig.scheduledDuplicatePauseTime, globalConfig.scheduledDuplicatePauseTime, '21:00'),
+    dailyZeroMessageSpendLimit: pickDefinedValue(userConfig.dailyZeroMessageSpendLimit, globalConfig.dailyZeroMessageSpendLimit, 25000),
+    dailyHighCostPerMessageLimit: pickDefinedValue(userConfig.dailyHighCostPerMessageLimit, globalConfig.dailyHighCostPerMessageLimit, 20000),
+    dailyHighCostSpendLimit: pickDefinedValue(userConfig.dailyHighCostSpendLimit, globalConfig.dailyHighCostSpendLimit, 50000),
+    dailyClickLimit: pickDefinedValue(userConfig.dailyClickLimit, globalConfig.dailyClickLimit, 0),
+    dailyCpcLimit: pickDefinedValue(userConfig.dailyCpcLimit, globalConfig.dailyCpcLimit, 600),
+    lifetimeZeroMessageSpendLimit: pickDefinedValue(userConfig.lifetimeZeroMessageSpendLimit, globalConfig.lifetimeZeroMessageSpendLimit, 25000),
+    lifetimeHighCostPerMessageLimit: pickDefinedValue(userConfig.lifetimeHighCostPerMessageLimit, globalConfig.lifetimeHighCostPerMessageLimit, 20000),
+    lifetimeHighCostSpendLimit: pickDefinedValue(userConfig.lifetimeHighCostSpendLimit, globalConfig.lifetimeHighCostSpendLimit, 50000),
+    lifetimeClickLimit: pickDefinedValue(userConfig.lifetimeClickLimit, globalConfig.lifetimeClickLimit, 0),
+    lifetimeCpcLimit: pickDefinedValue(userConfig.lifetimeCpcLimit, globalConfig.lifetimeCpcLimit, 600),
+    autoPauseCpoLimit: pickDefinedValue(userConfig.autoPauseCpoLimit, globalConfig.autoPauseCpoLimit, AUTO_PAUSE_CPO_LIMIT)
+  };
+}
+
+async function getUserAutoConfig(userId) {
+  const [globalConfig, userConfig] = await Promise.all([
+    getAppConfig(),
+    userId ? User.findById(userId).select(
+      'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
+      'dailyZeroMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
+      'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
+      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit'
+    ).lean() : null
+  ]);
+  return mergeAutoConfig(globalConfig || {}, userConfig || {});
+}
+
+async function getAccountAutoConfig(account) {
+  return getUserAutoConfig(account?.ownerUserId || null);
+}
+
 async function getEffectiveSecrets(account) {
   const config = await getAppConfig();
   let ownerFbToken = '';
@@ -831,6 +876,13 @@ function dateKeyFromVnOffset(daysOffset = 0) {
   return d.toISOString().split('T')[0];
 }
 
+function buildVnDateRange(dateKey) {
+  const normalized = normalizeCampaignDate(dateKey);
+  const startUtc = new Date(`${normalized}T00:00:00+07:00`);
+  const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000);
+  return { normalized, startUtc, endUtc };
+}
+
 function normalizeCampaignDate(value) {
   const date = String(value || '').trim();
   return date || todayStr();
@@ -988,7 +1040,7 @@ async function exchangeToken(shortToken, appId, appSecret) {
 }
 
 async function getAutoCheckIntervalSeconds(account) {
-  const config = await getAppConfig();
+  const config = await getAccountAutoConfig(account);
   const isShopee = account.provider === 'shopee';
   const ruleStart = isShopee
     ? (config?.shopeeAutoRuleStartTime || config?.autoRuleStartTime || '00:00')
@@ -1645,8 +1697,35 @@ function isAfterVietnamTime(hour = 21, minute = 0) {
   return currentMinutes >= thresholdMinutes;
 }
 
-function buildScheduledPauseTargets(campaigns = []) {
-  if (!isAfterVietnamTime(21, 0)) return [];
+function parseHourMinute(value, fallback = '21:00') {
+  const raw = String(value || fallback).trim();
+  const match = raw.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+  if (!match) return parseHourMinute(fallback, fallback);
+  return { hour: Number(match[1]), minute: Number(match[2]) };
+}
+
+function isLifetimeCampaign(campaign) {
+  return String(campaign?.budgetType || '').toUpperCase() === 'LIFETIME'
+    || Number(campaign?.lifetimeBudget || campaign?.lifetime_budget || 0) > 0;
+}
+
+function getCampaignCreatedTimeMs(campaign) {
+  return new Date(campaign?.createdTime || campaign?.created_time || 0).getTime() || 0;
+}
+
+function compareCampaignPriority(a, b) {
+  const lifetimeDiff = Number(isLifetimeCampaign(b)) - Number(isLifetimeCampaign(a));
+  if (lifetimeDiff !== 0) return lifetimeDiff;
+
+  const scheduledDiff = Number(Boolean(a?.isScheduled)) - Number(Boolean(b?.isScheduled));
+  if (scheduledDiff !== 0) return scheduledDiff;
+
+  return getCampaignCreatedTimeMs(a) - getCampaignCreatedTimeMs(b);
+}
+
+function buildScheduledPauseTargets(campaigns = [], options = {}) {
+  const { hour, minute } = parseHourMinute(options.scheduledDuplicatePauseTime, '21:00');
+  if (!isAfterVietnamTime(hour, minute)) return [];
 
   const groups = campaigns.reduce((map, campaign) => {
     const key = normalizeCampaignDuplicateKey(campaign);
@@ -1660,31 +1739,26 @@ function buildScheduledPauseTargets(campaigns = []) {
   for (const group of groups.values()) {
     if (group.length <= 1) continue;
 
-    const activeNonScheduled = group.filter(campaign =>
-      String(campaign.status || '').toUpperCase() === 'ACTIVE' &&
-      !campaign.isScheduled
+    const activeCampaigns = group.filter(campaign =>
+      String(campaign.status || '').toUpperCase() === 'ACTIVE'
     );
-    if (!activeNonScheduled.length) continue;
+    if (activeCampaigns.length <= 1) continue;
 
-    const scheduledActive = group.filter(campaign =>
-      String(campaign.status || '').toUpperCase() === 'ACTIVE' &&
-      campaign.isScheduled &&
-      hasScheduledCampaignStarted(campaign)
+    const scheduledActive = activeCampaigns.filter(campaign =>
+      campaign.isScheduled && hasScheduledCampaignStarted(campaign)
     );
     if (!scheduledActive.length) continue;
 
-    const keeper = [...activeNonScheduled].sort((a, b) => {
-      const aTime = new Date(a.createdTime || a.created_time || 0).getTime() || 0;
-      const bTime = new Date(b.createdTime || b.created_time || 0).getTime() || 0;
-      return aTime - bTime;
-    })[0];
+    const keeper = [...activeCampaigns].sort(compareCampaignPriority)[0];
 
     for (const campaign of scheduledActive) {
       if (String(campaign.campaignId || '') === String(keeper.campaignId || '')) continue;
       items.push({
         campaign,
         keeper,
-        pauseReason: `Camp len lich trung voi camp dang chay ${keeper.name || keeper.campaignId}`
+        pauseReason: isLifetimeCampaign(keeper)
+          ? `Camp len lich trung, uu tien giu camp tron doi ${keeper.name || keeper.campaignId}`
+          : `Camp len lich trung voi camp dang chay ${keeper.name || keeper.campaignId}`
       });
     }
   }
@@ -1924,7 +1998,7 @@ async function runAutoControl(account) {
       `Kiem tra: chi tieu ${totalSpend.toLocaleString()}d · tin nhan camp: ${totalMessages} · inbox moi: ${unreadMessages}`
     );
 
-    const config = await getAppConfig();
+    const config = await getAccountAutoConfig(account);
     const ruleStart = isShopee
       ? (config?.shopeeAutoRuleStartTime || config?.autoRuleStartTime || '00:00')
       : (config?.autoRuleStartTime || '00:00');
@@ -1966,7 +2040,9 @@ async function runAutoControl(account) {
     }
 
     const storedCampaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
-    const scheduledPauseTargets = buildScheduledPauseTargets(storedCampaigns);
+    const scheduledPauseTargets = buildScheduledPauseTargets(storedCampaigns, {
+      scheduledDuplicatePauseTime: config?.scheduledDuplicatePauseTime
+    });
 
     if (claudeKey) {
       try {
@@ -2806,7 +2882,14 @@ app.get('/api/stats', async (req, res) => {
 app.get('/api/config', async (req, res) => {
   try {
     const config = await getAppConfig();
-    const user = await User.findById(req.currentUser._id).select('fbToken fbTokenExpiresAt fbTokenLastRefreshTime fbTokenLastDebugTime fbTokenLastRefreshError').lean();
+    const user = await User.findById(req.currentUser._id).select(
+      'fbToken fbTokenExpiresAt fbTokenLastRefreshTime fbTokenLastDebugTime fbTokenLastRefreshError ' +
+      'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
+      'dailyZeroMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
+      'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
+      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit'
+    ).lean();
+    const autoConfig = mergeAutoConfig(config || {}, user || {});
     res.json({
       hasFbToken: Boolean(user?.fbToken || config?.fbToken),
       fbTokenExpiresAt: user?.fbTokenExpiresAt || config?.fbTokenExpiresAt || null,
@@ -2819,23 +2902,24 @@ app.get('/api/config', async (req, res) => {
       hasPancakeApiKey: Boolean(config?.pancakeApiKey),
       hasPancakeShopId: Boolean(config?.pancakeShopId),
       pancakeShopId: config?.pancakeShopId || '',
-      autoRuleStartTime: config?.autoRuleStartTime || '00:00',
-      autoRuleEndTime: config?.autoRuleEndTime || '09:00',
-      shopeeAutoRuleStartTime: config?.shopeeAutoRuleStartTime || config?.autoRuleStartTime || '00:00',
-      shopeeAutoRuleEndTime: config?.shopeeAutoRuleEndTime || config?.autoRuleEndTime || '09:00',
+      autoRuleStartTime: autoConfig.autoRuleStartTime,
+      autoRuleEndTime: autoConfig.autoRuleEndTime,
+      shopeeAutoRuleStartTime: autoConfig.shopeeAutoRuleStartTime,
+      shopeeAutoRuleEndTime: autoConfig.shopeeAutoRuleEndTime,
+      scheduledDuplicatePauseTime: autoConfig.scheduledDuplicatePauseTime,
 
-      dailyZeroMessageSpendLimit: config?.dailyZeroMessageSpendLimit || 25000,
-      dailyHighCostPerMessageLimit: config?.dailyHighCostPerMessageLimit || 20000,
-      dailyHighCostSpendLimit: config?.dailyHighCostSpendLimit || 50000,
-      dailyClickLimit: config?.dailyClickLimit || 0,
-      dailyCpcLimit: config?.dailyCpcLimit || 600,
+      dailyZeroMessageSpendLimit: autoConfig.dailyZeroMessageSpendLimit,
+      dailyHighCostPerMessageLimit: autoConfig.dailyHighCostPerMessageLimit,
+      dailyHighCostSpendLimit: autoConfig.dailyHighCostSpendLimit,
+      dailyClickLimit: autoConfig.dailyClickLimit,
+      dailyCpcLimit: autoConfig.dailyCpcLimit,
 
-      lifetimeZeroMessageSpendLimit: config?.lifetimeZeroMessageSpendLimit || 25000,
-      lifetimeHighCostPerMessageLimit: config?.lifetimeHighCostPerMessageLimit || 20000,
-      lifetimeHighCostSpendLimit: config?.lifetimeHighCostSpendLimit || 50000,
-      lifetimeClickLimit: config?.lifetimeClickLimit || 0,
-      lifetimeCpcLimit: config?.lifetimeCpcLimit || 600,
-      autoPauseCpoLimit: config?.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT
+      lifetimeZeroMessageSpendLimit: autoConfig.lifetimeZeroMessageSpendLimit,
+      lifetimeHighCostPerMessageLimit: autoConfig.lifetimeHighCostPerMessageLimit,
+      lifetimeHighCostSpendLimit: autoConfig.lifetimeHighCostSpendLimit,
+      lifetimeClickLimit: autoConfig.lifetimeClickLimit,
+      lifetimeCpcLimit: autoConfig.lifetimeCpcLimit,
+      autoPauseCpoLimit: autoConfig.autoPauseCpoLimit
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -3011,10 +3095,10 @@ app.put('/api/auto-limits', async (req, res) => {
       updatedAt: new Date()
     };
 
-    const config = await Config.findOneAndUpdate(
-      { key: 'app' },
-      { $set: limits, $setOnInsert: { key: 'app' } },
-      { upsert: true, new: true }
+    await User.findByIdAndUpdate(
+      req.currentUser._id,
+      { $set: limits },
+      { new: true }
     );
     res.json({ ok: true, limits });
   } catch (error) {
@@ -3037,19 +3121,39 @@ app.put('/api/auto-rules', async (req, res) => {
     const timeUpdates = provider === 'shopee'
       ? { shopeeAutoRuleStartTime: startTime, shopeeAutoRuleEndTime: endTime, updatedAt: new Date() }
       : { autoRuleStartTime: startTime, autoRuleEndTime: endTime, updatedAt: new Date() };
-    const config = await Config.findOneAndUpdate(
-      { key: 'app' },
-      { $set: timeUpdates, $setOnInsert: { key: 'app' } },
-      { upsert: true, new: true }
+    const user = await User.findByIdAndUpdate(
+      req.currentUser._id,
+      { $set: timeUpdates },
+      { new: true }
     );
     res.json({
       ok: true,
       provider,
-      autoRuleStartTime: config.autoRuleStartTime,
-      autoRuleEndTime: config.autoRuleEndTime,
-      shopeeAutoRuleStartTime: config.shopeeAutoRuleStartTime,
-      shopeeAutoRuleEndTime: config.shopeeAutoRuleEndTime
+      autoRuleStartTime: user.autoRuleStartTime,
+      autoRuleEndTime: user.autoRuleEndTime,
+      shopeeAutoRuleStartTime: user.shopeeAutoRuleStartTime,
+      shopeeAutoRuleEndTime: user.shopeeAutoRuleEndTime
     });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.put('/api/scheduled-duplicate-pause-time', async (req, res) => {
+  try {
+    const pauseTime = String(req.body.pauseTime || '').trim();
+    const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+    if (!timeRegex.test(pauseTime)) {
+      return res.status(400).json({ error: 'Dinh dang thoi gian khong hop le (HH:MM)' });
+    }
+
+    await User.findByIdAndUpdate(
+      req.currentUser._id,
+      { $set: { scheduledDuplicatePauseTime: pauseTime, updatedAt: new Date() } },
+      { new: true }
+    );
+
+    res.json({ ok: true, scheduledDuplicatePauseTime: pauseTime });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -4993,6 +5097,120 @@ app.get('/api/inventory', async (req, res) => {
       .lean();
 
     res.json({ ok: true, items });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/inventory/summary', async (req, res) => {
+  try {
+    const [items, pendingCounts] = await Promise.all([
+      InventoryItem.find(withUserFilter(req))
+      .select('warehouseName barcode name salePrice quantity updatedAt')
+      .lean(),
+      buildInventoryPendingOrderCounts()
+    ]);
+
+    const grouped = new Map();
+    for (const item of items) {
+      const rawBarcode = String(item.barcode || '').trim();
+      if (!rawBarcode) continue;
+
+      const productCode = extractInventoryProductCode(rawBarcode);
+      const key = productCode || rawBarcode;
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          productCode: key,
+          totalQuantity: 0,
+          pendingQuantity: pendingCounts.byCode.get(key) || 0,
+          variants: 0,
+          warehouses: new Set(),
+          barcodes: [],
+          names: new Set(),
+          salePrices: new Set(),
+          updatedAt: item.updatedAt || item.createdAt || null
+        });
+      }
+
+      const current = grouped.get(key);
+      current.totalQuantity += Number(item.quantity || 0);
+      current.variants += 1;
+      if (item.warehouseName) current.warehouses.add(String(item.warehouseName).trim());
+      if (rawBarcode) current.barcodes.push(rawBarcode);
+      if (item.name) current.names.add(String(item.name).trim());
+      if (item.salePrice) current.salePrices.add(String(item.salePrice).trim());
+      if (item.updatedAt && (!current.updatedAt || new Date(item.updatedAt) > new Date(current.updatedAt))) {
+        current.updatedAt = item.updatedAt;
+      }
+    }
+
+    const itemsSummary = Array.from(grouped.values())
+      .map(item => ({
+        productCode: item.productCode,
+        totalQuantity: item.totalQuantity,
+        pendingQuantity: item.pendingQuantity,
+        variants: item.variants,
+        warehouseCount: item.warehouses.size,
+        warehouses: Array.from(item.warehouses).sort(),
+        name: Array.from(item.names)[0] || '',
+        salePrice: Array.from(item.salePrices)[0] || '',
+        updatedAt: item.updatedAt,
+        barcodes: item.barcodes.sort()
+      }))
+      .sort((a, b) => b.totalQuantity - a.totalQuantity || a.productCode.localeCompare(b.productCode));
+
+    res.json({
+      ok: true,
+      totalCodes: itemsSummary.length,
+      totalQuantity: itemsSummary.reduce((sum, item) => sum + Number(item.totalQuantity || 0), 0),
+      items: itemsSummary
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/inventory/scan-summary', async (req, res) => {
+  try {
+    const fromDate = normalizeCampaignDate(req.query.fromDate || todayStr());
+    const toDate = normalizeCampaignDate(req.query.toDate || fromDate);
+    const fromRange = buildVnDateRange(fromDate);
+    const toRange = buildVnDateRange(toDate);
+
+    const items = await InventoryItem.find(withUserFilter(req))
+      .select('barcode scans')
+      .lean();
+
+    const totalsByBarcode = {};
+    let totalScannedQuantity = 0;
+
+    for (const item of items) {
+      const barcode = String(item.barcode || '').trim();
+      if (!barcode || !Array.isArray(item.scans)) continue;
+
+      let barcodeTotal = 0;
+      for (const scan of item.scans) {
+        const scannedAt = new Date(scan?.scannedAt || 0);
+        if (Number.isNaN(scannedAt.getTime())) continue;
+        if (scannedAt < fromRange.startUtc || scannedAt >= toRange.endUtc) continue;
+        const quantity = Number(scan?.quantity || 0);
+        if (!Number.isFinite(quantity) || quantity === 0) continue;
+        barcodeTotal += quantity;
+      }
+
+      if (barcodeTotal !== 0) {
+        totalsByBarcode[barcode] = barcodeTotal;
+        totalScannedQuantity += barcodeTotal;
+      }
+    }
+
+    res.json({
+      ok: true,
+      fromDate,
+      toDate,
+      totalScannedQuantity,
+      totalsByBarcode
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

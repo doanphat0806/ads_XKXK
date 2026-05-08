@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
-import { api, dateTimeString, formatNumber } from '../lib/api';
+import { api, dateTimeString, formatNumber, todayString } from '../lib/api';
+import DateRangePicker from '../components/DateRangePicker';
 
 const SIZE_COLUMNS = ['S', 'M', 'L', 'XL', 'FZ'];
 
@@ -15,19 +16,25 @@ export default function Inventory() {
   const [quickSalePrice, setQuickSalePrice] = useState('');
   const [search, setSearch] = useState('');
   const [warehouseSearch, setWarehouseSearch] = useState('');
+  const [scanFromDate, setScanFromDate] = useState(todayString());
+  const [scanToDate, setScanToDate] = useState(todayString());
   const [currentPage, setCurrentPage] = useState(1);
   const [sortConfig, setSortConfig] = useState({ key: '', direction: 'desc' });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [quickPriceSaving, setQuickPriceSaving] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [lastScan, setLastScan] = useState(null);
+  const [scanTotalsByBarcode, setScanTotalsByBarcode] = useState({});
   const aggregatedSheetItems = useMemo(() => aggregateSheetItems(sheetItems), [sheetItems]);
 
   const totalItemCount = useMemo(() => aggregatedSheetItems.length, [aggregatedSheetItems]);
   const totalQuantity = useMemo(
     () => aggregatedSheetItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
     [aggregatedSheetItems]
+  );
+  const totalScannedInRange = useMemo(
+    () => Object.values(scanTotalsByBarcode).reduce((sum, value) => sum + Number(value || 0), 0),
+    [scanTotalsByBarcode]
   );
   const inventoryItemsByBarcode = useMemo(() => {
     const map = new Map();
@@ -71,8 +78,19 @@ export default function Inventory() {
     }
   };
 
+  const loadScanSummary = async (fromDate = scanFromDate, toDate = scanToDate) => {
+    try {
+      const params = new URLSearchParams({ fromDate, toDate });
+      const data = await api('GET', `/inventory/scan-summary?${params.toString()}`);
+      setScanTotalsByBarcode(data.totalsByBarcode || {});
+    } catch (error) {
+      toast.error(`Loi tai thong ke quet: ${error.message}`);
+    }
+  };
+
   useEffect(() => {
     loadInventory('');
+    loadScanSummary(todayString(), todayString());
     barcodeRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -88,15 +106,15 @@ export default function Inventory() {
 
     setSaving(true);
     try {
-      const data = await api('POST', '/inventory/scan', {
+      await api('POST', '/inventory/scan', {
         barcode: code,
         quantity: qty,
         name
       });
       setBarcode('');
       setName('');
-      setLastScan(data.item);
       await loadInventory(search, warehouseSearch);
+      await loadScanSummary(scanFromDate, scanToDate);
       toast.success(`Da cong ${formatNumber(qty)} vao ${code}`);
     } catch (error) {
       toast.error(`Loi quet ma: ${error.message}`);
@@ -120,6 +138,7 @@ export default function Inventory() {
       const data = await api('POST', '/inventory/import-sheet');
       setItems(data.items || []);
       await loadInventory(search, warehouseSearch);
+      await loadScanSummary(scanFromDate, scanToDate);
       toast.success(`Da nhap ${formatNumber(data.imported || 0)} ma hang tu Google Sheet`);
     } catch (error) {
       toast.error(`Loi nhap Sheet: ${error.message}`);
@@ -193,9 +212,9 @@ export default function Inventory() {
           <div className="stat-value">{formatNumber(totalQuantity)}</div>
         </div>
         <div className="stat o">
-          <div className="stat-label">Lan quet gan nhat</div>
-          <div className="stat-value stat-value-compact">{lastScan?.barcode || '-'}</div>
-          <div className="stat-sub">{lastScan ? `Ton: ${formatNumber(lastScan.quantity)}` : 'Chua quet'}</div>
+          <div className="stat-label">Da quet trong ngay chon</div>
+          <div className="stat-value stat-value-compact">{formatNumber(totalScannedInRange)}</div>
+          <div className="stat-sub">{scanFromDate === scanToDate ? scanFromDate : `${scanFromDate} den ${scanToDate}`}</div>
         </div>
       </div>
 
@@ -251,22 +270,61 @@ export default function Inventory() {
         </div>
       </div>
 
-      <div className="card section-gap">
+      <div className="card">
         <div className="card-header">
-          <div className="card-title">Sua gia nhanh</div>
-        </div>
-        <div className="inventory-scan-panel">
-          <div className="form-grid inventory-scan-grid">
-            <div className="form-group">
-              <label>Ma SP</label>
+          <div className="card-title">Ton kho ({formatNumber(sortedSheetRows.length)} dong)</div>
+          <div className="inventory-toolbar">
+            <DateRangePicker
+              fromDate={scanFromDate}
+              toDate={scanToDate}
+              onChange={(from, to) => {
+                setScanFromDate(from);
+                setScanToDate(to);
+                loadScanSummary(from, to);
+              }}
+            />
+            <div className="inventory-search">
+              <input
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                onPaste={event => {
+                  const pastedText = event.clipboardData?.getData('text') || '';
+                  const nextValue = pastedText.trim();
+                  setSearch(nextValue);
+                  setTimeout(() => {
+                    loadInventory(nextValue);
+                  }, 0);
+                }}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') loadInventory(search, warehouseSearch);
+                }}
+                placeholder="Tim theo ten hoac ma"
+              />
+              <input
+                value={warehouseSearch}
+                onChange={event => setWarehouseSearch(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') loadInventory(search, warehouseSearch);
+                }}
+                placeholder="Tim theo kho"
+              />
+              <button className="btn btn-ghost btn-sm" onClick={() => loadInventory(search)} disabled={loading}>
+                Tim
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => {
+                setSearch('');
+                setWarehouseSearch('');
+                loadInventory('', '');
+              }}>
+                Tat ca
+              </button>
+            </div>
+            <div className="inventory-quick-price">
               <input
                 value={quickPriceCode}
                 onChange={event => setQuickPriceCode(event.target.value.toUpperCase())}
-                placeholder="Nhap ma san pham"
+                placeholder="Ma SP"
               />
-            </div>
-            <div className="form-group">
-              <label>Gia sale</label>
               <input
                 value={quickSalePrice}
                 onChange={event => setQuickSalePrice(event.target.value)}
@@ -276,56 +334,12 @@ export default function Inventory() {
                     applyQuickSalePrice();
                   }
                 }}
-                placeholder="Nhap gia sale"
+                placeholder="Gia sale"
               />
-            </div>
-            <div className="form-group inventory-scan-action">
-              <button className="btn btn-g" onClick={applyQuickSalePrice} disabled={quickPriceSaving || !quickPriceCode.trim()}>
+              <button className="btn btn-g btn-sm" onClick={applyQuickSalePrice} disabled={quickPriceSaving || !quickPriceCode.trim()}>
                 {quickPriceSaving ? 'Dang cap nhat...' : 'Cap nhat gia'}
               </button>
             </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">Ton kho ({formatNumber(sortedSheetRows.length)} dong)</div>
-          <div className="inventory-search">
-            <input
-              value={search}
-              onChange={event => setSearch(event.target.value)}
-              onPaste={event => {
-                const pastedText = event.clipboardData?.getData('text') || '';
-                const nextValue = pastedText.trim();
-                setSearch(nextValue);
-                setTimeout(() => {
-                  loadInventory(nextValue);
-                }, 0);
-              }}
-              onKeyDown={event => {
-                if (event.key === 'Enter') loadInventory(search, warehouseSearch);
-              }}
-              placeholder="Tim theo ten hoac ma"
-            />
-            <input
-              value={warehouseSearch}
-              onChange={event => setWarehouseSearch(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter') loadInventory(search, warehouseSearch);
-              }}
-              placeholder="Tim theo kho"
-            />
-            <button className="btn btn-ghost btn-sm" onClick={() => loadInventory(search)} disabled={loading}>
-              Tim
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => {
-              setSearch('');
-              setWarehouseSearch('');
-              loadInventory('', '');
-            }}>
-              Tat ca
-            </button>
           </div>
         </div>
         <div className="tbl-wrap">
@@ -341,6 +355,7 @@ export default function Inventory() {
                   <th rowSpan="2">Ma</th>
                   <th rowSpan="2">Mau</th>
                   <th colSpan="6">So luong</th>
+                  <th rowSpan="2">Da quet</th>
                   <th rowSpan="2">Ten hang</th>
                   <th rowSpan="2">Gia</th>
                   <th rowSpan="2">Ton</th>
@@ -367,6 +382,7 @@ export default function Inventory() {
                   <InventoryRow
                     key={row.rowKey}
                     row={row}
+                    scannedQuantity={Number(scanTotalsByBarcode[row.raw.barcode] || 0)}
                     onUpdate={updateItem}
                     onDelete={deleteItem}
                   />
@@ -392,7 +408,7 @@ export default function Inventory() {
   );
 }
 
-const InventoryRow = React.memo(function InventoryRow({ row, onUpdate, onDelete }) {
+const InventoryRow = React.memo(function InventoryRow({ row, scannedQuantity, onUpdate, onDelete }) {
   const item = row.editableItem;
   const [name, setName] = useState(item?.name || row.raw.name || '');
   const [salePrice, setSalePrice] = useState(item?.salePrice || row.raw.salePrice || '');
@@ -413,6 +429,7 @@ const InventoryRow = React.memo(function InventoryRow({ row, onUpdate, onDelete 
         <td key={size} className="inventory-sheet-size-cell">{row.sizes[size] || ''}</td>
       ))}
       <td className="inventory-sheet-total">{row.totalQuantity}</td>
+      <td className="inventory-sheet-total">{scannedQuantity > 0 ? formatNumber(scannedQuantity) : ''}</td>
       <td>
         <input
           className="inventory-inline-input"

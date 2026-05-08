@@ -13,6 +13,7 @@ export default function ConfigModal() {
   const [claudeKey, setClaudeKey] = useState('');
   const [pancake, setPancake] = useState({ apiKey: '', shopId: '' });
   const [autoRules, setAutoRules] = useState({ start: '00:00', end: '09:00' });
+  const [scheduledPauseTime, setScheduledPauseTime] = useState('21:00');
   const [autoLimits, setAutoLimits] = useState({
     dailyZero: 25000, dailyHighCost: 20000, dailyHighSpend: 50000,
     lifetimeZero: 25000, lifetimeHighCost: 20000, lifetimeHighSpend: 50000,
@@ -29,6 +30,7 @@ export default function ConfigModal() {
         start: isShopee ? (appConfig.shopeeAutoRuleStartTime || '00:00') : (appConfig.autoRuleStartTime || '00:00'), 
         end: isShopee ? (appConfig.shopeeAutoRuleEndTime || '09:00') : (appConfig.autoRuleEndTime || '09:00') 
       });
+      setScheduledPauseTime(appConfig.scheduledDuplicatePauseTime || '21:00');
       // Populating limits from config if available
       setAutoLimits({
         dailyZero: appConfig.dailyZeroMessageSpendLimit || 25000,
@@ -209,6 +211,22 @@ export default function ConfigModal() {
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
             <button className="btn btn-p btn-sm" onClick={() => save('/auto-rules', { provider, startTime: autoRules.start, endTime: autoRules.end }, 'Đã lưu khung giờ')}>Lưu khung giờ</button>
+          </div>
+        </section>
+
+        <section className="section-gap">
+          <div className="section-title">6. Gio tat camp da len lich bi trung</div>
+          <div style={{ marginBottom: '12px', color: 'var(--muted2)' }}>
+            Khi nhieu camp cung ma/ten dang chay, he thong se kiem tra tu moc gio nay va tu tat bot, uu tien giu camp tron doi.
+          </div>
+          <div className="form-grid" style={{ gridTemplateColumns: '1fr' }}>
+            <div className="form-group">
+              <label>Gio kiem tra camp trung</label>
+              <input type="text" inputMode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:mm" value={scheduledPauseTime} onChange={e => setScheduledPauseTime(e.target.value)} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+            <button className="btn btn-p btn-sm" onClick={() => save('/scheduled-duplicate-pause-time', { pauseTime: scheduledPauseTime }, 'Da luu gio tat camp trung')}>Luu gio tat</button>
           </div>
         </section>
 

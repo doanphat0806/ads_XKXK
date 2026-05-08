@@ -16,6 +16,7 @@ const ConfigSchema = new mongoose.Schema({
   autoRuleEndTime: { type: String, default: '09:00' },
   shopeeAutoRuleStartTime: { type: String, default: '00:00' },
   shopeeAutoRuleEndTime: { type: String, default: '09:00' },
+  scheduledDuplicatePauseTime: { type: String, default: '21:00' },
   
   dailyZeroMessageSpendLimit: { type: Number, default: 25000 },
   dailyHighCostPerMessageLimit: { type: Number, default: 20000 },
