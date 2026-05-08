@@ -16,6 +16,7 @@ import Logs from './pages/Logs';
 import Inventory from './pages/Inventory';
 import InventorySummary from './pages/InventorySummary';
 import GoogleSheets from './pages/GoogleSheets';
+import CreaterPage from './pages/CreaterPage';
 import CreateCampaign from './pages/Pages';
 import ModalContainer from './components/ModalContainer';
 
@@ -28,18 +29,31 @@ function AppContent() {
   }, [location.pathname]);
 
   const getPageTitle = () => {
-    switch(location.pathname) {
-      case '/': return 'Dashboard';
-      case '/accounts': return 'Tài khoản';
-      case '/campaigns': return 'Chiến dịch';
-      case '/clone-campaigns': return 'Nhân Camp';
-      case '/orders': return 'Đơn hàng';
-      case '/logs': return 'Nhật ký';
-      case '/inventory': return 'Kho';
-      case '/inventory-summary': return 'Thong ke kho';
-      case '/google-sheets': return 'Google Sheets';
-      case '/create-campaign': return 'Page';
-      default: return 'Dashboard';
+    switch (location.pathname) {
+      case '/':
+        return 'Dashboard';
+      case '/accounts':
+        return 'Tai khoan';
+      case '/campaigns':
+        return 'Chien dich';
+      case '/clone-campaigns':
+        return 'Nhan Camp';
+      case '/orders':
+        return 'Don hang';
+      case '/logs':
+        return 'Nhat ky';
+      case '/inventory':
+        return 'Kho';
+      case '/inventory-summary':
+        return 'Thong ke kho';
+      case '/google-sheets':
+        return 'Google Sheets';
+      case '/creater-page':
+        return 'Dang bai';
+      case '/create-campaign':
+        return 'Page';
+      default:
+        return 'Dashboard';
     }
   };
 
@@ -62,6 +76,7 @@ function AppContent() {
             <Route path="/inventory" element={<Inventory />} />
             <Route path="/inventory-summary" element={<InventorySummary />} />
             <Route path="/google-sheets" element={<GoogleSheets />} />
+            <Route path="/creater-page" element={<CreaterPage />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/create-campaign" element={<CreateCampaign />} />
           </Routes>

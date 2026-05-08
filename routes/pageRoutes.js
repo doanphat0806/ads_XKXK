@@ -8,6 +8,8 @@ function registerPageRoutes(app, deps) {
     User,
     getAppConfig,
     fbGet,
+    fbPost,
+    FACEBOOK_GRAPH_API_VERSION,
     escapeRegExp,
     normalizeProvider,
     POSTS_PER_PAGE_LIMIT,
@@ -17,6 +19,9 @@ function registerPageRoutes(app, deps) {
   } = deps;
 
 const POST_CACHE_TTL_MS = 5 * 60 * 1000;
+const PAGE_VIDEO_MAX_BYTES = 100 * 1024 * 1024;
+const PAGE_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+const PAGE_MAX_IMAGE_FILES = 10;
 const postCache = new Map();
 
 function getPostsPerPageLimit(provider) {
@@ -55,9 +60,49 @@ function getPostFetchError(error) {
   return { error: error.message };
 }
 
+function isPagePublishPermissionError(error) {
+  const apiError = error?.fbData?.error || error?.response?.data?.error || {};
+  const message = String(apiError.message || error?.message || '');
+  return Number(apiError.code) === 10 ||
+    message.includes('pages_manage_posts') ||
+    message.includes('requires the pages_manage_posts permission') ||
+    message.includes('No permission to operate on the page') ||
+    message.includes('does not have permission');
+}
+
+function getPagePublishError(error) {
+  if (isPagePublishPermissionError(error)) {
+    return {
+      error: 'Token/App chua co quyen dang bai len Page. Can pages_manage_posts va quyen thao tac tren fanpage.',
+      code: 'PAGE_PUBLISH_PERMISSION',
+      permission: 'pages_manage_posts'
+    };
+  }
+  return { error: error.message };
+}
+
 function setPostCache(key, value) {
   postCache.set(key, { value, createdAt: Date.now() });
   return value;
+}
+
+async function fetchManagedPages(fbToken, fields = 'name,id,access_token,category,picture{url},fan_count') {
+  let allPages = [];
+  const first = await fbGet(fbToken, 'me/accounts', { fields, limit: 100 });
+  if (first.data) allPages = allPages.concat(first.data);
+
+  let nextUrl = first.paging?.next;
+  while (nextUrl) {
+    try {
+      const resp = await axios.get(nextUrl, { timeout: 30000 });
+      if (resp.data?.data) allPages = allPages.concat(resp.data.data);
+      nextUrl = resp.data?.paging?.next || null;
+    } catch {
+      break;
+    }
+  }
+
+  return allPages;
 }
 
 function mapFacebookPost(post, page = {}) {
@@ -334,6 +379,223 @@ app.get('/api/pages/:pageId/posts', async (req, res) => {
 
     res.json(setPostCache(cacheKey, payload));
   } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/pages/:pageId/publish', async (req, res) => {
+  try {
+    const fbToken = await resolvePagesToken(req, getAppConfig);
+    if (!fbToken) return res.status(400).json({ error: 'Chua cau hinh Facebook Token dung chung' });
+
+    const { pageId } = req.params;
+    const contentType = String(req.headers['content-type'] || '').toLowerCase();
+    const isMultipart = contentType.includes('multipart/form-data');
+
+    let message = '';
+    let link = '';
+    let videoFile = null;
+    let imageFiles = [];
+
+    if (isMultipart) {
+      const contentLength = Number(req.headers['content-length'] || 0);
+      if (contentLength > PAGE_VIDEO_MAX_BYTES + (2 * 1024 * 1024)) {
+        return res.status(413).json({ error: 'File video vuot gioi han 100MB' });
+      }
+
+      const request = new Request(`http://localhost${req.originalUrl || req.url}`, {
+        method: req.method,
+        headers: req.headers,
+        body: req,
+        duplex: 'half'
+      });
+      const formData = await request.formData();
+      message = String(formData.get('message') || '').trim();
+      link = String(formData.get('link') || '').trim();
+      for (const mediaFile of formData.getAll('media')) {
+        if (!mediaFile || typeof mediaFile.arrayBuffer !== 'function' || Number(mediaFile.size || 0) <= 0) continue;
+        const fileType = String(mediaFile.type || '').toLowerCase();
+        if (fileType.startsWith('video/')) {
+          if (videoFile) return res.status(400).json({ error: 'Chi ho tro 1 video moi lan dang' });
+          if (Number(mediaFile.size || 0) > PAGE_VIDEO_MAX_BYTES) {
+            return res.status(413).json({ error: 'File video vuot gioi han 100MB' });
+          }
+          videoFile = mediaFile;
+          continue;
+        }
+        if (fileType.startsWith('image/')) {
+          if (Number(mediaFile.size || 0) > PAGE_IMAGE_MAX_BYTES) {
+            return res.status(413).json({ error: 'Moi file anh toi da 20MB' });
+          }
+          imageFiles.push(mediaFile);
+        }
+      }
+
+      if (!videoFile) {
+        const incomingVideo = formData.get('video');
+        if (incomingVideo && typeof incomingVideo.arrayBuffer === 'function' && Number(incomingVideo.size || 0) > 0) {
+          if (Number(incomingVideo.size || 0) > PAGE_VIDEO_MAX_BYTES) {
+            return res.status(413).json({ error: 'File video vuot gioi han 100MB' });
+          }
+          videoFile = incomingVideo;
+        }
+      }
+
+      if (videoFile && imageFiles.length > 0) {
+        return res.status(400).json({ error: 'Khong ho tro dang cung luc anh va video. Hay chon mot loai file.' });
+      }
+      if (imageFiles.length > PAGE_MAX_IMAGE_FILES) {
+        return res.status(400).json({ error: `Toi da ${PAGE_MAX_IMAGE_FILES} anh moi lan dang` });
+      }
+    } else {
+      message = String(req.body?.message || '').trim();
+      link = String(req.body?.link || '').trim();
+    }
+
+    if (!pageId) return res.status(400).json({ error: 'Thieu Page ID' });
+    if (!message && !link && !videoFile && imageFiles.length === 0) return res.status(400).json({ error: 'Nhap noi dung, link hoac chon file truoc khi dang bai' });
+
+    const pagesResp = await fbGet(fbToken, 'me/accounts', {
+      fields: 'name,id,access_token,picture{url}',
+      limit: 100
+    });
+    const managedPages = Array.isArray(pagesResp?.data) ? pagesResp.data : [];
+    const page = managedPages.find(item => String(item.id) === String(pageId));
+
+    if (!page) {
+      return res.status(404).json({ error: 'Khong tim thay fanpage trong danh sach co quyen quan ly' });
+    }
+
+    const pageToken = String(page.access_token || '').trim() || fbToken;
+    let result;
+    let mode = 'feed';
+
+    if (videoFile) {
+      mode = 'video';
+      const uploadForm = new FormData();
+      uploadForm.set('access_token', pageToken);
+      if (message) uploadForm.set('description', message);
+      uploadForm.set('source', videoFile, videoFile.name || 'video.mp4');
+
+      const response = await fetch(`https://graph-video.facebook.com/${FACEBOOK_GRAPH_API_VERSION}/${pageId}/videos`, {
+        method: 'POST',
+        body: uploadForm
+      });
+      const responseText = await response.text();
+      let responseData = null;
+      try {
+        responseData = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        responseData = { error: { message: responseText || `FB VIDEO POST ${response.status}` } };
+      }
+      if (!response.ok) {
+        const uploadError = new Error(responseData?.error?.message || `FB VIDEO POST ${response.status}`);
+        uploadError.status = response.status;
+        uploadError.fbData = responseData;
+        uploadError.response = { data: responseData };
+        throw uploadError;
+      }
+      result = responseData;
+    } else if (imageFiles.length > 0) {
+      mode = imageFiles.length > 1 ? 'photos' : 'photo';
+      const uploadedPhotoIds = [];
+
+      for (const imageFile of imageFiles) {
+        const uploadForm = new FormData();
+        uploadForm.set('access_token', pageToken);
+        uploadForm.set('published', 'false');
+        uploadForm.set('source', imageFile, imageFile.name || 'image.jpg');
+        const response = await fetch(`https://graph.facebook.com/${FACEBOOK_GRAPH_API_VERSION}/${pageId}/photos`, {
+          method: 'POST',
+          body: uploadForm
+        });
+        const responseText = await response.text();
+        let responseData = null;
+        try {
+          responseData = responseText ? JSON.parse(responseText) : {};
+        } catch {
+          responseData = { error: { message: responseText || `FB PHOTO POST ${response.status}` } };
+        }
+        if (!response.ok) {
+          const uploadError = new Error(responseData?.error?.message || `FB PHOTO POST ${response.status}`);
+          uploadError.status = response.status;
+          uploadError.fbData = responseData;
+          uploadError.response = { data: responseData };
+          throw uploadError;
+        }
+        if (responseData?.id) uploadedPhotoIds.push(responseData.id);
+      }
+
+      if (!uploadedPhotoIds.length) {
+        return res.status(400).json({ error: 'Khong tai duoc anh len Facebook' });
+      }
+
+      if (uploadedPhotoIds.length === 1 && !link) {
+        const payload = { published: true };
+        if (message) payload.message = message;
+        result = await fbPost(pageToken, uploadedPhotoIds[0], payload);
+      } else {
+        const payload = {};
+        if (message) payload.message = message;
+        if (link) payload.link = link;
+        uploadedPhotoIds.forEach((id, index) => {
+          payload[`attached_media[${index}]`] = JSON.stringify({ media_fbid: id });
+        });
+        result = await fbPost(pageToken, `${pageId}/feed`, payload);
+      }
+    } else {
+      const payload = {};
+      if (message) payload.message = message;
+      if (link) payload.link = link;
+      result = await fbPost(pageToken, `${pageId}/feed`, payload);
+    }
+
+    postCache.clear();
+
+    const post = result?.id ? {
+      id: result.id,
+      message,
+      createdTime: new Date().toISOString(),
+      permalink: '',
+      picture: '',
+      shares: 0,
+      likes: 0,
+      comments: 0,
+      pageName: page.name || '',
+      pageId: page.id || '',
+      pageAvatar: page.picture?.data?.url || ''
+    } : null;
+
+    res.json({
+      ok: true,
+      mode,
+      postId: result?.id || '',
+      link: link || '',
+      fileName: videoFile?.name || '',
+      fileNames: imageFiles.map(file => file.name || 'image.jpg'),
+      page: {
+        id: page.id,
+        name: page.name || '',
+        picture: page.picture?.data?.url || ''
+      },
+      post
+    });
+  } catch (error) {
+    const apiError = error?.fbData?.error || error?.response?.data?.error || {};
+    const rawMessage = String(apiError.message || error?.message || '');
+    const needsPublishPermission = Number(apiError.code) === 10 ||
+      rawMessage.includes('pages_manage_posts') ||
+      rawMessage.includes('No permission to operate on the page') ||
+      rawMessage.includes('does not have permission');
+
+    if (needsPublishPermission) {
+      return res.status(400).json({
+        error: 'Token/App chua co quyen dang bai len Page. Can pages_manage_posts va quyen thao tac tren fanpage.',
+        code: 'PAGE_PUBLISH_PERMISSION',
+        permission: 'pages_manage_posts'
+      });
+    }
+
     res.status(400).json({ error: error.message });
   }
 });

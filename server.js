@@ -5584,6 +5584,8 @@ registerPageRoutes(app, {
   User,
   getAppConfig,
   fbGet,
+  fbPost,
+  FACEBOOK_GRAPH_API_VERSION,
   escapeRegExp,
   normalizeProvider,
   POSTS_PER_PAGE_LIMIT,
