@@ -5220,7 +5220,17 @@ app.get('/api/inventory/summary/export', async (req, res) => {
       escapeCsv(item.warehouses),
       escapeCsv(item.salePrice)
     ].join(',')));
-    const csv = `\ufeff${header.join(',')}\n${csvContent.join('\n')}`;
+    const totalQuantity = itemsSummary.reduce((sum, item) => sum + Number(item.totalQuantity || 0), 0);
+    const totalPendingQuantity = itemsSummary.reduce((sum, item) => sum + Number(item.pendingQuantity || 0), 0);
+    const totalRow = [
+      escapeCsv('Tong cong'),
+      escapeCsv(''),
+      totalQuantity,
+      totalPendingQuantity,
+      escapeCsv(''),
+      escapeCsv('')
+    ].join(',');
+    const csv = `\ufeff${header.join(',')}\n${csvContent.join('\n')}\n${totalRow}`;
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename=inventory_summary_${todayStr()}.csv`);
