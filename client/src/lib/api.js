@@ -111,6 +111,45 @@ export async function cachedApi(method, path, body = null, options = {}) {
   return data;
 }
 
+export async function downloadFile(path, filenameFallback = 'download.csv') {
+  const controller = new AbortController();
+  const opts = {
+    method: 'GET',
+    headers: {},
+    signal: controller.signal
+  };
+  const token = getAuthToken();
+  if (token) opts.headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(apiUrl(path), opts);
+  if (!res.ok) {
+    const text = await res.text();
+    let errorMessage = getHttpErrorMessage(res.status, text);
+    try {
+      const data = text ? JSON.parse(text) : null;
+      if (data?.error) errorMessage = data.error;
+    } catch {
+      // Keep fallback message from HTTP response text.
+    }
+    const error = new Error(errorMessage);
+    error.status = res.status;
+    throw error;
+  }
+
+  const blob = await res.blob();
+  const contentDisposition = res.headers.get('Content-Disposition') || '';
+  const matchedFilename = contentDisposition.match(/filename="?([^"]+)"?/i);
+  const filename = matchedFilename?.[1] || filenameFallback;
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export const formatVND = (n) => Number(n || 0).toLocaleString('vi-VN', {
   style: 'currency',
   currency: 'VND',

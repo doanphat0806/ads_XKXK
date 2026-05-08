@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
-import { api, apiUrl, dateTimeString, formatNumber } from '../lib/api';
+import { api, dateTimeString, downloadFile, formatNumber } from '../lib/api';
 
 export default function InventorySummary() {
   const [items, setItems] = useState([]);
@@ -43,10 +43,15 @@ export default function InventorySummary() {
     [filteredItems]
   );
 
-  const exportSummary = () => {
+  const exportSummary = async () => {
     setExporting(true);
-    window.location.href = apiUrl('/inventory/summary/export');
-    window.setTimeout(() => setExporting(false), 2000);
+    try {
+      await downloadFile('/inventory/summary/export', 'inventory_summary.csv');
+    } catch (error) {
+      toast.error(`Loi xuat file: ${error.message}`);
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
