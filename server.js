@@ -5104,16 +5104,15 @@ app.get('/api/inventory', async (req, res) => {
 
 app.get('/api/inventory/summary', async (req, res) => {
   try {
-    const [items, pendingCounts] = await Promise.all([
-      InventoryItem.find(withUserFilter(req))
-      .select('warehouseName barcode name salePrice quantity updatedAt')
-      .lean(),
+    const googleAccessToken = await getGoogleAccessToken(req);
+    const [rows, pendingCounts] = await Promise.all([
+      fetchInventorySheetRowsWithGoogleAccess(googleAccessToken),
       buildInventoryPendingOrderCounts()
     ]);
 
     const grouped = new Map();
-    for (const item of items) {
-      const rawBarcode = String(item.barcode || '').trim();
+    for (const row of rows) {
+      const rawBarcode = String(row.barcode || '').trim();
       if (!rawBarcode) continue;
 
       const productCode = extractInventoryProductCode(rawBarcode);
@@ -5128,20 +5127,17 @@ app.get('/api/inventory/summary', async (req, res) => {
           barcodes: [],
           names: new Set(),
           salePrices: new Set(),
-          updatedAt: item.updatedAt || item.createdAt || null
+          updatedAt: null
         });
       }
 
       const current = grouped.get(key);
-      current.totalQuantity += Number(item.quantity || 0);
+      current.totalQuantity += Number(row.quantity || 0);
       current.variants += 1;
-      if (item.warehouseName) current.warehouses.add(String(item.warehouseName).trim());
+      if (row.warehouseName) current.warehouses.add(String(row.warehouseName).trim());
       if (rawBarcode) current.barcodes.push(rawBarcode);
-      if (item.name) current.names.add(String(item.name).trim());
-      if (item.salePrice) current.salePrices.add(String(item.salePrice).trim());
-      if (item.updatedAt && (!current.updatedAt || new Date(item.updatedAt) > new Date(current.updatedAt))) {
-        current.updatedAt = item.updatedAt;
-      }
+      if (row.name) current.names.add(String(row.name).trim());
+      if (row.salePrice) current.salePrices.add(String(row.salePrice).trim());
     }
 
     const itemsSummary = Array.from(grouped.values())
