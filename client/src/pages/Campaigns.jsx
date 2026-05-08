@@ -4,8 +4,14 @@ import { api, apiUrl, cachedApi, readResponseCache, formatVND, formatNumber, tod
 import { toast } from 'react-toastify';
 import DateRangePicker from '../components/DateRangePicker';
 
+const ACTIVE_CAMPAIGN_STATUSES = new Set(['ACTIVE', 'SCHEDULED', 'PENDING_REVIEW', 'PENDING_BILLING_INFO', 'CAMPAIGN_PAUSED']);
+
 function normalizeStatus(status) {
-  return String(status || '').toUpperCase() === 'ACTIVE' ? 'ACTIVE' : 'PAUSED';
+  return String(status || '').toUpperCase().trim();
+}
+
+function isCampaignActiveStatus(status) {
+  return ACTIVE_CAMPAIGN_STATUSES.has(normalizeStatus(status));
 }
 
 const CAMPAIGNS_PER_PAGE = 500;
@@ -36,6 +42,7 @@ export default function Campaigns() {
   const [syncing, setSyncing] = useState(false);
   const [syncJob, setSyncJob] = useState(null);
   const [exporting, setExporting] = useState(false);
+  const [lastToggleLog, setLastToggleLog] = useState('');
   const toggleReloadTimerRef = useRef(null);
 
   const loadCampaigns = useCallback(async (showLoader = true) => {
@@ -55,10 +62,12 @@ export default function Campaigns() {
       const cached = readResponseCache(`GET:${url}`);
       if (cached) {
         setCampaigns(cached);
+        setLastToggleLog('');
         setLoading(false);
       }
       const data = await cachedApi('GET', url, null, { timeoutMs: 5 * 60 * 1000 });
       setCampaigns(data);
+      setLastToggleLog('');
     } catch (error) {
       toast.error('Lỗi tải chiến dịch: ' + error.message);
     } finally {
@@ -99,13 +108,19 @@ export default function Campaigns() {
   }, []);
 
   const toggleCampaignStatus = async (campaignId, accountId, currentStatus) => {
-    const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+    const nextStatus = isCampaignActiveStatus(currentStatus) ? 'PAUSED' : 'ACTIVE';
     try {
       setCampaigns(items => items.map(item => (
         item.campaignId === campaignId ? { ...item, status: nextStatus } : item
       )));
-      await api('POST', `/campaigns/${campaignId}/toggle`, { accountId, currentStatus, date: filterFromDate });
-      toast.success(currentStatus === 'ACTIVE' ? 'Đã tạm dừng' : 'Đã bật');
+      const result = await api('POST', `/campaigns/${campaignId}/toggle`, {
+        accountId,
+        currentStatus,
+        fromDate: filterFromDate,
+        toDate: filterToDate
+      });
+      if (result?.logMessage) setLastToggleLog(result.logMessage);
+      toast.success(isCampaignActiveStatus(currentStatus) ? 'Đã tạm dừng' : 'Đã bật');
       scheduleToggleReload();
     } catch (error) {
       setCampaigns(items => items.map(item => (
@@ -194,7 +209,11 @@ export default function Campaigns() {
   const filteredCampaigns = useMemo(() => {
     let result = campaigns;
     if (filterStatus) {
-      result = result.filter(campaign => normalizeStatus(campaign.status) === filterStatus);
+      result = result.filter(campaign => (
+        filterStatus === 'ACTIVE'
+          ? isCampaignActiveStatus(campaign.status)
+          : !isCampaignActiveStatus(campaign.status)
+      ));
     }
     return [...result].sort((a, b) => b.spend - a.spend);
   }, [campaigns, filterStatus]);
@@ -215,7 +234,7 @@ export default function Campaigns() {
   }, [currentPage, totalPages]);
 
   const stats = useMemo(() => {
-    const activeCamps = filteredCampaigns.filter(campaign => normalizeStatus(campaign.status) === 'ACTIVE').length;
+    const activeCamps = filteredCampaigns.filter(campaign => isCampaignActiveStatus(campaign.status)).length;
     const accSet = new Set(filteredCampaigns.map(campaign => campaign.accountId?._id || campaign.accountId));
     const spend = filteredCampaigns.reduce((sum, campaign) => sum + campaign.spend, 0);
     const msgs = filteredCampaigns.reduce((sum, campaign) => sum + campaign.messages, 0);
@@ -317,6 +336,14 @@ export default function Campaigns() {
         )}
       </div>
 
+      {lastToggleLog && (
+        <div className="card section-gap">
+          <div className="card-body" style={{ padding: '12px 18px', color: 'var(--muted2)', fontSize: '12px' }}>
+            {lastToggleLog}
+          </div>
+        </div>
+      )}
+
       <div className="card section-gap">
         <div className="card-header">
           <div className="card-title">Báo cáo chiến dịch</div>
@@ -382,6 +409,7 @@ export default function Campaigns() {
               <tbody>
                 {visibleCampaigns.map((campaign, index) => {
                   const statusNormalized = normalizeStatus(campaign.status);
+                  const isActiveStatus = isCampaignActiveStatus(campaign.status);
                   const budgetAmount = campaign.budgetType === 'LIFETIME' ? campaign.lifetimeBudget : campaign.dailyBudget;
                   const pct = Math.min(100, (campaign.spend / 30000) * 100);
                   const pColor = pct >= 100 ? 'var(--r)' : pct >= 70 ? 'var(--o)' : 'var(--g)';
@@ -394,8 +422,8 @@ export default function Campaigns() {
                         <div style={{ fontSize: '11px', color: 'var(--muted2)' }}>{campaign.campaignId}</div>
                       </td>
                       <td>
-                        <span className={`badge ${statusNormalized.toLowerCase()}`}>
-                          {statusNormalized === 'ACTIVE' ? '● Active' : '■ Paused'}
+                        <span className={`badge ${isActiveStatus ? 'active' : 'paused'}`}>
+                          {isActiveStatus ? `● ${statusNormalized || 'ACTIVE'}` : `■ ${statusNormalized || 'PAUSED'}`}
                         </span>
                       </td>
                       <td>
@@ -420,16 +448,16 @@ export default function Campaigns() {
                       <td>
                         <label
                           className="tgl"
-                          title={statusNormalized === 'ACTIVE' ? 'Tat camp' : 'Bat camp'}
+                          title={isActiveStatus ? 'Tat camp' : 'Bat camp'}
                         >
                           <input
                             type="checkbox"
-                            checked={statusNormalized === 'ACTIVE'}
+                            checked={isActiveStatus}
                             onChange={() => toggleCampaignStatus(campaign.campaignId, campaign.accountId?._id || campaign.accountId, statusNormalized)}
                           />
                           <div className="tgl-track"></div>
                           <div className="tgl-thumb"></div>
-                          {statusNormalized === 'ACTIVE' ? '⏸' : '▶'}
+                          {isActiveStatus ? '⏸' : '▶'}
                         </label>
                       </td>
                     </tr>

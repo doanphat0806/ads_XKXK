@@ -303,6 +303,22 @@ function clearCampaignReadCache() {
   }
 }
 
+const FB_ACTIVE_CAMPAIGN_STATUSES = new Set([
+  'ACTIVE',
+  'SCHEDULED',
+  'PENDING_REVIEW',
+  'PENDING_BILLING_INFO',
+  'CAMPAIGN_PAUSED'
+]);
+
+function normalizeCampaignStatus(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function isCampaignServingStatus(status) {
+  return FB_ACTIVE_CAMPAIGN_STATUSES.has(normalizeCampaignStatus(status));
+}
+
 function clearAllReadCache() {
   readCache.clear();
 }
@@ -3672,29 +3688,53 @@ app.post('/api/accounts/:id/refresh', async (req, res) => {
 app.post('/api/campaigns/:campaignId/toggle', async (req, res) => {
   try {
     const { accountId, currentStatus } = req.body;
-    const date = normalizeCampaignDate(req.body.date);
+    const fromDate = normalizeCampaignDate(req.body.fromDate || req.body.date);
+    const toDate = normalizeCampaignDate(req.body.toDate || req.body.date || fromDate);
     const account = await Account.findOne(withUserFilter(req, { _id: accountId }));
     if (!account) return res.status(404).json({ error: 'Account not found' });
 
-    const newStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
     const { fbToken } = await getEffectiveSecrets(account);
     if (!fbToken) return res.status(400).json({ error: 'Thieu Facebook Access Token' });
 
+    const campaignId = String(req.params.campaignId || '').trim();
+    if (!campaignId) return res.status(400).json({ error: 'Thieu campaignId' });
+
+    const storedCampaign = await Campaign.findOne({
+      accountId,
+      campaignId,
+      date: { $gte: fromDate, $lte: toDate }
+    }).sort({ updatedAt: -1, _id: -1 }).lean();
+
+    let effectiveStatus = normalizeCampaignStatus(currentStatus);
+    try {
+      const liveCampaign = await fbGet(fbToken, campaignId, { fields: 'id,status' }, { retries: 2, rateLimitRetries: 2 });
+      effectiveStatus = normalizeCampaignStatus(liveCampaign?.status || effectiveStatus);
+    } catch (error) {
+      effectiveStatus = normalizeCampaignStatus(storedCampaign?.status || effectiveStatus);
+      if (!effectiveStatus) throw error;
+    }
+
+    const shouldPause = isCampaignServingStatus(effectiveStatus);
+    const newStatus = shouldPause ? 'PAUSED' : 'ACTIVE';
+
     await fbPost(fbToken, req.params.campaignId, { status: newStatus });
-    await Campaign.findOneAndUpdate(
-      { accountId, campaignId: req.params.campaignId, date },
-      { $set: { status: newStatus, updatedAt: new Date() } },
-      { new: true }
-    );
+    const updateFilter = storedCampaign
+      ? { _id: storedCampaign._id }
+      : { accountId, campaignId, date: { $gte: fromDate, $lte: toDate } };
+    await Campaign.findOneAndUpdate(updateFilter, { $set: { status: newStatus, updatedAt: new Date() } }, { new: true });
+    clearCampaignReadCache();
+
+    const logLevel = newStatus === 'ACTIVE' ? 'success' : 'warn';
+    const logMessage = `Thu cong: ${effectiveStatus || normalizeCampaignStatus(currentStatus) || 'UNKNOWN'} -> ${newStatus} (${campaignId})`;
 
     await addLog(
       account._id,
       account.name,
-      newStatus === 'ACTIVE' ? 'success' : 'warn',
-      `Thu cong: ${currentStatus} -> ${newStatus} (${req.params.campaignId})`
+      logLevel,
+      logMessage
     );
 
-    res.json({ ok: true, newStatus });
+    res.json({ ok: true, previousStatus: effectiveStatus, newStatus, logLevel, logMessage });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
