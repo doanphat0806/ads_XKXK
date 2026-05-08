@@ -5166,6 +5166,70 @@ app.get('/api/inventory/summary', async (req, res) => {
   }
 });
 
+app.get('/api/inventory/summary/export', async (req, res) => {
+  try {
+    const googleAccessToken = await getGoogleAccessToken(req);
+    const [rows, pendingCounts] = await Promise.all([
+      fetchInventorySheetRowsWithGoogleAccess(googleAccessToken),
+      buildInventoryPendingOrderCounts()
+    ]);
+
+    const grouped = new Map();
+    for (const row of rows) {
+      const rawBarcode = String(row.barcode || '').trim();
+      if (!rawBarcode) continue;
+
+      const productCode = extractInventoryProductCode(rawBarcode);
+      const key = productCode || rawBarcode;
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          productCode: key,
+          totalQuantity: 0,
+          pendingQuantity: pendingCounts.byCode.get(key) || 0,
+          warehouses: new Set(),
+          names: new Set(),
+          salePrices: new Set()
+        });
+      }
+
+      const current = grouped.get(key);
+      current.totalQuantity += Number(row.quantity || 0);
+      if (row.warehouseName) current.warehouses.add(String(row.warehouseName).trim());
+      if (row.name) current.names.add(String(row.name).trim());
+      if (row.salePrice) current.salePrices.add(String(row.salePrice).trim());
+    }
+
+    const itemsSummary = Array.from(grouped.values())
+      .map(item => ({
+        name: Array.from(item.names)[0] || '',
+        productCode: item.productCode,
+        totalQuantity: item.totalQuantity,
+        pendingQuantity: item.pendingQuantity,
+        warehouses: Array.from(item.warehouses).sort().join(', '),
+        salePrice: Array.from(item.salePrices)[0] || ''
+      }))
+      .sort((a, b) => b.totalQuantity - a.totalQuantity || a.productCode.localeCompare(b.productCode));
+
+    const header = ['Ten hang', 'Ma SP', 'So luong ton', 'So luong chot', 'Kho', 'Gia sale'];
+    const escapeCsv = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const csvContent = itemsSummary.map(item => ([
+      escapeCsv(item.name),
+      escapeCsv(item.productCode),
+      item.totalQuantity,
+      item.pendingQuantity,
+      escapeCsv(item.warehouses),
+      escapeCsv(item.salePrice)
+    ].join(',')));
+    const csv = `\ufeff${header.join(',')}\n${csvContent.join('\n')}`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=inventory_summary_${todayStr()}.csv`);
+    res.status(200).send(csv);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/inventory/scan-summary', async (req, res) => {
   try {
     const fromDate = normalizeCampaignDate(req.query.fromDate || todayStr());

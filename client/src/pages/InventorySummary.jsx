@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
-import { api, dateTimeString, formatNumber } from '../lib/api';
+import { api, apiUrl, dateTimeString, formatNumber } from '../lib/api';
 
 export default function InventorySummary() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [search, setSearch] = useState('');
 
   const loadSummary = async () => {
@@ -42,6 +43,12 @@ export default function InventorySummary() {
     [filteredItems]
   );
 
+  const exportSummary = () => {
+    setExporting(true);
+    window.location.href = apiUrl('/inventory/summary/export');
+    window.setTimeout(() => setExporting(false), 2000);
+  };
+
   return (
     <div id="page-inventory-summary">
       <div className="stats-grid inventory-stats">
@@ -74,6 +81,9 @@ export default function InventorySummary() {
             <button className="btn btn-ghost btn-sm" onClick={loadSummary} disabled={loading}>
               Tai lai
             </button>
+            <button className="btn btn-ghost btn-sm" onClick={exportSummary} disabled={exporting}>
+              {exporting ? 'Dang xuat...' : 'Tai CSV'}
+            </button>
           </div>
         </div>
         <div className="tbl-wrap">
@@ -89,7 +99,6 @@ export default function InventorySummary() {
                   <th>Ma SP</th>
                   <th className="text-right">So luong ton</th>
                   <th className="text-right">So luong chot</th>
-                  <th className="text-right">So bien the</th>
                   <th>Kho</th>
                   <th>Gia sale</th>
                   <th>Cap nhat</th>
@@ -102,7 +111,6 @@ export default function InventorySummary() {
                     <td className="inventory-sheet-code">{item.productCode}</td>
                     <td className="inventory-sheet-total">{formatNumber(item.totalQuantity || 0)}</td>
                     <td className="inventory-sheet-total">{formatNumber(item.pendingQuantity || 0)}</td>
-                    <td className="inventory-sheet-total">{formatNumber(item.variants || 0)}</td>
                     <td>{(item.warehouses || []).join(', ') || '-'}</td>
                     <td>{item.salePrice || '-'}</td>
                     <td className="inventory-sheet-updated">{item.updatedAt ? dateTimeString(item.updatedAt) : '-'}</td>
