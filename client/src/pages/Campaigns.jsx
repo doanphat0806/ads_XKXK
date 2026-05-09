@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAppContext } from '../contexts/AppContext';
-import { api, apiUrl, cachedApi, readResponseCache, formatVND, formatNumber, todayString } from '../lib/api';
+import { api, apiUrl, formatVND, formatNumber, todayString } from '../lib/api';
 import { toast } from 'react-toastify';
 import DateRangePicker from '../components/DateRangePicker';
 
@@ -27,6 +27,21 @@ function yesterdayString() {
   return offsetDateString(todayString(), -1);
 }
 
+function formatCampaignDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString('vi-VN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Ho_Chi_Minh'
+  });
+}
+
 export default function Campaigns() {
   const { provider, allAccounts } = useAppContext();
   const [campaigns, setCampaigns] = useState([]);
@@ -35,6 +50,7 @@ export default function Campaigns() {
   const [filterFromDate, setFilterFromDate] = useState(todayString());
   const [filterToDate, setFilterToDate] = useState(todayString());
   const [filterStatus, setFilterStatus] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
 
   const [syncFromDate, setSyncFromDate] = useState(yesterdayString());
@@ -55,18 +71,13 @@ export default function Campaigns() {
         fromDate: filterFromDate, 
         toDate: filterToDate, 
         provider,
-        includeScheduledNoSpend: 'true'
+        includeScheduledNoSpend: 'true',
+        includeLiveCreated: 'true'
       });
       const url = filterAcc
         ? `/accounts/${filterAcc}/campaigns?${params.toString()}`
         : `/campaigns/today?${params.toString()}`;
-      const cached = readResponseCache(`GET:${url}`);
-      if (cached) {
-        setCampaigns(cached);
-        setLastToggleLog('');
-        setLoading(false);
-      }
-      const data = await cachedApi('GET', url, null, { timeoutMs: 5 * 60 * 1000 });
+      const data = await api('GET', url, null, { timeoutMs: 5 * 60 * 1000 });
       setCampaigns(data);
       setLastToggleLog('');
     } catch (error) {
@@ -217,8 +228,19 @@ export default function Campaigns() {
           : !isCampaignActiveStatus(campaign.status)
       ));
     }
+    const normalizedSearch = String(searchTerm || '').trim().toLowerCase();
+    if (normalizedSearch) {
+      result = result.filter(campaign => {
+        const campaignName = String(campaign.name || '').toLowerCase();
+        const campaignId = String(campaign.campaignId || '').toLowerCase();
+        const accountName = String(campaign.accountId?.name || '').toLowerCase();
+        return campaignName.includes(normalizedSearch)
+          || campaignId.includes(normalizedSearch)
+          || accountName.includes(normalizedSearch);
+      });
+    }
     return [...result].sort((a, b) => b.spend - a.spend);
-  }, [campaigns, filterStatus]);
+  }, [campaigns, filterStatus, searchTerm]);
 
   const totalPages = Math.max(1, Math.ceil(filteredCampaigns.length / CAMPAIGNS_PER_PAGE));
   const visibleCampaigns = useMemo(() => {
@@ -229,24 +251,11 @@ export default function Campaigns() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterAcc, filterFromDate, filterToDate, filterStatus, provider]);
+  }, [filterAcc, filterFromDate, filterToDate, filterStatus, provider, searchTerm]);
 
   useEffect(() => {
     if (currentPage > totalPages) setCurrentPage(totalPages);
   }, [currentPage, totalPages]);
-
-  const stats = useMemo(() => {
-    const activeCamps = filteredCampaigns.filter(campaign => isCampaignActiveStatus(campaign.status)).length;
-    const accSet = new Set(filteredCampaigns.map(campaign => campaign.accountId?._id || campaign.accountId));
-    const spend = filteredCampaigns.reduce((sum, campaign) => sum + campaign.spend, 0);
-    const msgs = filteredCampaigns.reduce((sum, campaign) => sum + campaign.messages, 0);
-    return {
-      activeCamps,
-      accCount: accSet.size,
-      spend,
-      msgs
-    };
-  }, [filteredCampaigns]);
 
   return (
     <div id="page-campaigns">
@@ -281,6 +290,14 @@ export default function Campaigns() {
           <option value="ACTIVE">Đang chạy</option>
           <option value="PAUSED">Tạm dừng</option>
         </select>
+        <input
+          type="search"
+          value={searchTerm}
+          onChange={event => setSearchTerm(event.target.value)}
+          placeholder="Tim ten camp, ID, tai khoan..."
+          aria-label="Tim campaign"
+          style={{ background: 'var(--s2)', border: '1px solid var(--border)', color: 'var(--txt)', padding: '6px 12px', borderRadius: '8px', outline: 'none', minWidth: '260px', flex: '1 1 260px' }}
+        />
       </div>
 
       <div className="card section-gap" style={{ borderLeft: '4px solid var(--b)' }}>
@@ -346,31 +363,6 @@ export default function Campaigns() {
         </div>
       )}
 
-      <div className="card section-gap">
-        <div className="card-header">
-          <div className="card-title">Báo cáo chiến dịch</div>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted2)' }}>Chọn bộ lọc để xem báo cáo</span>
-        </div>
-        <div style={{ padding: '16px 18px', display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '12px' }}>
-          <div className="acc-metric">
-            <div className="acc-metric-label">Số camp</div>
-            <div className="acc-metric-val">{stats.activeCamps}</div>
-          </div>
-          <div className="acc-metric">
-            <div className="acc-metric-label">Số tài khoản</div>
-            <div className="acc-metric-val">{stats.accCount}</div>
-          </div>
-          <div className="acc-metric">
-            <div className="acc-metric-label">Chi tiêu</div>
-            <div className="acc-metric-val" style={{ color: 'var(--o)' }}>{formatVND(stats.spend)}</div>
-          </div>
-          <div className="acc-metric">
-            <div className="acc-metric-label">Tin nhắn</div>
-            <div className="acc-metric-val" style={{ color: 'var(--p)' }}>{formatNumber(stats.msgs)}</div>
-          </div>
-        </div>
-      </div>
-
       <div className="card">
         <div className="card-header">
           <div className="card-title">Danh sách chiến dịch</div>
@@ -399,6 +391,7 @@ export default function Campaigns() {
               <thead>
                 <tr>
                   <th style={{ width: '72px' }}>STT</th>
+                  <th style={{ width: '160px' }}>Ngày Tạo</th>
                   <th style={{ width: '240px' }}>Tên Campaign</th>
                   <th>Trạng thái</th>
                   <th>Ngân sách</th>
@@ -421,6 +414,9 @@ export default function Campaigns() {
                   return (
                     <tr key={`${campaign.accountId?._id || campaign.accountId || rowIndex}:${campaign.campaignId || rowIndex}`}>
                       <td className="mono-sm" style={{ color: 'var(--muted2)' }}>{rowIndex + 1}</td>
+                      <td className="mono-sm" style={{ color: 'var(--muted2)' }}>
+                        {formatCampaignDateTime(campaign.createdTime || campaign.scheduledStartTimeUtc)}
+                      </td>
                       <td>
                         <div style={{ fontWeight: 600, marginBottom: '2px' }}>{campaign.name}</div>
                         <div style={{ fontSize: '11px', color: 'var(--muted2)' }}>{campaign.campaignId}</div>

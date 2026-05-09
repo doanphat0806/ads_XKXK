@@ -23,6 +23,8 @@ const PAGE_VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 const PAGE_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const PAGE_MAX_IMAGE_FILES = 10;
 const POST_CALL_TO_ACTION_TYPES = new Set(['MESSAGE_PAGE']);
+const REEL_STATUS_POLL_ATTEMPTS = 12;
+const REEL_STATUS_POLL_DELAY_MS = 5000;
 const postCache = new Map();
 
 function getPostsPerPageLimit(provider) {
@@ -148,6 +150,178 @@ function mapSavedFacebookPost(post = {}) {
     pageName: post.pageName || '',
     pageId: post.pageId || '',
     pageAvatar: post.pageAvatar || ''
+  };
+}
+
+function buildFallbackMappedPost(page = {}, postId = '', message = '', raw = {}) {
+  return {
+    id: String(postId || '').trim(),
+    message: raw.message || raw.description || raw.name || message || '',
+    createdTime: raw.created_time || new Date().toISOString(),
+    permalink: raw.permalink_url || '',
+    picture: raw.full_picture || raw.picture || '',
+    shares: raw.shares?.count || 0,
+    likes: raw.likes?.summary?.total_count || 0,
+    comments: raw.comments?.summary?.total_count || 0,
+    pageName: page.name || '',
+    pageId: page.id || '',
+    pageAvatar: page.picture?.data?.url || ''
+  };
+}
+
+async function resolvePublishedPostForSave({ pageToken, page, result, fallbackObjectId, message }) {
+  const directId = String(result?.post_id || result?.id || '').trim();
+  const objectId = String(fallbackObjectId || directId || '').trim();
+  let storyId = String(result?.post_id || '').trim();
+  let rawData = result || {};
+
+  if (!storyId && directId.includes('_')) {
+    storyId = directId;
+  }
+
+  if (!storyId && objectId) {
+    for (let attempt = 0; attempt < 4 && !storyId; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+      }
+      try {
+        const objectInfo = await fbGet(pageToken, objectId, {
+          fields: 'id,post_id,message,description,name,created_time,permalink_url,full_picture,picture,shares,likes.summary(true),comments.summary(true)'
+        });
+        rawData = objectInfo || rawData;
+        storyId = String(objectInfo?.post_id || '').trim();
+        if (!storyId && String(objectInfo?.id || '').includes('_')) {
+          storyId = String(objectInfo.id);
+        }
+      } catch {
+        // Some media nodes do not expose post_id immediately after publish.
+      }
+    }
+  }
+
+  if (storyId) {
+    try {
+      const postInfo = await fbGet(pageToken, storyId, {
+        fields: 'id,message,created_time,permalink_url,full_picture,shares,likes.summary(true),comments.summary(true)'
+      });
+      rawData = postInfo || rawData;
+      return mapFacebookPost(postInfo, page);
+    } catch {
+      return buildFallbackMappedPost(page, storyId, message, rawData);
+    }
+  }
+
+  if (!objectId) return null;
+  return buildFallbackMappedPost(page, objectId, message, rawData);
+}
+
+async function assertPostIsPublished(pageToken, postId) {
+  const id = String(postId || '').trim();
+  if (!id) return;
+  try {
+    const postInfo = await fbGet(pageToken, id, { fields: 'id,is_published,status_type,permalink_url' });
+    if (postInfo?.is_published === false) {
+      throw new Error('Bai viet dang o trang thai chua public, tai khoan khac se khong xem duoc.');
+    }
+  } catch (error) {
+    if (error.message.includes('chua public')) throw error;
+    // Some Page post fields are unavailable on specific post types; publishing still succeeded.
+  }
+}
+
+function buildReelTitle(message = '', fileName = '') {
+  const firstLine = String(message || '').split(/\r?\n/).map(line => line.trim()).find(Boolean);
+  return (firstLine || String(fileName || '').trim() || 'Reel').slice(0, 255);
+}
+
+function isVideoStatusReady(status = {}) {
+  const state = String(status.video_status || status.status || '').toLowerCase();
+  const processing = String(status.processing_phase?.status || '').toLowerCase();
+  const publishing = String(status.publishing_phase?.status || '').toLowerCase();
+  return ['ready', 'published'].includes(state) ||
+    (['complete', 'completed'].includes(processing) && ['complete', 'completed'].includes(publishing));
+}
+
+function getVideoStatusError(status = {}) {
+  const errors = [
+    status.error?.message,
+    status.processing_phase?.error?.message,
+    status.publishing_phase?.error?.message,
+    status.copyright_check_status?.error?.message
+  ].filter(Boolean);
+  return errors.join('; ');
+}
+
+async function waitForReelPublished(pageToken, videoId) {
+  let lastStatus = null;
+  for (let attempt = 0; attempt < REEL_STATUS_POLL_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, REEL_STATUS_POLL_DELAY_MS));
+    }
+
+    const videoInfo = await fbGet(pageToken, videoId, {
+      fields: 'id,status,post_id,permalink_url'
+    });
+    lastStatus = videoInfo?.status || {};
+
+    const statusError = getVideoStatusError(lastStatus);
+    if (statusError) {
+      throw new Error(`Reel bi Meta tu choi xu ly: ${statusError}`);
+    }
+    if (isVideoStatusReady(lastStatus) || videoInfo?.post_id) {
+      return videoInfo;
+    }
+  }
+
+  throw new Error(`Reel chua publish xong sau ${Math.round((REEL_STATUS_POLL_ATTEMPTS * REEL_STATUS_POLL_DELAY_MS) / 1000)}s. Trang thai Meta: ${JSON.stringify(lastStatus || {})}`);
+}
+
+async function uploadLocalReel({ pageToken, pageId, videoFile, message }) {
+  const startResult = await fbPost(pageToken, `${pageId}/video_reels`, {
+    upload_phase: 'start'
+  });
+  const videoId = String(startResult?.video_id || '').trim();
+  const uploadUrl = String(startResult?.upload_url || '').trim();
+  if (!videoId || !uploadUrl) {
+    throw new Error('Facebook khong tra ve upload session cho Reel');
+  }
+
+  const buffer = Buffer.from(await videoFile.arrayBuffer());
+  const uploadResponse = await axios.post(uploadUrl, buffer, {
+    headers: {
+      Authorization: `OAuth ${pageToken}`,
+      offset: '0',
+      file_size: String(buffer.length),
+      'Content-Type': 'application/octet-stream'
+    },
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    timeout: 15 * 60 * 1000
+  });
+
+  if (uploadResponse.data?.success === false) {
+    throw new Error(`Upload Reel that bai: ${JSON.stringify(uploadResponse.data)}`);
+  }
+
+  const finishPayload = {
+    upload_phase: 'finish',
+    video_id: videoId,
+    video_state: 'PUBLISHED',
+    title: buildReelTitle(message, videoFile.name)
+  };
+  if (message) finishPayload.description = message;
+
+  const finishResult = await fbPost(pageToken, `${pageId}/video_reels`, finishPayload);
+  if (finishResult?.success === false) {
+    throw new Error(`Publish Reel that bai: ${JSON.stringify(finishResult)}`);
+  }
+
+  const publishedInfo = await waitForReelPublished(pageToken, videoId);
+  return {
+    ...finishResult,
+    ...publishedInfo,
+    id: publishedInfo?.id || videoId,
+    video_id: videoId
   };
 }
 
@@ -490,33 +664,12 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
     const callToActionPayload = buildPostCallToActionPayload(callToActionType);
     let result;
     let mode = 'feed';
+    let uploadedObjectId = '';
 
     if (videoFile) {
       mode = 'video';
-      const uploadForm = new FormData();
-      uploadForm.set('access_token', pageToken);
-      if (message) uploadForm.set('description', message);
-      uploadForm.set('source', videoFile, videoFile.name || 'video.mp4');
-
-      const response = await fetch(`https://graph-video.facebook.com/${FACEBOOK_GRAPH_API_VERSION}/${pageId}/videos`, {
-        method: 'POST',
-        body: uploadForm
-      });
-      const responseText = await response.text();
-      let responseData = null;
-      try {
-        responseData = responseText ? JSON.parse(responseText) : {};
-      } catch {
-        responseData = { error: { message: responseText || `FB VIDEO POST ${response.status}` } };
-      }
-      if (!response.ok) {
-        const uploadError = new Error(responseData?.error?.message || `FB VIDEO POST ${response.status}`);
-        uploadError.status = response.status;
-        uploadError.fbData = responseData;
-        uploadError.response = { data: responseData };
-        throw uploadError;
-      }
-      result = responseData;
+      result = await uploadLocalReel({ pageToken, pageId, videoFile, message });
+      uploadedObjectId = String(result?.video_id || result?.id || '').trim();
     } else if (imageFiles.length > 0) {
       mode = imageFiles.length > 1 ? 'photos' : 'photo';
       const uploadedPhotoIds = [];
@@ -551,22 +704,16 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
         return res.status(400).json({ error: 'Khong tai duoc anh len Facebook' });
       }
 
-      if (uploadedPhotoIds.length === 1 && !link && !callToActionPayload) {
-        const payload = { published: true };
-        if (message) payload.message = message;
-        result = await fbPost(pageToken, uploadedPhotoIds[0], payload);
-      } else {
-        const payload = {};
-        if (message) payload.message = message;
-        if (link) payload.link = link;
-        if (callToActionPayload) payload.call_to_action = callToActionPayload;
-        uploadedPhotoIds.forEach((id, index) => {
-          payload[`attached_media[${index}]`] = JSON.stringify({ media_fbid: id });
-        });
-        result = await fbPost(pageToken, `${pageId}/feed`, payload);
-      }
+      const payload = { published: true };
+      if (message) payload.message = message;
+      if (link) payload.link = link;
+      if (callToActionPayload) payload.call_to_action = callToActionPayload;
+      uploadedPhotoIds.forEach((id, index) => {
+        payload[`attached_media[${index}]`] = JSON.stringify({ media_fbid: id });
+      });
+      result = await fbPost(pageToken, `${pageId}/feed`, payload);
     } else {
-      const payload = {};
+      const payload = { published: true };
       if (message) payload.message = message;
       if (link) payload.link = link;
       if (callToActionPayload) payload.call_to_action = callToActionPayload;
@@ -575,24 +722,22 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
 
     postCache.clear();
 
-    const post = result?.id ? {
-      id: result.id,
-      message,
-      createdTime: new Date().toISOString(),
-      permalink: '',
-      picture: '',
-      shares: 0,
-      likes: 0,
-      comments: 0,
-      pageName: page.name || '',
-      pageId: page.id || '',
-      pageAvatar: page.picture?.data?.url || ''
-    } : null;
+    const post = await resolvePublishedPostForSave({
+      pageToken,
+      page,
+      result,
+      fallbackObjectId: uploadedObjectId,
+      message
+    });
+    if (post) {
+      await assertPostIsPublished(pageToken, post.id);
+      await saveFacebookPosts([post], [result || {}]);
+    }
 
     res.json({
       ok: true,
       mode,
-      postId: result?.id || '',
+      postId: post?.id || result?.id || '',
       link: link || '',
       fileName: videoFile?.name || '',
       fileNames: imageFiles.map(file => file.name || 'image.jpg'),

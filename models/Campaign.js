@@ -46,5 +46,9 @@ CampaignSchema.index(
   { date: 1, updatedAt: 1, accountId: 1, campaignId: 1 },
   { name: 'campaign_date_updated_account_campaign' }
 );
+CampaignSchema.index(
+  { accountId: 1, isScheduled: 1, date: 1, scheduledStartTimeUtc: 1, updatedAt: -1 },
+  { name: 'campaign_account_scheduled_date_start_updated' }
+);
 
 module.exports = mongoose.model('Campaign', CampaignSchema);

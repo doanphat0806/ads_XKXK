@@ -13,10 +13,14 @@ const ORDERS_SOURCE = String(process.env.ORDERS_SOURCE || 'sheet').trim().toLowe
 const ORDERS_SHEET_CACHE_TTL_MS = parseBoundedInt(process.env.ORDERS_SHEET_CACHE_TTL_MS, 5 * 60 * 1000, 5000, 600000);
 const ORDERS_SHEET_TIMEOUT_MS = parseBoundedInt(process.env.ORDERS_SHEET_TIMEOUT_MS, 90000, 10000, 300000);
 const ORDERS_SHEET_RETRIES = parseBoundedInt(process.env.ORDERS_SHEET_RETRIES, 3, 1, 5);
+const ORDERS_SHEET_RATE_LIMIT_BACKOFF_MS = parseBoundedInt(process.env.ORDERS_SHEET_RATE_LIMIT_BACKOFF_MS, 30 * 60 * 1000, 60 * 1000, 6 * 60 * 60 * 1000);
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 const ordersSheetCache = {
   fetchedAt: 0,
-  rows: null
+  rows: null,
+  rateLimitedUntil: 0,
+  lastError: '',
+  lastErrorAt: 0
 };
 const orderStatsCache = new Map();
 
@@ -329,6 +333,9 @@ async function fetchOrderSheetRows({ refresh = false } = {}) {
   }
 
   const now = Date.now();
+  if (refresh && ordersSheetCache.rateLimitedUntil > now && ordersSheetCache.rows?.length) {
+    return ordersSheetCache.rows;
+  }
   if (
     !refresh &&
     ordersSheetCache.rows &&
@@ -358,6 +365,9 @@ async function fetchOrderSheetRows({ refresh = false } = {}) {
     } catch (error) {
       lastError = error;
       const status = error.response?.status;
+      if (status === 429) {
+        ordersSheetCache.rateLimitedUntil = Date.now() + ORDERS_SHEET_RATE_LIMIT_BACKOFF_MS;
+      }
       if (status === 401 || status === 403) {
         throw new Error('Google Sheet dang private voi server. Hay share file Sheet quyen Anyone with the link can view, hoac cau hinh ORDERS_SHEET_ID bang file Sheet public.');
       }
@@ -368,6 +378,8 @@ async function fetchOrderSheetRows({ refresh = false } = {}) {
   }
 
   if (lastError) {
+    ordersSheetCache.lastError = lastError.message || String(lastError);
+    ordersSheetCache.lastErrorAt = Date.now();
     if (ordersSheetCache.rows?.length) {
       console.warn(`Sheet Cache: refresh failed (${lastError.message}); using cached ${ordersSheetCache.rows.length} rows`);
       return ordersSheetCache.rows;
@@ -400,6 +412,9 @@ async function fetchOrderSheetRows({ refresh = false } = {}) {
 
   ordersSheetCache.rows = rows;
   ordersSheetCache.fetchedAt = now;
+  ordersSheetCache.rateLimitedUntil = 0;
+  ordersSheetCache.lastError = '';
+  ordersSheetCache.lastErrorAt = 0;
   orderStatsCache.clear();
   return rows;
 }

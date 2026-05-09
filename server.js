@@ -735,6 +735,15 @@ function getPostPageId(post = {}) {
   return '';
 }
 
+function getPostObjectStoryId(post = {}) {
+  const postId = String(post.postId || post.id || '').trim();
+  if (postId.includes('_')) return postId;
+
+  const pageId = getPostPageId(post);
+  if (pageId && postId) return `${pageId}_${postId}`;
+  return '';
+}
+
 function normalizeAdNameStatus(value) {
   const raw = String(value || 'Test').trim();
   const allowed = ['Sale', 'Săn', 'Win', 'Test'];
@@ -1141,6 +1150,7 @@ const FB_OAUTH_SCOPES = String(process.env.FB_OAUTH_SCOPES || [
   'business_management',
   'pages_show_list',
   'pages_manage_metadata',
+  'pages_manage_posts',
   'pages_read_engagement'
 ].join(',')).split(',').map(scope => scope.trim()).filter(Boolean);
 const facebookOAuthStates = new Map();
@@ -1383,6 +1393,63 @@ async function fetchAdAccountsWithSpend(token, adAccounts, options = {}) {
   }
 
   return { accountsWithSpend, spendCheckErrors, datePreset };
+}
+
+async function fetchScheduledCampaignsByAccounts(token, accounts = [], options = {}) {
+  const includeAccountInfo = options.includeAccountInfo === true;
+  const existingCampaignIds = new Set(
+    [...(options.existingCampaignIds || [])]
+      .map(id => String(id || '').trim())
+      .filter(Boolean)
+  );
+  const batchSize = parseBoundedInt(options.batchSize, 20, 1, 50);
+  const batchConcurrency = parseBoundedInt(options.concurrency, 1, 1, 3);
+  const chunks = chunkArray(accounts.filter(Boolean), batchSize);
+  const chunkResults = await mapWithConcurrency(chunks, async (chunk) => {
+    const batch = chunk.map(account => {
+      const acctId = normalizeAdAccountId(account?.adAccountId || '');
+      if (!acctId) return null;
+      const params = new URLSearchParams({
+        fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time,start_time',
+        effective_status: JSON.stringify(['SCHEDULED']),
+        limit: '100'
+      });
+      return {
+        method: 'GET',
+        relative_url: `${acctId}/campaigns?${params.toString()}`
+      };
+    }).filter(Boolean);
+
+    if (!batch.length) return { chunk, response: [] };
+    const response = await fbPost(token, '', { batch: JSON.stringify(batch) }, { retries: 1, rateLimitRetries: 1 });
+    return { chunk, response };
+  }, batchConcurrency);
+
+  const items = [];
+  for (const result of chunkResults) {
+    if (result?.error) continue;
+
+    const responses = Array.isArray(result.response) ? result.response : [];
+    result.chunk.forEach((account, index) => {
+      const item = responses[index] || {};
+      if (item.code < 200 || item.code >= 300) return;
+
+      try {
+        const body = JSON.parse(item.body || '{}');
+        const campaigns = Array.isArray(body.data) ? body.data : [];
+        for (const campaign of campaigns) {
+          const campaignId = String(campaign?.id || '').trim();
+          if (!campaignId || existingCampaignIds.has(campaignId)) continue;
+          existingCampaignIds.add(campaignId);
+          items.push(mapLiveCampaignToReportRow(campaign, account, includeAccountInfo));
+        }
+      } catch {
+        // Ignore malformed batch rows and keep the fast path responsive.
+      }
+    });
+  }
+
+  return items;
 }
 
 function getCopiedObjectId(response = {}, objectType) {
@@ -1831,6 +1898,123 @@ function dateRangeIncludesToday(fromDate, toDate) {
   return String(fromDate || today) <= today && String(toDate || fromDate || today) >= today;
 }
 
+function dateRangeTouchesTodayOrFuture(fromDate, toDate) {
+  const today = todayStr();
+  return String(toDate || fromDate || today) >= today;
+}
+
+function getVnDateKeyFromDateValue(value) {
+  const time = new Date(value || 0).getTime();
+  if (!Number.isFinite(time)) return '';
+  return new Date(time + VN_OFFSET_MS).toISOString().split('T')[0];
+}
+
+function isDateKeyInRange(dateKey, fromDate, toDate) {
+  const normalized = String(dateKey || '').trim();
+  if (!normalized) return false;
+  const from = normalizeCampaignDate(fromDate);
+  const to = normalizeCampaignDate(toDate || from);
+  return normalized >= from && normalized <= to;
+}
+
+function getVietnamDateRangeBounds(fromDate, toDate) {
+  const from = normalizeCampaignDate(fromDate);
+  const to = normalizeCampaignDate(toDate || from);
+  const startUtc = new Date(`${from}T00:00:00+07:00`);
+  const endStartUtc = new Date(`${to}T00:00:00+07:00`);
+  return {
+    startUtc,
+    endUtc: new Date(endStartUtc.getTime() + 24 * 60 * 60 * 1000)
+  };
+}
+
+function buildCreatedCampaignFiltering(fromDate, toDate) {
+  const { startUtc, endUtc } = getVietnamDateRangeBounds(fromDate, toDate);
+  return JSON.stringify([
+    {
+      field: 'created_time',
+      operator: 'GREATER_THAN',
+      value: Math.floor(startUtc.getTime() / 1000) - 1
+    },
+    {
+      field: 'created_time',
+      operator: 'LESS_THAN',
+      value: Math.floor(endUtc.getTime() / 1000)
+    }
+  ]);
+}
+
+function shouldShowLiveCampaignForRange(campaign, fromDate, toDate, options = {}) {
+  if (!campaign?.id) return false;
+
+  const createdDate = getVnDateKeyFromDateValue(campaign.created_time || campaign.createdTime);
+  if (isDateKeyInRange(createdDate, fromDate, toDate)) return true;
+
+  const isScheduled = normalizeCampaignStatus(campaign.effective_status || campaign.status) === 'SCHEDULED';
+  if (!isScheduled) return false;
+
+  const scheduledDate = getScheduledCampaignDateKey(campaign);
+  if (!scheduledDate) return options.includeFutureScheduled === true;
+  if (options.includeFutureScheduled === true) return scheduledDate >= todayStr();
+  return isDateKeyInRange(scheduledDate, fromDate, toDate);
+}
+
+function sortCampaignRowsForReport(a, b) {
+  const spendDiff = Number(b?.spend || 0) - Number(a?.spend || 0);
+  if (spendDiff !== 0) return spendDiff;
+
+  const createdDiff = getCampaignCreatedTimeMs(b) - getCampaignCreatedTimeMs(a);
+  if (createdDiff !== 0) return createdDiff;
+
+  return String(a?.name || '').localeCompare(String(b?.name || ''), 'vi');
+}
+
+function mergeCampaignReportRows(baseRows = [], extraRows = []) {
+  const seen = new Set();
+  const byId = new Map();
+  const merged = [];
+  for (const row of baseRows) {
+    const campaignId = String(row?.campaignId || row?.id || '').trim();
+    if (!campaignId || seen.has(campaignId)) continue;
+    seen.add(campaignId);
+    byId.set(campaignId, row);
+    merged.push(row);
+  }
+
+  for (const row of extraRows) {
+    const campaignId = String(row?.campaignId || row?.id || '').trim();
+    if (!campaignId) continue;
+    const existing = byId.get(campaignId);
+    if (existing) {
+      const updated = {
+        ...existing,
+        name: row.name || existing.name,
+        status: row.status || existing.status,
+        dailyBudget: Number(row.dailyBudget || 0) > 0 ? row.dailyBudget : existing.dailyBudget,
+        lifetimeBudget: Number(row.lifetimeBudget || 0) > 0 ? row.lifetimeBudget : existing.lifetimeBudget,
+        budgetType: row.budgetType || existing.budgetType,
+        createdTime: row.createdTime || existing.createdTime,
+        isScheduled: Boolean(existing.isScheduled) || Boolean(row.isScheduled),
+        scheduledStartTime: row.scheduledStartTime || existing.scheduledStartTime || '',
+        scheduledStartTimeUtc: row.scheduledStartTimeUtc || existing.scheduledStartTimeUtc,
+        scheduledStartTimeDisplay: row.scheduledStartTimeDisplay || existing.scheduledStartTimeDisplay || ''
+      };
+      byId.set(campaignId, updated);
+      continue;
+    }
+
+    seen.add(campaignId);
+    byId.set(campaignId, row);
+    merged.push(row);
+  }
+
+  for (let i = 0; i < merged.length; i += 1) {
+    const campaignId = String(merged[i]?.campaignId || merged[i]?.id || '').trim();
+    if (campaignId && byId.has(campaignId)) merged[i] = byId.get(campaignId);
+  }
+  return merged.sort(sortCampaignRowsForReport);
+}
+
 function mapLiveCampaignToReportRow(campaign, account, includeAccountInfo = false) {
   const dailyBudget = parseFloat(campaign.daily_budget || 0);
   const lifetimeBudget = parseFloat(campaign.lifetime_budget || 0);
@@ -1866,6 +2050,247 @@ function mapLiveCampaignToReportRow(campaign, account, includeAccountInfo = fals
     scheduledStartTimeUtc,
     scheduledStartTimeDisplay: ''
   };
+}
+
+async function fetchScheduledCampaignRowsFromDb(accountIds = [], fromDate, toDate, options = {}) {
+  const includeAccountInfo = options.includeAccountInfo === true;
+  const includeFutureScheduled = options.includeFutureScheduled === true;
+  const existingCampaignIds = new Set(
+    [...(options.existingCampaignIds || [])]
+      .map(id => String(id || '').trim())
+      .filter(Boolean)
+  );
+  const normalizedAccountIds = (accountIds || [])
+    .map(accountId => {
+      if (accountId instanceof mongoose.Types.ObjectId) return accountId;
+      return mongoose.Types.ObjectId.isValid(accountId) ? new mongoose.Types.ObjectId(accountId) : null;
+    })
+    .filter(Boolean);
+  if (!normalizedAccountIds.length) return [];
+
+  const scheduledDateFilter = includeFutureScheduled
+    ? { $gte: todayStr() }
+    : { $gte: normalizeCampaignDate(fromDate), $lte: normalizeCampaignDate(toDate) };
+
+  const scheduledRows = await Campaign.find({
+    accountId: { $in: normalizedAccountIds },
+    isScheduled: true,
+    date: scheduledDateFilter
+  })
+    .select('campaignId accountId name status dailyBudget lifetimeBudget budgetType createdTime scheduledStartTime scheduledStartTimeUtc scheduledStartTimeDisplay')
+    .sort({ date: 1, scheduledStartTimeUtc: 1, updatedAt: -1, _id: -1 })
+    .lean();
+
+  const latestByCampaignId = new Map();
+  for (const row of scheduledRows) {
+    const campaignId = String(row?.campaignId || '').trim();
+    if (!campaignId || existingCampaignIds.has(campaignId) || latestByCampaignId.has(campaignId)) continue;
+    latestByCampaignId.set(campaignId, row);
+  }
+
+  if (!latestByCampaignId.size) return [];
+
+  let accountMap = new Map();
+  if (includeAccountInfo) {
+    const accounts = await Account.find({ _id: { $in: normalizedAccountIds } })
+      .select('_id name adAccountId provider')
+      .lean();
+    accountMap = new Map(accounts.map(account => [String(account._id), account]));
+  }
+
+  return [...latestByCampaignId.values()].map(row => {
+    const accountInfo = includeAccountInfo
+      ? (accountMap.get(String(row.accountId)) || {})
+      : null;
+    return {
+      campaignId: String(row.campaignId || '').trim(),
+      accountId: includeAccountInfo
+        ? {
+            _id: accountInfo?._id || row.accountId,
+            name: accountInfo?.name || '',
+            adAccountId: accountInfo?.adAccountId || '',
+            provider: accountInfo?.provider || 'facebook'
+          }
+        : row.accountId,
+      name: row.name || '',
+      status: row.status || 'SCHEDULED',
+      dailyBudget: Number(row.dailyBudget || 0),
+      lifetimeBudget: Number(row.lifetimeBudget || 0),
+      budgetType: row.budgetType || (Number(row.lifetimeBudget || 0) > 0 ? 'LIFETIME' : 'DAILY'),
+      createdTime: row.createdTime || row.scheduledStartTimeUtc || undefined,
+      spend: 0,
+      messages: 0,
+      clicks: 0,
+      impressions: 0,
+      metaOrders: 0,
+      costPerMessage: 0,
+      isScheduled: true,
+      scheduledStartTime: row.scheduledStartTime || '',
+      scheduledStartTimeUtc: row.scheduledStartTimeUtc,
+      scheduledStartTimeDisplay: row.scheduledStartTimeDisplay || ''
+    };
+  });
+}
+
+async function fetchLiveCampaignRowsForReportByAccounts(accounts = [], fromDate, toDate, options = {}) {
+  const includeAccountInfo = options.includeAccountInfo === true;
+  const includeFutureScheduled = options.includeFutureScheduled === true;
+  const limit = parseBoundedInt(options.limit, 200, 25, 500);
+  const existingCampaignIds = new Set(
+    [...(options.existingCampaignIds || [])]
+      .map(id => String(id || '').trim())
+      .filter(Boolean)
+  );
+  const batchSize = parseBoundedInt(options.batchSize, 20, 1, 50);
+  const batchConcurrency = parseBoundedInt(options.concurrency, 1, 1, 3);
+  const accountRows = [];
+
+  for (const account of accounts || []) {
+    const acctId = normalizeAdAccountId(account?.adAccountId || '');
+    if (!/^act_\d+$/.test(acctId)) continue;
+
+    try {
+      const { fbToken } = await getEffectiveSecrets(account);
+      if (!fbToken) continue;
+      accountRows.push({ account, acctId, fbToken });
+    } catch (error) {
+      console.warn(`[campaigns:live] skip account ${account?.name || account?._id}: ${error.message}`);
+    }
+  }
+
+  if (!accountRows.length) return [];
+
+  const rowsByToken = new Map();
+  for (const row of accountRows) {
+    if (!rowsByToken.has(row.fbToken)) rowsByToken.set(row.fbToken, []);
+    rowsByToken.get(row.fbToken).push(row);
+  }
+
+  const output = [];
+  for (const [fbToken, tokenRows] of rowsByToken.entries()) {
+    const chunks = chunkArray(tokenRows, batchSize);
+    const fallbackRows = [];
+    const chunkResults = await mapWithConcurrency(chunks, async (chunk) => {
+      const specs = [];
+      for (const row of chunk) {
+        const createdParams = new URLSearchParams({
+          fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time,start_time',
+          filtering: buildCreatedCampaignFiltering(fromDate, toDate),
+          limit: String(limit)
+        });
+        specs.push({
+          row,
+          type: 'created',
+          request: {
+            method: 'GET',
+            relative_url: `${row.acctId}/campaigns?${createdParams.toString()}`
+          }
+        });
+
+        const params = new URLSearchParams({
+          fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time,start_time',
+          effective_status: JSON.stringify(['SCHEDULED']),
+          limit: String(limit)
+        });
+        specs.push({
+          row,
+          type: 'scheduled',
+          request: {
+            method: 'GET',
+            relative_url: `${row.acctId}/campaigns?${params.toString()}`
+          }
+        });
+      }
+
+      const response = await fbPost(fbToken, '', { batch: JSON.stringify(specs.map(spec => spec.request)) }, { retries: 1, rateLimitRetries: 1 });
+      return { specs, response };
+    }, batchConcurrency);
+
+    for (const result of chunkResults) {
+      if (result?.error) {
+        console.warn(`[campaigns:live] batch failed: ${result.error.message || result.error}`);
+        continue;
+      }
+
+      const responses = Array.isArray(result.response) ? result.response : [];
+      result.specs.forEach((spec, index) => {
+        const item = responses[index] || {};
+        const account = spec.row.account;
+        if (item.code < 200 || item.code >= 300) {
+          if (spec.type === 'created') fallbackRows.push(spec.row);
+          if (item.code) console.warn(`[campaigns:live] ${account.name || account._id} ${spec.type} HTTP ${item.code}`);
+          return;
+        }
+
+        try {
+          const body = JSON.parse(item.body || '{}');
+          const campaigns = Array.isArray(body.data) ? body.data : [];
+          for (const campaign of campaigns) {
+            const campaignId = String(campaign?.id || '').trim();
+            if (!campaignId || existingCampaignIds.has(campaignId)) continue;
+            if (!shouldShowLiveCampaignForRange(campaign, fromDate, toDate, { includeFutureScheduled })) continue;
+
+            existingCampaignIds.add(campaignId);
+            output.push(mapLiveCampaignToReportRow(campaign, account, includeAccountInfo));
+          }
+        } catch (error) {
+          console.warn(`[campaigns:live] parse failed for ${account.name || account._id}: ${error.message}`);
+        }
+      });
+    }
+
+    if (!fallbackRows.length) continue;
+
+    const fallbackChunks = chunkArray(fallbackRows, batchSize);
+    const fallbackResults = await mapWithConcurrency(fallbackChunks, async (chunk) => {
+      const batch = chunk.map(({ acctId }) => {
+        const params = new URLSearchParams({
+          fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time,start_time',
+          limit: '100'
+        });
+        return {
+          method: 'GET',
+          relative_url: `${acctId}/campaigns?${params.toString()}`
+        };
+      });
+
+      const response = await fbPost(fbToken, '', { batch: JSON.stringify(batch) }, { retries: 1, rateLimitRetries: 1 });
+      return { chunk, response };
+    }, batchConcurrency);
+
+    for (const result of fallbackResults) {
+      if (result?.error) {
+        console.warn(`[campaigns:live] fallback batch failed: ${result.error.message || result.error}`);
+        continue;
+      }
+
+      const responses = Array.isArray(result.response) ? result.response : [];
+      result.chunk.forEach(({ account }, index) => {
+        const item = responses[index] || {};
+        if (item.code < 200 || item.code >= 300) {
+          if (item.code) console.warn(`[campaigns:live] ${account.name || account._id} HTTP ${item.code}`);
+          return;
+        }
+
+        try {
+          const body = JSON.parse(item.body || '{}');
+          const campaigns = Array.isArray(body.data) ? body.data : [];
+          for (const campaign of campaigns) {
+            const campaignId = String(campaign?.id || '').trim();
+            if (!campaignId || existingCampaignIds.has(campaignId)) continue;
+            if (!shouldShowLiveCampaignForRange(campaign, fromDate, toDate, { includeFutureScheduled })) continue;
+
+            existingCampaignIds.add(campaignId);
+            output.push(mapLiveCampaignToReportRow(campaign, account, includeAccountInfo));
+          }
+        } catch (error) {
+          console.warn(`[campaigns:live] parse failed for ${account.name || account._id}: ${error.message}`);
+        }
+      });
+    }
+  }
+
+  return output;
 }
 
 async function fetchScheduledNoSpendCampaignRowsForAccount(account, existingCampaignIds = new Set(), options = {}) {
@@ -4257,6 +4682,16 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
         if (!pageId) {
           return { error: { code, lookupTerm, error: 'Khong xac dinh duoc Page ID cua bai viet de tao camp luot mua qua tin nhan' } };
         }
+        const objectStoryId = getPostObjectStoryId(post);
+        if (!objectStoryId || !objectStoryId.includes('_')) {
+          return {
+            error: {
+              code,
+              lookupTerm,
+              error: `Bai viet ${post.postId || post.id || ''} chua co object_story_id hop le. Hay bam cap nhat bai viet Page roi tao lai camp.`
+            }
+          };
+        }
 
         const adName = buildAdName(cleanCode, adNamePrefix, adNameStatus);
         const finalAdName = isShopee ? baseName : adName;
@@ -4315,7 +4750,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
 
         const creativePayload = {
           name: `${baseName} - Creative`,
-          object_story_id: post.postId,
+          object_story_id: objectStoryId,
           contextual_multi_ads: {
             enroll_status: 'OPT_OUT'
           }
@@ -4453,8 +4888,10 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
     const tDate = toDate || date || fDate;
     const provider = String(req.query.provider || '').trim();
     const includeScheduledNoSpend = req.query.includeScheduledNoSpend === 'true' || req.query.includeScheduledNoSpend === true;
-    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}`);
-    const cached = getReadCache(cacheKey);
+    const includeLiveCreated = req.query.includeLiveCreated === 'true' || req.query.includeLiveCreated === true;
+    const includeLiveCampaigns = includeScheduledNoSpend && includeLiveCreated && dateRangeTouchesTodayOrFuture(fDate, tDate);
+    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}`);
+    const cached = includeLiveCampaigns ? null : getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
     const ownedAccount = await Account.findOne(withUserFilter(req, { _id: req.params.id }))
@@ -4518,23 +4955,48 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
       { $sort: { spend: -1 } }
     ]);
     let result = campaigns;
-    if (includeScheduledNoSpend && dateRangeIncludesToday(fDate, tDate)) {
+    if (includeScheduledNoSpend) {
       try {
-        const extraCampaigns = await fetchScheduledNoSpendCampaignRowsForAccount(
-          ownedAccount,
-          new Set(campaigns.map(campaign => campaign.campaignId)),
-          { includeAccountInfo: false, maxPages: 1, pageTimeoutMs: 8000 }
+        const existingCampaignIds = new Set(campaigns.map(campaign => campaign.campaignId));
+        const extraCampaigns = await fetchScheduledCampaignRowsFromDb(
+          [ownedAccount._id],
+          fDate,
+          tDate,
+          {
+            includeAccountInfo: false,
+            includeFutureScheduled: dateRangeIncludesToday(fDate, tDate),
+            existingCampaignIds
+          }
         );
         if (extraCampaigns.length > 0) {
-          result = [...campaigns, ...extraCampaigns].sort((a, b) => Number(b.spend || 0) - Number(a.spend || 0));
+          result = mergeCampaignReportRows(result, extraCampaigns);
+          for (const campaign of extraCampaigns) {
+            existingCampaignIds.add(String(campaign.campaignId || '').trim());
+          }
+        }
+
+        if (includeLiveCampaigns) {
+          const liveCampaigns = await fetchLiveCampaignRowsForReportByAccounts(
+            [ownedAccount],
+            fDate,
+            tDate,
+            {
+              includeAccountInfo: false,
+              includeFutureScheduled: dateRangeIncludesToday(fDate, tDate),
+              existingCampaignIds
+            }
+          );
+          if (liveCampaigns.length > 0) {
+            result = mergeCampaignReportRows(result, liveCampaigns);
+          }
         }
       } catch (error) {
-        console.warn(`[campaigns:account] scheduled-zero merge failed for ${req.params.id}: ${error.message}`);
+        console.warn(`[campaigns:account] extra campaign merge failed for ${req.params.id}: ${error.message}`);
       }
     }
 
     console.log(`[campaigns:account] account=${req.params.id} ${fDate}..${tDate} rows=${result.length} ${Date.now() - startedAt}ms`);
-    res.json(setReadCache(cacheKey, result));
+    res.json(includeLiveCampaigns ? result : setReadCache(cacheKey, result));
   } catch (error) {
     console.error(`[campaigns:account] failed after ${Date.now() - startedAt}ms: ${error.message}`);
     res.status(500).json({ error: error.message });
@@ -4548,8 +5010,10 @@ app.get('/api/campaigns/today', async (req, res) => {
     const fDate = fromDate || date || todayStr();
     const tDate = toDate || date || fDate;
     const includeScheduledNoSpend = req.query.includeScheduledNoSpend === 'true' || req.query.includeScheduledNoSpend === true;
-    const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}`);
-    const cached = getReadCache(cacheKey);
+    const includeLiveCreated = req.query.includeLiveCreated === 'true' || req.query.includeLiveCreated === true;
+    const includeLiveCampaigns = includeScheduledNoSpend && includeLiveCreated && dateRangeTouchesTodayOrFuture(fDate, tDate);
+    const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}`);
+    const cached = includeLiveCampaigns ? null : getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
     const accountFilter = provider ? buildAccountProviderFilter(provider) : {};
@@ -4622,39 +5086,45 @@ app.get('/api/campaigns/today', async (req, res) => {
     ]);
 
     let result = campaigns;
-    if (includeScheduledNoSpend && dateRangeIncludesToday(fDate, tDate) && accounts.length > 0) {
+    if (includeScheduledNoSpend && accounts.length > 0) {
       const existingCampaignIds = new Set(campaigns.map(campaign => campaign.campaignId));
-      const extraCampaigns = [];
-      const liveResults = await mapWithConcurrency(accounts, async (account) => {
-        try {
-          return await fetchScheduledNoSpendCampaignRowsForAccount(account, existingCampaignIds, {
-            includeAccountInfo: true,
-            maxPages: 1,
-            pageTimeoutMs: 8000
-          });
-        } catch (error) {
-          console.warn(`[campaigns:today] scheduled-zero merge failed for account ${account._id}: ${error.message}`);
-          return [];
+      const extraCampaigns = await fetchScheduledCampaignRowsFromDb(
+        accounts.map(account => account._id),
+        fDate,
+        tDate,
+        {
+          includeAccountInfo: true,
+          includeFutureScheduled: dateRangeIncludesToday(fDate, tDate),
+          existingCampaignIds
         }
-      }, 1);
+      );
 
-      for (const items of liveResults) {
-        if (!Array.isArray(items)) continue;
-        for (const campaign of items) {
-          const campaignId = String(campaign.campaignId || '').trim();
-          if (!campaignId || existingCampaignIds.has(campaignId)) continue;
-          existingCampaignIds.add(campaignId);
-          extraCampaigns.push(campaign);
+      if (extraCampaigns.length > 0) {
+        result = mergeCampaignReportRows(result, extraCampaigns);
+        for (const campaign of extraCampaigns) {
+          existingCampaignIds.add(String(campaign.campaignId || '').trim());
         }
       }
 
-      if (extraCampaigns.length > 0) {
-        result = [...campaigns, ...extraCampaigns].sort((a, b) => Number(b.spend || 0) - Number(a.spend || 0));
+      if (includeLiveCampaigns) {
+        const liveCampaigns = await fetchLiveCampaignRowsForReportByAccounts(
+          accounts,
+          fDate,
+          tDate,
+          {
+            includeAccountInfo: true,
+            includeFutureScheduled: dateRangeIncludesToday(fDate, tDate),
+            existingCampaignIds
+          }
+        );
+        if (liveCampaigns.length > 0) {
+          result = mergeCampaignReportRows(result, liveCampaigns);
+        }
       }
     }
 
     console.log(`[campaigns:today] provider=${provider || 'all'} ${fDate}..${tDate} rows=${result.length} ${Date.now() - startedAt}ms`);
-    res.json(setReadCache(cacheKey, result));
+    res.json(includeLiveCampaigns ? result : setReadCache(cacheKey, result));
   } catch (error) {
     console.error(`[campaigns:today] failed after ${Date.now() - startedAt}ms: ${error.message}`);
     res.status(500).json({ error: error.message });
@@ -6014,6 +6484,10 @@ mongoose.connect(MONGO_URI).then(() => {
   let sheetRefreshRunning = false;
   const sheetRefreshInitial = async () => {
     try {
+      if (ordersSheetCache.rateLimitedUntil > Date.now() && ordersSheetCache.rows?.length) {
+        console.warn(`Sheet Cache: skip startup refresh due to rate limit until ${new Date(ordersSheetCache.rateLimitedUntil).toISOString()}; using cached ${ordersSheetCache.rows.length} rows`);
+        return;
+      }
       console.log('Sheet Cache: Khởi tạo cache đơn hàng từ Google Sheet...');
       if (orderSheetSyncQueue) {
         await orderSheetSyncQueue.add('sync-sheet', {}, { jobId: 'startup-order-sheet-sync' });
@@ -6031,6 +6505,10 @@ mongoose.connect(MONGO_URI).then(() => {
     if (isShuttingDown || sheetRefreshRunning) return;
     sheetRefreshRunning = true;
     try {
+      if (ordersSheetCache.rateLimitedUntil > Date.now() && ordersSheetCache.rows?.length) {
+        console.warn(`Sheet Cache: skip refresh due to rate limit until ${new Date(ordersSheetCache.rateLimitedUntil).toISOString()}; using cached ${ordersSheetCache.rows.length} rows`);
+        return;
+      }
       console.log('Sheet Cache: Đang refresh đơn hàng từ Google Sheet...');
       if (orderSheetSyncQueue) {
         await orderSheetSyncQueue.add('sync-sheet', {}, {
