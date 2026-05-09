@@ -14,7 +14,7 @@ function isCampaignActiveStatus(status) {
   return ACTIVE_CAMPAIGN_STATUSES.has(normalizeStatus(status));
 }
 
-const CAMPAIGNS_PER_PAGE = 500;
+const CAMPAIGNS_PER_PAGE = 300;
 const CAMPAIGN_TOGGLE_RELOAD_DELAY_MS = 2 * 60 * 1000;
 
 function offsetDateString(dateKey, days) {
