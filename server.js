@@ -1803,6 +1803,26 @@ function getCampaignCreatedTimeMs(campaign) {
   return new Date(campaign?.createdTime || campaign?.created_time || 0).getTime() || 0;
 }
 
+function isCampaignCreatedOnDate(campaign, dateKey = todayStr()) {
+  return getVnDateKeyFromDateValue(campaign?.createdTime || campaign?.created_time) === normalizeCampaignDate(dateKey);
+}
+
+function getCampaignSpendValue(campaign) {
+  const directSpend = Number(campaign?.spend || 0);
+  if (Number.isFinite(directSpend) && directSpend > 0) return directSpend;
+
+  const insightSpend = Number(campaign?.insights?.data?.[0]?.spend || 0);
+  return Number.isFinite(insightSpend) ? insightSpend : 0;
+}
+
+function isActiveCampaign(campaign) {
+  return normalizeCampaignStatus(campaign?.effective_status || campaign?.status) === 'ACTIVE';
+}
+
+function getCampaignStableId(campaign) {
+  return String(campaign?.campaignId || campaign?.id || '').trim();
+}
+
 function compareCampaignPriority(a, b) {
   const lifetimeDiff = Number(isLifetimeCampaign(b)) - Number(isLifetimeCampaign(a));
   if (lifetimeDiff !== 0) return lifetimeDiff;
@@ -1827,9 +1847,14 @@ function isScheduledDuplicateCandidate(campaign) {
   return !normalizedStatus && Boolean(campaign?.isScheduled);
 }
 
+function isTodayCreatedDuplicateCandidate(campaign, dailyDate) {
+  return isCampaignCreatedOnDate(campaign, dailyDate) && isScheduledDuplicateCandidate(campaign);
+}
+
 function buildScheduledPauseTargets(campaigns = [], options = {}) {
   const { hour, minute } = parseHourMinute(options.scheduledDuplicatePauseTime, '21:00');
   if (!isAfterVietnamTime(hour, minute)) return [];
+  const dailyDate = normalizeCampaignDate(options.dailyDate);
 
   const groups = campaigns.reduce((map, campaign) => {
     const key = normalizeCampaignDuplicateKey(campaign);
@@ -1847,19 +1872,54 @@ function buildScheduledPauseTargets(campaigns = [], options = {}) {
     if (relevantCampaigns.length <= 1) continue;
 
     const keeper = [...relevantCampaigns].sort(compareCampaignPriority)[0];
-    const scheduledDuplicates = relevantCampaigns.filter(campaign =>
-      Boolean(campaign?.isScheduled) && isScheduledDuplicateCandidate(campaign)
-    );
-    if (!scheduledDuplicates.length) continue;
+    const keeperId = getCampaignStableId(keeper);
+    const todayCreatedCampaigns = relevantCampaigns
+      .filter(campaign => !campaign?.isScheduled && isTodayCreatedDuplicateCandidate(campaign, dailyDate));
+    const todayCreatedKeeper = [...todayCreatedCampaigns].sort(compareCampaignPriority)[0];
+    const todayCreatedKeeperId = getCampaignStableId(todayCreatedKeeper);
+    const hasMultipleTodayCreatedCampaigns = todayCreatedCampaigns.length > 1;
+    const activeSpendBaseCampaign = [...relevantCampaigns]
+      .filter(campaign =>
+        !isCampaignCreatedOnDate(campaign, dailyDate)
+        && isActiveCampaign(campaign)
+        && getCampaignSpendValue(campaign) > 0
+      )
+      .sort(compareCampaignPriority)[0];
+    const activeSpendBaseCampaignId = getCampaignStableId(activeSpendBaseCampaign);
+    const duplicatePauseCandidates = relevantCampaigns.filter(campaign => {
+      if (Boolean(campaign?.isScheduled)) return true;
+      const campaignId = getCampaignStableId(campaign);
+      if (!isTodayCreatedDuplicateCandidate(campaign, dailyDate)) return false;
 
-    for (const campaign of scheduledDuplicates) {
-      if (String(campaign.campaignId || campaign.id || '') === String(keeper.campaignId || keeper.id || '')) continue;
+      if (activeSpendBaseCampaignId) return campaignId !== activeSpendBaseCampaignId;
+
+      if (hasMultipleTodayCreatedCampaigns) return campaignId !== todayCreatedKeeperId;
+      return false;
+    });
+    if (!duplicatePauseCandidates.length) continue;
+
+    for (const campaign of duplicatePauseCandidates) {
+      const campaignId = getCampaignStableId(campaign);
+      const isTodayCreated = isCampaignCreatedOnDate(campaign, dailyDate);
+      if (campaign?.isScheduled && campaignId === keeperId) continue;
+      if (!campaign?.isScheduled && isTodayCreated && !activeSpendBaseCampaignId && campaignId === todayCreatedKeeperId) continue;
+      if (!campaign?.isScheduled && !isTodayCreated && campaignId === keeperId) continue;
+      const isSameDayCloneDuplicate = isTodayCreated
+        && !campaign?.isScheduled
+        && !activeSpendBaseCampaignId
+        && hasMultipleTodayCreatedCampaigns
+        && campaignId !== todayCreatedKeeperId;
       items.push({
         campaign,
-        keeper,
-        pauseReason: isLifetimeCampaign(keeper)
-          ? `Camp len lich trung, uu tien giu camp tron doi ${keeper.name || keeper.campaignId}`
-          : `Camp len lich trung voi camp dang chay ${keeper.name || keeper.campaignId}`
+        keeper: activeSpendBaseCampaign || todayCreatedKeeper || keeper,
+        pauseLabel: isTodayCreated && !campaign?.isScheduled ? 'camp nhan hom nay' : 'camp len lich',
+        pauseReason: isSameDayCloneDuplicate
+          ? `Camp nhan hom nay trung voi camp nhan hom nay ${todayCreatedKeeper?.name || todayCreatedKeeper?.campaignId}`
+          : (isTodayCreated && !campaign?.isScheduled
+          ? `Camp nhan hom nay trung voi camp da tieu tien ${(activeSpendBaseCampaign || keeper).name || (activeSpendBaseCampaign || keeper).campaignId}`
+          : (isLifetimeCampaign(keeper)
+            ? `Camp len lich trung, uu tien giu camp tron doi ${keeper.name || keeper.campaignId}`
+            : `Camp len lich trung voi camp dang chay ${keeper.name || keeper.campaignId}`))
       });
     }
   }
@@ -2346,8 +2406,16 @@ async function getScheduledDuplicateCandidatesForAccount(account, dailyDate = to
   );
 
   try {
-    const extraCampaigns = await fetchScheduledNoSpendCampaignRowsForAccount(account, existingCampaignIds, { includeAccountInfo: false });
+    const extraCampaigns = await fetchLiveCampaignRowsForReportByAccounts([account], dailyDate, dailyDate, {
+      includeAccountInfo: false,
+      includeFutureScheduled: true,
+      existingCampaignIds,
+      batchSize: 1,
+      concurrency: 1,
+      limit: 200
+    });
     const relevantExtraCampaigns = extraCampaigns.filter(campaign => {
+      if (isCampaignCreatedOnDate(campaign, dailyDate)) return true;
       const scheduledDateKey = getScheduledCampaignDateKey(campaign);
       return !scheduledDateKey || scheduledDateKey <= dailyDate;
     });
@@ -2363,7 +2431,7 @@ async function getScheduledDuplicateCandidatesForAccount(account, dailyDate = to
       }))
     ];
   } catch (error) {
-    console.warn(`[auto-scheduled-pause] scheduled merge failed for ${account.name}: ${error.message}`);
+    console.warn(`[auto-scheduled-pause] live candidate merge failed for ${account.name}: ${error.message}`);
     return storedCampaigns;
   }
 }
@@ -2617,7 +2685,8 @@ async function runAutoControl(account) {
 
     const scheduledPauseCandidates = await getScheduledDuplicateCandidatesForAccount(account, today);
     const scheduledPauseTargets = buildScheduledPauseTargets(scheduledPauseCandidates, {
-      scheduledDuplicatePauseTime: config?.scheduledDuplicatePauseTime
+      scheduledDuplicatePauseTime: config?.scheduledDuplicatePauseTime,
+      dailyDate: today
     });
 
     if (claudeKey) {
@@ -2725,7 +2794,7 @@ async function runAutoControl(account) {
           account._id,
           account.name,
           'warn',
-          `Auto tat camp len lich ${item.campaign.name || campaignGraphId}: ${item.pauseReason}`
+          `Auto tat ${item.pauseLabel || 'camp len lich'} ${item.campaign.name || campaignGraphId}: ${item.pauseReason}`
         );
       }
     }
