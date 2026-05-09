@@ -62,7 +62,7 @@ export default function CloneCampaigns() {
     }
 
     try {
-      const params = new URLSearchParams({ date: filterDate, provider });
+      const params = new URLSearchParams({ date: filterDate, provider, includeScheduledNoSpend: 'true' });
       const url = filterAcc
         ? `/accounts/${filterAcc}/campaigns?${params.toString()}`
         : `/campaigns/today?${params.toString()}`;

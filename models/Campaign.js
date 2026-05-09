@@ -38,5 +38,13 @@ CampaignSchema.index({ date: 1, spend: -1 }, { name: 'campaign_date_spend' });
 CampaignSchema.index({ accountId: 1, date: 1, spend: -1 }, { name: 'campaign_account_date_spend' });
 CampaignSchema.index({ date: 1, campaignId: 1, accountId: 1 }, { name: 'campaign_date_campaign_account' });
 CampaignSchema.index({ accountId: 1, date: 1, campaignId: 1 }, { name: 'campaign_account_date_campaign' });
+CampaignSchema.index(
+  { accountId: 1, date: 1, updatedAt: 1, campaignId: 1 },
+  { name: 'campaign_account_date_updated_campaign' }
+);
+CampaignSchema.index(
+  { date: 1, updatedAt: 1, accountId: 1, campaignId: 1 },
+  { name: 'campaign_date_updated_account_campaign' }
+);
 
 module.exports = mongoose.model('Campaign', CampaignSchema);

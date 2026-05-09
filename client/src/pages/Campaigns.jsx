@@ -398,6 +398,7 @@ export default function Campaigns() {
             <table className="tbl">
               <thead>
                 <tr>
+                  <th style={{ width: '72px' }}>STT</th>
                   <th style={{ width: '240px' }}>Tên Campaign</th>
                   <th>Trạng thái</th>
                   <th>Ngân sách</th>
@@ -419,6 +420,7 @@ export default function Campaigns() {
 
                   return (
                     <tr key={`${campaign.accountId?._id || campaign.accountId || rowIndex}:${campaign.campaignId || rowIndex}`}>
+                      <td className="mono-sm" style={{ color: 'var(--muted2)' }}>{rowIndex + 1}</td>
                       <td>
                         <div style={{ fontWeight: 600, marginBottom: '2px' }}>{campaign.name}</div>
                         <div style={{ fontSize: '11px', color: 'var(--muted2)' }}>{campaign.campaignId}</div>

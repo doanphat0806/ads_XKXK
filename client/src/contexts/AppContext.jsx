@@ -94,7 +94,7 @@ export const AppProvider = ({ children }) => {
 
   const loadTodayCampaigns = useCallback(async () => {
     try {
-      const url = `/campaigns/today?provider=${provider}`;
+      const url = `/campaigns/today?provider=${provider}&includeScheduledNoSpend=true`;
       const cached = readResponseCache(`GET:${url}`);
       if (cached) setAllTodayCampaigns(cached);
       const data = await cachedApi('GET', url, null, { timeoutMs: 5 * 60 * 1000 });

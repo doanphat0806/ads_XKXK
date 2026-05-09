@@ -1706,6 +1706,13 @@ function hasScheduledCampaignStarted(campaign) {
   return Number.isFinite(startMs) && startMs <= Date.now();
 }
 
+function getScheduledCampaignDateKey(campaign) {
+  const rawStartTime = campaign?.scheduledStartTimeUtc || campaign?.scheduledStartTime || campaign?.start_time || '';
+  const startMs = new Date(rawStartTime).getTime();
+  if (!Number.isFinite(startMs)) return '';
+  return new Date(startMs + VN_OFFSET_MS).toISOString().split('T')[0];
+}
+
 function isAfterVietnamTime(hour = 21, minute = 0) {
   const now = new Date(Date.now() + VN_OFFSET_MS);
   const currentMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
@@ -1739,6 +1746,20 @@ function compareCampaignPriority(a, b) {
   return getCampaignCreatedTimeMs(a) - getCampaignCreatedTimeMs(b);
 }
 
+function isScheduledDuplicateRelevantStatus(status) {
+  const normalized = normalizeCampaignStatus(status);
+  return normalized === 'ACTIVE'
+    || normalized === 'SCHEDULED'
+    || normalized === 'PENDING_REVIEW'
+    || normalized === 'PENDING_BILLING_INFO';
+}
+
+function isScheduledDuplicateCandidate(campaign) {
+  const normalizedStatus = normalizeCampaignStatus(campaign?.status);
+  if (isScheduledDuplicateRelevantStatus(normalizedStatus)) return true;
+  return !normalizedStatus && Boolean(campaign?.isScheduled);
+}
+
 function buildScheduledPauseTargets(campaigns = [], options = {}) {
   const { hour, minute } = parseHourMinute(options.scheduledDuplicatePauseTime, '21:00');
   if (!isAfterVietnamTime(hour, minute)) return [];
@@ -1755,20 +1776,17 @@ function buildScheduledPauseTargets(campaigns = [], options = {}) {
   for (const group of groups.values()) {
     if (group.length <= 1) continue;
 
-    const activeCampaigns = group.filter(campaign =>
-      String(campaign.status || '').toUpperCase() === 'ACTIVE'
+    const relevantCampaigns = group.filter(isScheduledDuplicateCandidate);
+    if (relevantCampaigns.length <= 1) continue;
+
+    const keeper = [...relevantCampaigns].sort(compareCampaignPriority)[0];
+    const scheduledDuplicates = relevantCampaigns.filter(campaign =>
+      Boolean(campaign?.isScheduled) && isScheduledDuplicateCandidate(campaign)
     );
-    if (activeCampaigns.length <= 1) continue;
+    if (!scheduledDuplicates.length) continue;
 
-    const scheduledActive = activeCampaigns.filter(campaign =>
-      campaign.isScheduled && hasScheduledCampaignStarted(campaign)
-    );
-    if (!scheduledActive.length) continue;
-
-    const keeper = [...activeCampaigns].sort(compareCampaignPriority)[0];
-
-    for (const campaign of scheduledActive) {
-      if (String(campaign.campaignId || '') === String(keeper.campaignId || '')) continue;
+    for (const campaign of scheduledDuplicates) {
+      if (String(campaign.campaignId || campaign.id || '') === String(keeper.campaignId || keeper.id || '')) continue;
       items.push({
         campaign,
         keeper,
@@ -1817,6 +1835,9 @@ function mapLiveCampaignToReportRow(campaign, account, includeAccountInfo = fals
   const dailyBudget = parseFloat(campaign.daily_budget || 0);
   const lifetimeBudget = parseFloat(campaign.lifetime_budget || 0);
   const budgetType = lifetimeBudget > 0 ? 'LIFETIME' : 'DAILY';
+  const scheduledStartTime = String(campaign.start_time || '').trim();
+  const scheduledStartTimeUtc = scheduledStartTime ? new Date(scheduledStartTime) : undefined;
+  const scheduledStatus = normalizeCampaignStatus(campaign.effective_status || campaign.status);
 
   return {
     campaignId: String(campaign.id || '').trim(),
@@ -1839,7 +1860,11 @@ function mapLiveCampaignToReportRow(campaign, account, includeAccountInfo = fals
     clicks: 0,
     impressions: 0,
     metaOrders: 0,
-    costPerMessage: 0
+    costPerMessage: 0,
+    isScheduled: scheduledStatus === 'SCHEDULED',
+    scheduledStartTime,
+    scheduledStartTimeUtc,
+    scheduledStartTimeDisplay: ''
   };
 }
 
@@ -1855,7 +1880,7 @@ async function fetchScheduledNoSpendCampaignRowsForAccount(account, existingCamp
   let items = [];
   try {
     const response = await fetchAllFbEdge(fbToken, `${acctId}/campaigns`, {
-      fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time',
+      fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time,start_time',
       effective_status: JSON.stringify(['SCHEDULED']),
       limit: 100
     }, {
@@ -1866,7 +1891,7 @@ async function fetchScheduledNoSpendCampaignRowsForAccount(account, existingCamp
     items = response.items || [];
   } catch {
     const fallback = await fetchAllFbEdge(fbToken, `${acctId}/campaigns`, {
-      fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time',
+      fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time,start_time',
       limit: 100
     }, {
       maxPages: 5,
@@ -1883,6 +1908,37 @@ async function fetchScheduledNoSpendCampaignRowsForAccount(account, existingCamp
       return normalizeCampaignStatus(campaign.effective_status || campaign.status) === 'SCHEDULED';
     })
     .map(campaign => mapLiveCampaignToReportRow(campaign, account, includeAccountInfo));
+}
+
+async function getScheduledDuplicateCandidatesForAccount(account, dailyDate = todayStr()) {
+  const storedCampaigns = await Campaign.find({ accountId: account._id, date: dailyDate }).lean();
+  const existingCampaignIds = new Set(
+    storedCampaigns
+      .map(campaign => String(campaign.campaignId || '').trim())
+      .filter(Boolean)
+  );
+
+  try {
+    const extraCampaigns = await fetchScheduledNoSpendCampaignRowsForAccount(account, existingCampaignIds, { includeAccountInfo: false });
+    const relevantExtraCampaigns = extraCampaigns.filter(campaign => {
+      const scheduledDateKey = getScheduledCampaignDateKey(campaign);
+      return !scheduledDateKey || scheduledDateKey <= dailyDate;
+    });
+    if (!relevantExtraCampaigns.length) return storedCampaigns;
+
+    return [
+      ...storedCampaigns,
+      ...relevantExtraCampaigns.map(campaign => ({
+        ...campaign,
+        date: dailyDate,
+        id: campaign.campaignId || campaign.id || '',
+        isScheduled: Boolean(campaign.isScheduled)
+      }))
+    ];
+  } catch (error) {
+    console.warn(`[auto-scheduled-pause] scheduled merge failed for ${account.name}: ${error.message}`);
+    return storedCampaigns;
+  }
 }
 
 async function fetchShopeeAccountData(account) {
@@ -2132,8 +2188,8 @@ async function runAutoControl(account) {
       );
     }
 
-    const storedCampaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
-    const scheduledPauseTargets = buildScheduledPauseTargets(storedCampaigns, {
+    const scheduledPauseCandidates = await getScheduledDuplicateCandidatesForAccount(account, today);
+    const scheduledPauseTargets = buildScheduledPauseTargets(scheduledPauseCandidates, {
       scheduledDuplicatePauseTime: config?.scheduledDuplicatePauseTime
     });
 
