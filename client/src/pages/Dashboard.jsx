@@ -249,7 +249,7 @@ export default function Dashboard() {
     setStatsLoading(true);
     try {
       const statsUrl = `/stats?provider=${provider}&fromDate=${from}&toDate=${to}`;
-      const campaignsUrl = `/campaigns/today?provider=${provider}&fromDate=${from}&toDate=${to}&includeScheduledNoSpend=true`;
+      const campaignsUrl = `/campaigns/today?provider=${provider}&fromDate=${from}&toDate=${to}`;
       const cachedStats = readResponseCache(`GET:${statsUrl}`);
       const cachedCampaigns = readResponseCache(`GET:${campaignsUrl}`);
       if (cachedStats) setLocalStats(cachedStats);

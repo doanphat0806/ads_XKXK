@@ -1870,6 +1870,8 @@ function mapLiveCampaignToReportRow(campaign, account, includeAccountInfo = fals
 
 async function fetchScheduledNoSpendCampaignRowsForAccount(account, existingCampaignIds = new Set(), options = {}) {
   const includeAccountInfo = options.includeAccountInfo === true;
+  const maxPages = Number.isFinite(options.maxPages) ? options.maxPages : 5;
+  const pageTimeoutMs = Number.isFinite(options.pageTimeoutMs) ? options.pageTimeoutMs : 15000;
   const knownIds = new Set([...existingCampaignIds].map(id => String(id || '').trim()).filter(Boolean));
   const acctId = normalizeAdAccountId(account?.adAccountId || '');
   if (!acctId) return [];
@@ -1884,8 +1886,8 @@ async function fetchScheduledNoSpendCampaignRowsForAccount(account, existingCamp
       effective_status: JSON.stringify(['SCHEDULED']),
       limit: 100
     }, {
-      maxPages: 5,
-      pageTimeoutMs: 15000,
+      maxPages,
+      pageTimeoutMs,
       requestOptions: { retries: 2, rateLimitRetries: 2 }
     });
     items = response.items || [];
@@ -1894,8 +1896,8 @@ async function fetchScheduledNoSpendCampaignRowsForAccount(account, existingCamp
       fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time,start_time',
       limit: 100
     }, {
-      maxPages: 5,
-      pageTimeoutMs: 15000,
+      maxPages,
+      pageTimeoutMs,
       requestOptions: { retries: 2, rateLimitRetries: 2 }
     });
     items = fallback.items || [];
@@ -4521,7 +4523,7 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
         const extraCampaigns = await fetchScheduledNoSpendCampaignRowsForAccount(
           ownedAccount,
           new Set(campaigns.map(campaign => campaign.campaignId)),
-          { includeAccountInfo: false }
+          { includeAccountInfo: false, maxPages: 1, pageTimeoutMs: 8000 }
         );
         if (extraCampaigns.length > 0) {
           result = [...campaigns, ...extraCampaigns].sort((a, b) => Number(b.spend || 0) - Number(a.spend || 0));
@@ -4625,12 +4627,16 @@ app.get('/api/campaigns/today', async (req, res) => {
       const extraCampaigns = [];
       const liveResults = await mapWithConcurrency(accounts, async (account) => {
         try {
-          return await fetchScheduledNoSpendCampaignRowsForAccount(account, existingCampaignIds, { includeAccountInfo: true });
+          return await fetchScheduledNoSpendCampaignRowsForAccount(account, existingCampaignIds, {
+            includeAccountInfo: true,
+            maxPages: 1,
+            pageTimeoutMs: 8000
+          });
         } catch (error) {
           console.warn(`[campaigns:today] scheduled-zero merge failed for account ${account._id}: ${error.message}`);
           return [];
         }
-      }, 2);
+      }, 1);
 
       for (const items of liveResults) {
         if (!Array.isArray(items)) continue;
