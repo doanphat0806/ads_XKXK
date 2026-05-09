@@ -1843,7 +1843,7 @@ function mapLiveCampaignToReportRow(campaign, account, includeAccountInfo = fals
   };
 }
 
-async function fetchActiveNoSpendCampaignRowsForAccount(account, existingCampaignIds = new Set(), options = {}) {
+async function fetchScheduledNoSpendCampaignRowsForAccount(account, existingCampaignIds = new Set(), options = {}) {
   const includeAccountInfo = options.includeAccountInfo === true;
   const knownIds = new Set([...existingCampaignIds].map(id => String(id || '').trim()).filter(Boolean));
   const acctId = normalizeAdAccountId(account?.adAccountId || '');
@@ -1852,20 +1852,35 @@ async function fetchActiveNoSpendCampaignRowsForAccount(account, existingCampaig
   const { fbToken } = await getEffectiveSecrets(account);
   if (!fbToken) return [];
 
-  const { items } = await fetchAllFbEdge(fbToken, `${acctId}/campaigns`, {
-    fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time',
-    limit: 200
-  }, {
-    maxPages: 20,
-    pageTimeoutMs: 20000,
-    requestOptions: { retries: 2, rateLimitRetries: 2 }
-  });
+  let items = [];
+  try {
+    const response = await fetchAllFbEdge(fbToken, `${acctId}/campaigns`, {
+      fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time',
+      effective_status: JSON.stringify(['SCHEDULED']),
+      limit: 100
+    }, {
+      maxPages: 5,
+      pageTimeoutMs: 15000,
+      requestOptions: { retries: 2, rateLimitRetries: 2 }
+    });
+    items = response.items || [];
+  } catch {
+    const fallback = await fetchAllFbEdge(fbToken, `${acctId}/campaigns`, {
+      fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time',
+      limit: 100
+    }, {
+      maxPages: 5,
+      pageTimeoutMs: 15000,
+      requestOptions: { retries: 2, rateLimitRetries: 2 }
+    });
+    items = fallback.items || [];
+  }
 
   return items
     .filter(campaign => {
       const campaignId = String(campaign?.id || '').trim();
       if (!campaignId || knownIds.has(campaignId)) return false;
-      return isCampaignServingStatus(campaign.effective_status || campaign.status);
+      return normalizeCampaignStatus(campaign.effective_status || campaign.status) === 'SCHEDULED';
     })
     .map(campaign => mapLiveCampaignToReportRow(campaign, account, includeAccountInfo));
 }
@@ -4379,8 +4394,8 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
     const fDate = fromDate || date || todayStr();
     const tDate = toDate || date || fDate;
     const provider = String(req.query.provider || '').trim();
-    const includeActiveNoSpend = req.query.includeActiveNoSpend === 'true' || req.query.includeActiveNoSpend === true;
-    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}:${includeActiveNoSpend ? 'with-active-zero' : 'default'}`);
+    const includeScheduledNoSpend = req.query.includeScheduledNoSpend === 'true' || req.query.includeScheduledNoSpend === true;
+    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}`);
     const cached = getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
@@ -4445,9 +4460,9 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
       { $sort: { spend: -1 } }
     ]);
     let result = campaigns;
-    if (includeActiveNoSpend && dateRangeIncludesToday(fDate, tDate)) {
+    if (includeScheduledNoSpend && dateRangeIncludesToday(fDate, tDate)) {
       try {
-        const extraCampaigns = await fetchActiveNoSpendCampaignRowsForAccount(
+        const extraCampaigns = await fetchScheduledNoSpendCampaignRowsForAccount(
           ownedAccount,
           new Set(campaigns.map(campaign => campaign.campaignId)),
           { includeAccountInfo: false }
@@ -4456,7 +4471,7 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           result = [...campaigns, ...extraCampaigns].sort((a, b) => Number(b.spend || 0) - Number(a.spend || 0));
         }
       } catch (error) {
-        console.warn(`[campaigns:account] active-zero merge failed for ${req.params.id}: ${error.message}`);
+        console.warn(`[campaigns:account] scheduled-zero merge failed for ${req.params.id}: ${error.message}`);
       }
     }
 
@@ -4474,8 +4489,8 @@ app.get('/api/campaigns/today', async (req, res) => {
     const { provider, date, fromDate, toDate } = req.query;
     const fDate = fromDate || date || todayStr();
     const tDate = toDate || date || fDate;
-    const includeActiveNoSpend = req.query.includeActiveNoSpend === 'true' || req.query.includeActiveNoSpend === true;
-    const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeActiveNoSpend ? 'with-active-zero' : 'default'}`);
+    const includeScheduledNoSpend = req.query.includeScheduledNoSpend === 'true' || req.query.includeScheduledNoSpend === true;
+    const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}`);
     const cached = getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
@@ -4549,14 +4564,14 @@ app.get('/api/campaigns/today', async (req, res) => {
     ]);
 
     let result = campaigns;
-    if (includeActiveNoSpend && dateRangeIncludesToday(fDate, tDate) && accounts.length > 0) {
+    if (includeScheduledNoSpend && dateRangeIncludesToday(fDate, tDate) && accounts.length > 0) {
       const existingCampaignIds = new Set(campaigns.map(campaign => campaign.campaignId));
       const extraCampaigns = [];
       const liveResults = await mapWithConcurrency(accounts, async (account) => {
         try {
-          return await fetchActiveNoSpendCampaignRowsForAccount(account, existingCampaignIds, { includeAccountInfo: true });
+          return await fetchScheduledNoSpendCampaignRowsForAccount(account, existingCampaignIds, { includeAccountInfo: true });
         } catch (error) {
-          console.warn(`[campaigns:today] active-zero merge failed for account ${account._id}: ${error.message}`);
+          console.warn(`[campaigns:today] scheduled-zero merge failed for account ${account._id}: ${error.message}`);
           return [];
         }
       }, 2);

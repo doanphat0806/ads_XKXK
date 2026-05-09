@@ -7,6 +7,10 @@ const VIDEO_FILE_MAX_BYTES = 100 * 1024 * 1024;
 const IMAGE_FILE_MAX_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_FILES = 10;
 const BATCH_PUBLISH_DELAY_MS = 1200;
+const POST_CALL_TO_ACTION_OPTIONS = [
+  { value: '', label: 'Khong them nut' },
+  { value: 'MESSAGE_PAGE', label: 'Gui tin nhan' }
+];
 
 function normalizeSearch(value) {
   return String(value || '')
@@ -68,6 +72,7 @@ export default function CreaterPage() {
   const [selectedPageId, setSelectedPageId] = useState('');
   const [message, setMessage] = useState('');
   const [link, setLink] = useState('');
+  const [callToActionType, setCallToActionType] = useState('');
   const [mediaFiles, setMediaFiles] = useState([]);
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState(null);
@@ -230,6 +235,7 @@ export default function CreaterPage() {
       if (mediaSummary.total > 0) {
         const formData = new FormData();
         if (publishMessage) formData.append('message', publishMessage);
+        if (callToActionType) formData.append('callToActionType', callToActionType);
         Array.from(mediaFiles).forEach(file => {
           formData.append('media', file);
         });
@@ -237,6 +243,7 @@ export default function CreaterPage() {
       } else {
         const payload = {};
         if (publishMessage) payload.message = publishMessage;
+        if (callToActionType) payload.callToActionType = callToActionType;
         result = await api('POST', `/pages/${selectedPageId}/publish`, payload, {
           timeoutMs: 2 * 60 * 1000
         });
@@ -251,6 +258,7 @@ export default function CreaterPage() {
       }
       setMessage('');
       setLink('');
+      setCallToActionType('');
       setMediaFiles([]);
       toast.success(
         result.mode === 'video'
@@ -557,6 +565,21 @@ export default function CreaterPage() {
                   </div>
 
                   <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Nut hanh dong</label>
+                    <select
+                      value={callToActionType}
+                      onChange={e => setCallToActionType(e.target.value)}
+                    >
+                      {POST_CALL_TO_ACTION_OPTIONS.map(option => (
+                        <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <div className="inline-note">
+                      Chon "Gui tin nhan" de them nut Messenger cho bai feed. Khong ap dung cho reels video.
+                    </div>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
                     <label>File media</label>
                     <input
                       type="file"
@@ -627,6 +650,20 @@ export default function CreaterPage() {
                       >
                         <div style={{ fontSize: '10px', color: 'var(--muted2)', marginBottom: '4px' }}>LINK</div>
                         <div style={{ fontSize: '12px', color: 'var(--b)', wordBreak: 'break-all' }}>{link.trim()}</div>
+                      </div>
+                    )}
+                    {callToActionType === 'MESSAGE_PAGE' && (
+                      <div
+                        style={{
+                          marginTop: '10px',
+                          padding: '10px 12px',
+                          borderRadius: '10px',
+                          background: 'var(--s3)',
+                          border: '1px solid var(--border)'
+                        }}
+                      >
+                        <div style={{ fontSize: '10px', color: 'var(--muted2)', marginBottom: '4px' }}>NUT HANH DONG</div>
+                        <div style={{ fontSize: '12px', color: 'var(--g)' }}>Gui tin nhan</div>
                       </div>
                     )}
                   </div>

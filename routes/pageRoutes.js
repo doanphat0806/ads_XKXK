@@ -22,6 +22,7 @@ const POST_CACHE_TTL_MS = 5 * 60 * 1000;
 const PAGE_VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 const PAGE_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const PAGE_MAX_IMAGE_FILES = 10;
+const POST_CALL_TO_ACTION_TYPES = new Set(['MESSAGE_PAGE']);
 const postCache = new Map();
 
 function getPostsPerPageLimit(provider) {
@@ -84,6 +85,19 @@ function getPagePublishError(error) {
 function setPostCache(key, value) {
   postCache.set(key, { value, createdAt: Date.now() });
   return value;
+}
+
+function normalizePostCallToActionType(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  return POST_CALL_TO_ACTION_TYPES.has(normalized) ? normalized : '';
+}
+
+function buildPostCallToActionPayload(callToActionType) {
+  if (!callToActionType) return '';
+  if (callToActionType === 'MESSAGE_PAGE') {
+    return JSON.stringify({ type: 'MESSAGE_PAGE', value: {} });
+  }
+  return '';
 }
 
 async function fetchManagedPages(fbToken, fields = 'name,id,access_token,category,picture{url},fan_count') {
@@ -394,6 +408,7 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
 
     let message = '';
     let link = '';
+    let callToActionType = '';
     let videoFile = null;
     let imageFiles = [];
 
@@ -412,6 +427,7 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
       const formData = await request.formData();
       message = String(formData.get('message') || '').trim();
       link = String(formData.get('link') || '').trim();
+      callToActionType = normalizePostCallToActionType(formData.get('callToActionType'));
       for (const mediaFile of formData.getAll('media')) {
         if (!mediaFile || typeof mediaFile.arrayBuffer !== 'function' || Number(mediaFile.size || 0) <= 0) continue;
         const fileType = String(mediaFile.type || '').toLowerCase();
@@ -450,10 +466,14 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
     } else {
       message = String(req.body?.message || '').trim();
       link = String(req.body?.link || '').trim();
+      callToActionType = normalizePostCallToActionType(req.body?.callToActionType);
     }
 
     if (!pageId) return res.status(400).json({ error: 'Thieu Page ID' });
     if (!message && !link && !videoFile && imageFiles.length === 0) return res.status(400).json({ error: 'Nhap noi dung, link hoac chon file truoc khi dang bai' });
+    if (videoFile && callToActionType === 'MESSAGE_PAGE') {
+      return res.status(400).json({ error: 'Nut "Gui tin nhan" hien chua ho tro khi dang reels video' });
+    }
 
     const pagesResp = await fbGet(fbToken, 'me/accounts', {
       fields: 'name,id,access_token,picture{url}',
@@ -467,6 +487,7 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
     }
 
     const pageToken = String(page.access_token || '').trim() || fbToken;
+    const callToActionPayload = buildPostCallToActionPayload(callToActionType);
     let result;
     let mode = 'feed';
 
@@ -530,7 +551,7 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
         return res.status(400).json({ error: 'Khong tai duoc anh len Facebook' });
       }
 
-      if (uploadedPhotoIds.length === 1 && !link) {
+      if (uploadedPhotoIds.length === 1 && !link && !callToActionPayload) {
         const payload = { published: true };
         if (message) payload.message = message;
         result = await fbPost(pageToken, uploadedPhotoIds[0], payload);
@@ -538,6 +559,7 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
         const payload = {};
         if (message) payload.message = message;
         if (link) payload.link = link;
+        if (callToActionPayload) payload.call_to_action = callToActionPayload;
         uploadedPhotoIds.forEach((id, index) => {
           payload[`attached_media[${index}]`] = JSON.stringify({ media_fbid: id });
         });
@@ -547,6 +569,7 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
       const payload = {};
       if (message) payload.message = message;
       if (link) payload.link = link;
+      if (callToActionPayload) payload.call_to_action = callToActionPayload;
       result = await fbPost(pageToken, `${pageId}/feed`, payload);
     }
 
@@ -573,6 +596,7 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
       link: link || '',
       fileName: videoFile?.name || '',
       fileNames: imageFiles.map(file => file.name || 'image.jpg'),
+      callToActionType,
       page: {
         id: page.id,
         name: page.name || '',

@@ -55,7 +55,7 @@ export default function Campaigns() {
         fromDate: filterFromDate, 
         toDate: filterToDate, 
         provider,
-        includeActiveNoSpend: 'true'
+        includeScheduledNoSpend: 'true'
       });
       const url = filterAcc
         ? `/accounts/${filterAcc}/campaigns?${params.toString()}`
