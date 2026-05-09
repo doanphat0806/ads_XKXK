@@ -1808,6 +1808,68 @@ async function fetchCampaignMetaMap(fbToken, campaignIds = []) {
   return campaignMetaById;
 }
 
+function dateRangeIncludesToday(fromDate, toDate) {
+  const today = todayStr();
+  return String(fromDate || today) <= today && String(toDate || fromDate || today) >= today;
+}
+
+function mapLiveCampaignToReportRow(campaign, account, includeAccountInfo = false) {
+  const dailyBudget = parseFloat(campaign.daily_budget || 0);
+  const lifetimeBudget = parseFloat(campaign.lifetime_budget || 0);
+  const budgetType = lifetimeBudget > 0 ? 'LIFETIME' : 'DAILY';
+
+  return {
+    campaignId: String(campaign.id || '').trim(),
+    accountId: includeAccountInfo
+      ? {
+          _id: account._id,
+          name: account.name,
+          adAccountId: account.adAccountId,
+          provider: account.provider
+        }
+      : account._id,
+    name: campaign.name || '',
+    status: campaign.effective_status || campaign.status || '',
+    dailyBudget: budgetType === 'DAILY' ? dailyBudget : 0,
+    lifetimeBudget: budgetType === 'LIFETIME' ? lifetimeBudget : 0,
+    budgetType,
+    createdTime: campaign.created_time ? new Date(campaign.created_time) : undefined,
+    spend: 0,
+    messages: 0,
+    clicks: 0,
+    impressions: 0,
+    metaOrders: 0,
+    costPerMessage: 0
+  };
+}
+
+async function fetchActiveNoSpendCampaignRowsForAccount(account, existingCampaignIds = new Set(), options = {}) {
+  const includeAccountInfo = options.includeAccountInfo === true;
+  const knownIds = new Set([...existingCampaignIds].map(id => String(id || '').trim()).filter(Boolean));
+  const acctId = normalizeAdAccountId(account?.adAccountId || '');
+  if (!acctId) return [];
+
+  const { fbToken } = await getEffectiveSecrets(account);
+  if (!fbToken) return [];
+
+  const { items } = await fetchAllFbEdge(fbToken, `${acctId}/campaigns`, {
+    fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time',
+    limit: 200
+  }, {
+    maxPages: 20,
+    pageTimeoutMs: 20000,
+    requestOptions: { retries: 2, rateLimitRetries: 2 }
+  });
+
+  return items
+    .filter(campaign => {
+      const campaignId = String(campaign?.id || '').trim();
+      if (!campaignId || knownIds.has(campaignId)) return false;
+      return isCampaignServingStatus(campaign.effective_status || campaign.status);
+    })
+    .map(campaign => mapLiveCampaignToReportRow(campaign, account, includeAccountInfo));
+}
+
 async function fetchShopeeAccountData(account) {
   const today = todayStr();
   let campaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
@@ -3714,8 +3776,10 @@ app.post('/api/campaigns/:campaignId/toggle', async (req, res) => {
       if (!effectiveStatus) throw error;
     }
 
-    const shouldPause = isCampaignServingStatus(effectiveStatus);
-    const newStatus = shouldPause ? 'PAUSED' : 'ACTIVE';
+    const requestedTargetStatus = normalizeCampaignStatus(req.body.targetStatus);
+    const newStatus = requestedTargetStatus === 'PAUSED' || requestedTargetStatus === 'ACTIVE'
+      ? requestedTargetStatus
+      : (isCampaignServingStatus(effectiveStatus) ? 'PAUSED' : 'ACTIVE');
 
     await fbPost(fbToken, req.params.campaignId, { status: newStatus });
     const updateFilter = storedCampaign
@@ -4315,9 +4379,15 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
     const fDate = fromDate || date || todayStr();
     const tDate = toDate || date || fDate;
     const provider = String(req.query.provider || '').trim();
-    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}`);
+    const includeActiveNoSpend = req.query.includeActiveNoSpend === 'true' || req.query.includeActiveNoSpend === true;
+    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}:${includeActiveNoSpend ? 'with-active-zero' : 'default'}`);
     const cached = getReadCache(cacheKey);
     if (cached) return res.json(cached);
+
+    const ownedAccount = await Account.findOne(withUserFilter(req, { _id: req.params.id }))
+      .select('_id name adAccountId provider fbToken ownerUserId')
+      .lean();
+    if (!ownedAccount) return res.json([]);
 
     if (provider) {
       const account = await Account.findOne(withUserFilter(req, {
@@ -4330,8 +4400,6 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
       accountId: new mongoose.Types.ObjectId(req.params.id),
       date: { $gte: fDate, $lte: tDate }
     };
-    const ownedAccount = await Account.findOne(withUserFilter(req, { _id: req.params.id })).select('_id').lean();
-    if (!ownedAccount) return res.json([]);
 
     const campaigns = await Campaign.aggregate([
       { $match: match },
@@ -4345,6 +4413,7 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           status: { $last: '$status' },
           dailyBudget: { $last: '$dailyBudget' },
           lifetimeBudget: { $last: '$lifetimeBudget' },
+          budgetType: { $last: '$budgetType' },
           createdTime: { $last: '$createdTime' },
           spend: { $sum: '$spend' },
           messages: { $sum: '$messages' },
@@ -4363,6 +4432,7 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           status: 1,
           dailyBudget: 1,
           lifetimeBudget: 1,
+          budgetType: 1,
           createdTime: 1,
           spend: 1,
           messages: 1,
@@ -4374,8 +4444,24 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
       },
       { $sort: { spend: -1 } }
     ]);
-    console.log(`[campaigns:account] account=${req.params.id} ${fDate}..${tDate} rows=${campaigns.length} ${Date.now() - startedAt}ms`);
-    res.json(setReadCache(cacheKey, campaigns));
+    let result = campaigns;
+    if (includeActiveNoSpend && dateRangeIncludesToday(fDate, tDate)) {
+      try {
+        const extraCampaigns = await fetchActiveNoSpendCampaignRowsForAccount(
+          ownedAccount,
+          new Set(campaigns.map(campaign => campaign.campaignId)),
+          { includeAccountInfo: false }
+        );
+        if (extraCampaigns.length > 0) {
+          result = [...campaigns, ...extraCampaigns].sort((a, b) => Number(b.spend || 0) - Number(a.spend || 0));
+        }
+      } catch (error) {
+        console.warn(`[campaigns:account] active-zero merge failed for ${req.params.id}: ${error.message}`);
+      }
+    }
+
+    console.log(`[campaigns:account] account=${req.params.id} ${fDate}..${tDate} rows=${result.length} ${Date.now() - startedAt}ms`);
+    res.json(setReadCache(cacheKey, result));
   } catch (error) {
     console.error(`[campaigns:account] failed after ${Date.now() - startedAt}ms: ${error.message}`);
     res.status(500).json({ error: error.message });
@@ -4388,20 +4474,20 @@ app.get('/api/campaigns/today', async (req, res) => {
     const { provider, date, fromDate, toDate } = req.query;
     const fDate = fromDate || date || todayStr();
     const tDate = toDate || date || fDate;
-    const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}`);
+    const includeActiveNoSpend = req.query.includeActiveNoSpend === 'true' || req.query.includeActiveNoSpend === true;
+    const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeActiveNoSpend ? 'with-active-zero' : 'default'}`);
     const cached = getReadCache(cacheKey);
     if (cached) return res.json(cached);
+
+    const accountFilter = provider ? buildAccountProviderFilter(provider) : {};
+    const accounts = await Account.find(withUserFilter(req, accountFilter))
+      .select('_id name adAccountId provider fbToken ownerUserId')
+      .lean();
 
     let match = {
       date: { $gte: fDate, $lte: tDate }
     };
-    if (provider) {
-      const accountIds = (await Account.find(withUserFilter(req, buildAccountProviderFilter(provider))).select('_id')).map(a => a._id);
-      match.accountId = { $in: accountIds };
-    } else {
-      const accountIds = (await Account.find(getUserFilter(req)).select('_id')).map(a => a._id);
-      match.accountId = { $in: accountIds };
-    }
+    match.accountId = { $in: accounts.map(account => account._id) };
 
     // Nếu là khoảng ngày, ta group theo campaignId để cộng dồn spend/messages
     const campaigns = await Campaign.aggregate([
@@ -4416,6 +4502,7 @@ app.get('/api/campaigns/today', async (req, res) => {
           status: { $last: '$status' },
           dailyBudget: { $last: '$dailyBudget' },
           lifetimeBudget: { $last: '$lifetimeBudget' },
+          budgetType: { $last: '$budgetType' },
           createdTime: { $last: '$createdTime' },
           spend: { $sum: '$spend' },
           messages: { $sum: '$messages' },
@@ -4448,6 +4535,7 @@ app.get('/api/campaigns/today', async (req, res) => {
           status: 1,
           dailyBudget: 1,
           lifetimeBudget: 1,
+          budgetType: 1,
           createdTime: 1,
           spend: 1,
           messages: 1,
@@ -4460,8 +4548,36 @@ app.get('/api/campaigns/today', async (req, res) => {
       { $sort: { spend: -1 } }
     ]);
 
-    console.log(`[campaigns:today] provider=${provider || 'all'} ${fDate}..${tDate} rows=${campaigns.length} ${Date.now() - startedAt}ms`);
-    res.json(setReadCache(cacheKey, campaigns));
+    let result = campaigns;
+    if (includeActiveNoSpend && dateRangeIncludesToday(fDate, tDate) && accounts.length > 0) {
+      const existingCampaignIds = new Set(campaigns.map(campaign => campaign.campaignId));
+      const extraCampaigns = [];
+      const liveResults = await mapWithConcurrency(accounts, async (account) => {
+        try {
+          return await fetchActiveNoSpendCampaignRowsForAccount(account, existingCampaignIds, { includeAccountInfo: true });
+        } catch (error) {
+          console.warn(`[campaigns:today] active-zero merge failed for account ${account._id}: ${error.message}`);
+          return [];
+        }
+      }, 2);
+
+      for (const items of liveResults) {
+        if (!Array.isArray(items)) continue;
+        for (const campaign of items) {
+          const campaignId = String(campaign.campaignId || '').trim();
+          if (!campaignId || existingCampaignIds.has(campaignId)) continue;
+          existingCampaignIds.add(campaignId);
+          extraCampaigns.push(campaign);
+        }
+      }
+
+      if (extraCampaigns.length > 0) {
+        result = [...campaigns, ...extraCampaigns].sort((a, b) => Number(b.spend || 0) - Number(a.spend || 0));
+      }
+    }
+
+    console.log(`[campaigns:today] provider=${provider || 'all'} ${fDate}..${tDate} rows=${result.length} ${Date.now() - startedAt}ms`);
+    res.json(setReadCache(cacheKey, result));
   } catch (error) {
     console.error(`[campaigns:today] failed after ${Date.now() - startedAt}ms: ${error.message}`);
     res.status(500).json({ error: error.message });
@@ -5685,7 +5801,9 @@ async function ensureApplicationIndexes() {
     Order.createIndexes(),
     InventoryItem.createIndexes(),
     FacebookPost.createIndexes(),
-    Config.createIndexes()
+    Config.createIndexes(),
+    User.createIndexes(),
+    FacebookToken.createIndexes()
   ]);
   console.log('Application indexes ready');
 }

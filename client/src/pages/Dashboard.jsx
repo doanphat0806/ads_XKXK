@@ -43,6 +43,22 @@ const keepCurrentSortStatus = (campaign) => ({
   sortStatus: String(campaign.sortStatus || campaign.status || '').toUpperCase()
 });
 
+const ACTIVE_CAMPAIGN_STATUSES = new Set([
+  'ACTIVE',
+  'SCHEDULED',
+  'PENDING_REVIEW',
+  'PENDING_BILLING_INFO',
+  'CAMPAIGN_PAUSED'
+]);
+
+function normalizeStatus(status) {
+  return String(status || '').toUpperCase().trim();
+}
+
+function isCampaignActiveStatus(status) {
+  return ACTIVE_CAMPAIGN_STATUSES.has(normalizeStatus(status));
+}
+
 const DASHBOARD_CAMPAIGNS_PER_PAGE = 500;
 const DASHBOARD_INITIAL_RENDER_ROWS = 300;
 const DASHBOARD_RENDER_BATCH_ROWS = 300;
@@ -275,21 +291,26 @@ export default function Dashboard() {
     const accountId = campaign.accountId?._id || campaign.accountId;
     if (!campaign.campaignId || !accountId || togglingCampaignIdsRef.current.has(campaign.campaignId)) return;
 
-    const previousStatus = String(campaign.status || '').toUpperCase();
-    const nextStatus = previousStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+    const previousStatus = normalizeStatus(campaign.status);
+    const nextStatus = isCampaignActiveStatus(previousStatus) ? 'PAUSED' : 'ACTIVE';
     setTogglingCampaignIds(ids => new Set(ids).add(campaign.campaignId));
     setLocalCampaigns(items => items.map(item => (
       item.campaignId === campaign.campaignId ? { ...item, status: nextStatus } : item
     )));
 
     try {
-      const result = await api('POST', `/campaigns/${campaign.campaignId}/toggle`, { accountId, currentStatus: previousStatus, date: reportFromDate });
+      const result = await api('POST', `/campaigns/${campaign.campaignId}/toggle`, {
+        accountId,
+        currentStatus: previousStatus,
+        targetStatus: nextStatus,
+        date: reportFromDate
+      });
       if (result?.newStatus && result.newStatus !== nextStatus) {
         setLocalCampaigns(items => items.map(item => (
           item.campaignId === campaign.campaignId ? { ...item, status: result.newStatus } : item
         )));
       }
-      toast.success(previousStatus === 'ACTIVE' ? 'Da tat camp' : 'Da bat camp');
+      toast.success(isCampaignActiveStatus(previousStatus) ? 'Da tat camp' : 'Da bat camp');
       scheduleToggleReload();
     } catch (error) {
       setLocalCampaigns(items => items.map(item => (
@@ -481,8 +502,8 @@ export default function Dashboard() {
 
     return [...campaignsWithDuplicates].sort((a, b) => {
       const dir = sortDir === 'asc' ? 1 : -1;
-      const statusA = String(a.sortStatus || a.status || '').toUpperCase() === 'ACTIVE' ? 1 : 0;
-      const statusB = String(b.sortStatus || b.status || '').toUpperCase() === 'ACTIVE' ? 1 : 0;
+      const statusA = isCampaignActiveStatus(a.sortStatus || a.status) ? 1 : 0;
+      const statusB = isCampaignActiveStatus(b.sortStatus || b.status) ? 1 : 0;
       if (statusA !== statusB) return statusB - statusA;
       if (sortField === 'duplicateCount') return dir * ((a.sameDayDuplicateCount || 1) - (b.sameDayDuplicateCount || 1));
       if (sortField === 'orderCount') return dir * ((a.orderCount || 0) - (b.orderCount || 0));
@@ -520,7 +541,7 @@ export default function Dashboard() {
     const groups = processedCampaigns.reduce((items, campaign) => {
       const key = normalizeCampaignDuplicateKey(campaign);
       if (!key || (campaign.sameDayDuplicateCount || 0) <= 1) return items;
-      if (String(campaign.status || '').toUpperCase() !== 'ACTIVE') return items;
+      if (!isCampaignActiveStatus(campaign.status)) return items;
       if (!items[key]) items[key] = [];
       items[key].push(campaign);
       return items;
@@ -565,6 +586,7 @@ export default function Dashboard() {
         await api('POST', `/campaigns/${campaign.campaignId}/toggle`, {
           accountId,
           currentStatus: 'ACTIVE',
+          targetStatus: 'PAUSED',
           date: reportFromDate
         });
       } catch {
@@ -768,7 +790,7 @@ export default function Dashboard() {
               <tbody>
                 {visibleCampaigns.map((campaign) => {
                   const campaignId = campaign.campaignId || '';
-                  const isActive = String(campaign.status || '').toUpperCase() === 'ACTIVE';
+                  const isActive = isCampaignActiveStatus(campaign.status);
                   const isToggling = togglingCampaignIds.has(campaignId);
                   const isEditingCampaign = editingCampaignId === campaignId;
                   const isEditingBudget = editingBudgetId === campaignId;

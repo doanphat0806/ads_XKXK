@@ -54,7 +54,8 @@ export default function Campaigns() {
       const params = new URLSearchParams({ 
         fromDate: filterFromDate, 
         toDate: filterToDate, 
-        provider 
+        provider,
+        includeActiveNoSpend: 'true'
       });
       const url = filterAcc
         ? `/accounts/${filterAcc}/campaigns?${params.toString()}`
@@ -116,6 +117,7 @@ export default function Campaigns() {
       const result = await api('POST', `/campaigns/${campaignId}/toggle`, {
         accountId,
         currentStatus,
+        targetStatus: nextStatus,
         fromDate: filterFromDate,
         toDate: filterToDate
       });
