@@ -550,6 +550,9 @@ export default function Dashboard() {
     return Object.values(groups).flatMap(group => {
       if (group.length <= 1) return [];
       const sorted = [...group].sort((a, b) => {
+        const spendDiff = Number(b.spend || 0) - Number(a.spend || 0);
+        if (spendDiff !== 0) return spendDiff;
+
         const aTime = new Date(a.createdTime || a.created_time || 0).getTime() || 0;
         const bTime = new Date(b.createdTime || b.created_time || 0).getTime() || 0;
         return aTime - bTime;
