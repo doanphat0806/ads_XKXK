@@ -3,7 +3,8 @@ import { toast } from 'react-toastify';
 import { api, apiUrl, dateTimeString, formatNumber, getAuthToken } from '../lib/api';
 
 const RECENT_POSTS_LIMIT = 12;
-const VIDEO_FILE_MAX_BYTES = 100 * 1024 * 1024;
+const VIDEO_FILE_MAX_MB = 200;
+const VIDEO_FILE_MAX_BYTES = VIDEO_FILE_MAX_MB * 1024 * 1024;
 const IMAGE_FILE_MAX_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_FILES = 10;
 const BATCH_PUBLISH_DELAY_MS = 1200;
@@ -32,6 +33,19 @@ function buildPublishMessage(caption, link) {
   if (cleanLink && cleanCaption) return `Mua ngay : ${cleanLink} 👉 ${cleanCaption}`;
   if (cleanLink) return `Mua ngay : ${cleanLink}`;
   return cleanCaption;
+}
+
+function isHtmlResponse(text) {
+  return /<\s*(html|head|body|title|center|h1)\b/i.test(String(text || ''));
+}
+
+function getUploadErrorMessage(status, text) {
+  if (status === 413) return `File video vuot gioi han ${VIDEO_FILE_MAX_MB}MB hoac gioi han proxy/server`;
+  if (status === 502 || status === 503 || status === 504) {
+    return 'May chu xu ly upload qua lau hoac tam thoi khong phan hoi';
+  }
+  if (isHtmlResponse(text)) return `May chu tra ve loi HTML khi upload (HTTP ${status})`;
+  return text || `Upload file that bai (HTTP ${status})`;
 }
 
 function parseBatchRows(value) {
@@ -177,9 +191,16 @@ export default function CreaterPage() {
         signal: controller.signal
       });
       const text = await response.text();
-      const data = text ? JSON.parse(text) : {};
+      let data = {};
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { error: getUploadErrorMessage(response.status, text) };
+        }
+      }
       if (!response.ok) {
-        const error = new Error(data?.error || 'Upload file that bai');
+        const error = new Error(data?.error || getUploadErrorMessage(response.status, text));
         error.status = response.status;
         throw error;
       }
@@ -220,7 +241,7 @@ export default function CreaterPage() {
       return;
     }
     if (mediaSummary.videoFiles.some(file => file.size > VIDEO_FILE_MAX_BYTES)) {
-      toast.error('File video vuot gioi han 100MB');
+      toast.error(`File video vuot gioi han ${VIDEO_FILE_MAX_MB}MB`);
       return;
     }
     if (mediaSummary.imageFiles.some(file => file.size > IMAGE_FILE_MAX_BYTES)) {
@@ -294,7 +315,7 @@ export default function CreaterPage() {
       return;
     }
     if (sortedBatchVideoFiles.some(file => file.size > VIDEO_FILE_MAX_BYTES)) {
-      toast.error('Co video vuot gioi han 100MB');
+      toast.error(`Co video vuot gioi han ${VIDEO_FILE_MAX_MB}MB`);
       return;
     }
     if (batchPairCount === 0) {

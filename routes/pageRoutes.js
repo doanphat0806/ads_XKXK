@@ -19,7 +19,8 @@ function registerPageRoutes(app, deps) {
   } = deps;
 
 const POST_CACHE_TTL_MS = 5 * 60 * 1000;
-const PAGE_VIDEO_MAX_BYTES = 100 * 1024 * 1024;
+const PAGE_VIDEO_MAX_MB = 200;
+const PAGE_VIDEO_MAX_BYTES = PAGE_VIDEO_MAX_MB * 1024 * 1024;
 const PAGE_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const PAGE_MAX_IMAGE_FILES = 10;
 const POST_CALL_TO_ACTION_TYPES = new Set(['MESSAGE_PAGE']);
@@ -589,7 +590,7 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
     if (isMultipart) {
       const contentLength = Number(req.headers['content-length'] || 0);
       if (contentLength > PAGE_VIDEO_MAX_BYTES + (2 * 1024 * 1024)) {
-        return res.status(413).json({ error: 'File video vuot gioi han 100MB' });
+        return res.status(413).json({ error: `File video vuot gioi han ${PAGE_VIDEO_MAX_MB}MB` });
       }
 
       const request = new Request(`http://localhost${req.originalUrl || req.url}`, {
@@ -608,7 +609,7 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
         if (fileType.startsWith('video/')) {
           if (videoFile) return res.status(400).json({ error: 'Chi ho tro 1 video moi lan dang' });
           if (Number(mediaFile.size || 0) > PAGE_VIDEO_MAX_BYTES) {
-            return res.status(413).json({ error: 'File video vuot gioi han 100MB' });
+            return res.status(413).json({ error: `File video vuot gioi han ${PAGE_VIDEO_MAX_MB}MB` });
           }
           videoFile = mediaFile;
           continue;
@@ -625,7 +626,7 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
         const incomingVideo = formData.get('video');
         if (incomingVideo && typeof incomingVideo.arrayBuffer === 'function' && Number(incomingVideo.size || 0) > 0) {
           if (Number(incomingVideo.size || 0) > PAGE_VIDEO_MAX_BYTES) {
-            return res.status(413).json({ error: 'File video vuot gioi han 100MB' });
+            return res.status(413).json({ error: `File video vuot gioi han ${PAGE_VIDEO_MAX_MB}MB` });
           }
           videoFile = incomingVideo;
         }
