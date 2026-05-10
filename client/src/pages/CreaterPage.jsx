@@ -5,6 +5,7 @@ import { api, apiUrl, dateTimeString, formatNumber, getAuthToken } from '../lib/
 const RECENT_POSTS_LIMIT = 12;
 const VIDEO_FILE_MAX_MB = 200;
 const VIDEO_FILE_MAX_BYTES = VIDEO_FILE_MAX_MB * 1024 * 1024;
+const VIDEO_CHUNK_SIZE = 768 * 1024;
 const IMAGE_FILE_MAX_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_FILES = 10;
 const BATCH_PUBLISH_DELAY_MS = 1200;
@@ -215,6 +216,54 @@ export default function CreaterPage() {
     }
   }, []);
 
+  const publishReelFile = useCallback(async (pageId, videoFile, publishMessage = '') => {
+    const session = await api('POST', `/pages/${pageId}/reels/upload-session`, {
+      fileName: videoFile.name || 'video.mp4',
+      fileSize: videoFile.size,
+      mimeType: videoFile.type || 'video/mp4'
+    }, {
+      timeoutMs: 2 * 60 * 1000
+    });
+    const sessionId = session.sessionId;
+    if (!sessionId) throw new Error('Khong tao duoc phien upload video');
+
+    const chunkSize = Math.min(Number(session.chunkSize || VIDEO_CHUNK_SIZE), VIDEO_CHUNK_SIZE);
+    let offset = 0;
+    while (offset < videoFile.size) {
+      const chunk = videoFile.slice(offset, offset + chunkSize);
+      const response = await fetch(apiUrl(`/pages/${pageId}/reels/upload-session/${sessionId}/chunk`), {
+        method: 'POST',
+        headers: {
+          ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
+          'Content-Type': 'application/octet-stream',
+          'X-Upload-Offset': String(offset)
+        },
+        body: chunk
+      });
+      const text = await response.text();
+      let data = {};
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { error: getUploadErrorMessage(response.status, text) };
+        }
+      }
+      if (!response.ok) {
+        const error = new Error(data?.error || getUploadErrorMessage(response.status, text));
+        error.status = response.status;
+        throw error;
+      }
+      offset = Number(data.receivedBytes || offset + chunk.size);
+    }
+
+    return api('POST', `/pages/${pageId}/reels/upload-session/${sessionId}/publish`, {
+      message: publishMessage
+    }, {
+      timeoutMs: 20 * 60 * 1000
+    });
+  }, []);
+
   const handlePublishPost = async () => {
     const nextMessage = message.trim();
     const nextLink = link.trim();
@@ -253,7 +302,9 @@ export default function CreaterPage() {
     setPublishResult(null);
     try {
       let result;
-      if (mediaSummary.total > 0) {
+      if (mediaSummary.videoFiles.length === 1) {
+        result = await publishReelFile(selectedPageId, mediaSummary.videoFiles[0], publishMessage);
+      } else if (mediaSummary.total > 0) {
         const formData = new FormData();
         if (publishMessage) formData.append('message', publishMessage);
         if (callToActionType) formData.append('callToActionType', callToActionType);
@@ -340,7 +391,7 @@ export default function CreaterPage() {
         if (row.message) formData.append('message', row.message);
         formData.append('media', videoFile);
 
-        const result = await publishFormData(selectedPageId, formData);
+        const result = await publishReelFile(selectedPageId, videoFile, row.message);
         success += 1;
         results.push({
           index: index + 1,

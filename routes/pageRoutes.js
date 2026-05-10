@@ -1,5 +1,10 @@
 const { mapInBatches } = require('../utils/async');
 const { parseBoundedInt } = require('../utils/number');
+const crypto = require('crypto');
+const express = require('express');
+const fs = require('fs/promises');
+const os = require('os');
+const path = require('path');
 
 function registerPageRoutes(app, deps) {
   const {
@@ -21,11 +26,14 @@ function registerPageRoutes(app, deps) {
 const POST_CACHE_TTL_MS = 5 * 60 * 1000;
 const PAGE_VIDEO_MAX_MB = 200;
 const PAGE_VIDEO_MAX_BYTES = PAGE_VIDEO_MAX_MB * 1024 * 1024;
+const PAGE_VIDEO_CHUNK_MAX_BYTES = 768 * 1024;
 const PAGE_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const PAGE_MAX_IMAGE_FILES = 10;
 const POST_CALL_TO_ACTION_TYPES = new Set(['MESSAGE_PAGE']);
 const REEL_STATUS_POLL_ATTEMPTS = 12;
 const REEL_STATUS_POLL_DELAY_MS = 5000;
+const REEL_UPLOAD_SESSION_TTL_MS = 60 * 60 * 1000;
+const reelUploadSessions = new Map();
 const postCache = new Map();
 
 function getPostsPerPageLimit(provider) {
@@ -235,6 +243,100 @@ function buildReelTitle(message = '', fileName = '') {
   return (firstLine || String(fileName || '').trim() || 'Reel').slice(0, 255);
 }
 
+async function removeReelUploadSession(sessionId) {
+  const session = reelUploadSessions.get(sessionId);
+  if (!session) return;
+  reelUploadSessions.delete(sessionId);
+  try {
+    await fs.rm(session.dir, { recursive: true, force: true });
+  } catch {
+    // Temp cleanup should never block request handling.
+  }
+}
+
+function cleanupExpiredReelUploadSessions() {
+  const now = Date.now();
+  for (const [sessionId, session] of reelUploadSessions.entries()) {
+    if (now - Number(session.createdAt || 0) > REEL_UPLOAD_SESSION_TTL_MS) {
+      removeReelUploadSession(sessionId);
+    }
+  }
+}
+
+async function createReelUploadSession({ fileName, fileSize, mimeType }) {
+  cleanupExpiredReelUploadSessions();
+  const size = Number(fileSize || 0);
+  if (!size || size > PAGE_VIDEO_MAX_BYTES) {
+    throw new Error(`File video vuot gioi han ${PAGE_VIDEO_MAX_MB}MB`);
+  }
+
+  const sessionId = crypto.randomUUID();
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'adsctrl-reel-'));
+  const filePath = path.join(dir, 'video.bin');
+  await fs.writeFile(filePath, Buffer.alloc(0));
+
+  const session = {
+    id: sessionId,
+    dir,
+    filePath,
+    fileName: String(fileName || 'video.mp4').slice(0, 255),
+    fileSize: size,
+    mimeType: String(mimeType || 'video/mp4').slice(0, 100),
+    receivedBytes: 0,
+    createdAt: Date.now()
+  };
+  reelUploadSessions.set(sessionId, session);
+  return session;
+}
+
+async function appendReelUploadChunk({ sessionId, offset, chunk }) {
+  cleanupExpiredReelUploadSessions();
+  const session = reelUploadSessions.get(String(sessionId || ''));
+  if (!session) {
+    const error = new Error('Phien upload video da het han hoac khong ton tai');
+    error.status = 404;
+    throw error;
+  }
+
+  const expectedOffset = Number(session.receivedBytes || 0);
+  const nextOffset = Number(offset || 0);
+  if (nextOffset !== expectedOffset) {
+    const error = new Error(`Sai offset upload video. Server dang doi ${expectedOffset}, nhan ${nextOffset}`);
+    error.status = 409;
+    throw error;
+  }
+
+  if (!Buffer.isBuffer(chunk) || chunk.length <= 0) {
+    throw new Error('Chunk video rong');
+  }
+  if (chunk.length > PAGE_VIDEO_CHUNK_MAX_BYTES) {
+    const error = new Error('Moi chunk video toi da 768KB');
+    error.status = 413;
+    throw error;
+  }
+  if (expectedOffset + chunk.length > session.fileSize) {
+    throw new Error('Chunk video vuot qua kich thuoc file khai bao');
+  }
+
+  await fs.appendFile(session.filePath, chunk);
+  session.receivedBytes += chunk.length;
+  session.updatedAt = Date.now();
+  return session;
+}
+
+function getCompletedReelUploadSession(sessionId) {
+  const session = reelUploadSessions.get(String(sessionId || ''));
+  if (!session) {
+    const error = new Error('Phien upload video da het han hoac khong ton tai');
+    error.status = 404;
+    throw error;
+  }
+  if (session.receivedBytes !== session.fileSize) {
+    throw new Error(`Video upload chua du: ${session.receivedBytes}/${session.fileSize} bytes`);
+  }
+  return session;
+}
+
 function isVideoStatusReady(status = {}) {
   const state = String(status.video_status || status.status || '').toLowerCase();
   const processing = String(status.processing_phase?.status || '').toLowerCase();
@@ -309,6 +411,55 @@ async function uploadLocalReel({ pageToken, pageId, videoFile, message }) {
     video_id: videoId,
     video_state: 'PUBLISHED',
     title: buildReelTitle(message, videoFile.name)
+  };
+  if (message) finishPayload.description = message;
+
+  const finishResult = await fbPost(pageToken, `${pageId}/video_reels`, finishPayload);
+  if (finishResult?.success === false) {
+    throw new Error(`Publish Reel that bai: ${JSON.stringify(finishResult)}`);
+  }
+
+  const publishedInfo = await waitForReelPublished(pageToken, videoId);
+  return {
+    ...finishResult,
+    ...publishedInfo,
+    id: publishedInfo?.id || videoId,
+    video_id: videoId
+  };
+}
+
+async function uploadStoredReel({ pageToken, pageId, session, message }) {
+  const startResult = await fbPost(pageToken, `${pageId}/video_reels`, {
+    upload_phase: 'start'
+  });
+  const videoId = String(startResult?.video_id || '').trim();
+  const uploadUrl = String(startResult?.upload_url || '').trim();
+  if (!videoId || !uploadUrl) {
+    throw new Error('Facebook khong tra ve upload session cho Reel');
+  }
+
+  const buffer = await fs.readFile(session.filePath);
+  const uploadResponse = await axios.post(uploadUrl, buffer, {
+    headers: {
+      Authorization: `OAuth ${pageToken}`,
+      offset: '0',
+      file_size: String(buffer.length),
+      'Content-Type': 'application/octet-stream'
+    },
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    timeout: 15 * 60 * 1000
+  });
+
+  if (uploadResponse.data?.success === false) {
+    throw new Error(`Upload Reel that bai: ${JSON.stringify(uploadResponse.data)}`);
+  }
+
+  const finishPayload = {
+    upload_phase: 'finish',
+    video_id: videoId,
+    video_state: 'PUBLISHED',
+    title: buildReelTitle(message, session.fileName)
   };
   if (message) finishPayload.description = message;
 
@@ -767,6 +918,125 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
     }
 
     res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/pages/:pageId/reels/upload-session', async (req, res) => {
+  try {
+    const fileName = String(req.body?.fileName || 'video.mp4').trim();
+    const fileSize = Number(req.body?.fileSize || 0);
+    const mimeType = String(req.body?.mimeType || 'video/mp4').trim();
+    const session = await createReelUploadSession({ fileName, fileSize, mimeType });
+    res.json({
+      ok: true,
+      sessionId: session.id,
+      chunkSize: PAGE_VIDEO_CHUNK_MAX_BYTES,
+      receivedBytes: session.receivedBytes,
+      fileSize: session.fileSize
+    });
+  } catch (error) {
+    res.status(error.status || 400).json({ error: error.message });
+  }
+});
+
+app.post('/api/pages/:pageId/reels/upload-session/:sessionId/chunk', express.raw({
+  type: '*/*',
+  limit: '1mb'
+}), async (req, res) => {
+  try {
+    const session = await appendReelUploadChunk({
+      sessionId: req.params.sessionId,
+      offset: req.headers['x-upload-offset'],
+      chunk: req.body
+    });
+    res.json({
+      ok: true,
+      receivedBytes: session.receivedBytes,
+      fileSize: session.fileSize,
+      done: session.receivedBytes === session.fileSize
+    });
+  } catch (error) {
+    res.status(error.status || 400).json({ error: error.message });
+  }
+});
+
+app.post('/api/pages/:pageId/reels/upload-session/:sessionId/publish', async (req, res) => {
+  let session = null;
+  try {
+    const fbToken = await resolvePagesToken(req, getAppConfig);
+    if (!fbToken) return res.status(400).json({ error: 'Chua cau hinh Facebook Token dung chung' });
+
+    const { pageId, sessionId } = req.params;
+    const message = String(req.body?.message || '').trim();
+    if (!pageId) return res.status(400).json({ error: 'Thieu Page ID' });
+
+    session = getCompletedReelUploadSession(sessionId);
+
+    const pagesResp = await fbGet(fbToken, 'me/accounts', {
+      fields: 'name,id,access_token,picture{url}',
+      limit: 100
+    });
+    const managedPages = Array.isArray(pagesResp?.data) ? pagesResp.data : [];
+    const page = managedPages.find(item => String(item.id) === String(pageId));
+    if (!page) {
+      return res.status(404).json({ error: 'Khong tim thay fanpage trong danh sach co quyen quan ly' });
+    }
+
+    const pageToken = String(page.access_token || '').trim() || fbToken;
+    const result = await uploadStoredReel({ pageToken, pageId, session, message });
+    const uploadedObjectId = String(result?.video_id || result?.id || '').trim();
+
+    postCache.clear();
+    const post = await resolvePublishedPostForSave({
+      pageToken,
+      page,
+      result,
+      fallbackObjectId: uploadedObjectId,
+      message
+    });
+    if (post) {
+      await assertPostIsPublished(pageToken, post.id);
+      await saveFacebookPosts([post], [result || {}]);
+    }
+
+    await removeReelUploadSession(sessionId);
+
+    res.json({
+      ok: true,
+      mode: 'video',
+      postId: post?.id || result?.id || '',
+      link: '',
+      fileName: session.fileName || '',
+      fileNames: [],
+      callToActionType: '',
+      page: {
+        id: page.id,
+        name: page.name || '',
+        picture: page.picture?.data?.url || ''
+      },
+      post
+    });
+  } catch (error) {
+    const apiError = error?.fbData?.error || error?.response?.data?.error || {};
+    const rawMessage = String(apiError.message || error?.message || '');
+    const needsPublishPermission = Number(apiError.code) === 10 ||
+      rawMessage.includes('pages_manage_posts') ||
+      rawMessage.includes('No permission to operate on the page') ||
+      rawMessage.includes('does not have permission');
+
+    if (needsPublishPermission) {
+      return res.status(400).json({
+        error: 'Token/App chua co quyen dang bai len Page. Can pages_manage_posts va quyen thao tac tren fanpage.',
+        code: 'PAGE_PUBLISH_PERMISSION',
+        permission: 'pages_manage_posts'
+      });
+    }
+
+    res.status(error.status || 400).json({ error: error.message });
+  } finally {
+    if (session) {
+      await removeReelUploadSession(req.params.sessionId);
+    }
   }
 });
 }
