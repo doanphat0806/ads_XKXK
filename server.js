@@ -220,6 +220,8 @@ const {
 const SHOPEE_DEFAULT_CALL_TO_ACTION_TYPE = 'NO_BUTTON';
 const SHOPEE_CALL_TO_ACTION_TYPES = new Set(['SHOP_NOW', 'NO_BUTTON']);
 const AUTO_PAUSE_CPO_LIMIT = 100000;
+const AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT = 60000;
+const SCHEDULED_DUPLICATE_SCOPE_COOLDOWN_MS = 2 * 60 * 1000;
 
 function normalizeProvider(value) {
   return String(value || 'facebook').trim().toLowerCase() === 'shopee' ? 'shopee' : 'facebook';
@@ -593,7 +595,8 @@ function mergeAutoConfig(globalConfig = {}, userConfig = {}) {
     lifetimeHighCostSpendLimit: pickDefinedValue(userConfig.lifetimeHighCostSpendLimit, globalConfig.lifetimeHighCostSpendLimit, 50000),
     lifetimeClickLimit: pickDefinedValue(userConfig.lifetimeClickLimit, globalConfig.lifetimeClickLimit, 0),
     lifetimeCpcLimit: pickDefinedValue(userConfig.lifetimeCpcLimit, globalConfig.lifetimeCpcLimit, 600),
-    autoPauseCpoLimit: pickDefinedValue(userConfig.autoPauseCpoLimit, globalConfig.autoPauseCpoLimit, AUTO_PAUSE_CPO_LIMIT)
+    autoPauseCpoLimit: pickDefinedValue(userConfig.autoPauseCpoLimit, globalConfig.autoPauseCpoLimit, AUTO_PAUSE_CPO_LIMIT),
+    autoPauseZeroOrderSpendLimit: pickDefinedValue(userConfig.autoPauseZeroOrderSpendLimit, globalConfig.autoPauseZeroOrderSpendLimit, AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT)
   };
 }
 
@@ -604,7 +607,7 @@ async function getUserAutoConfig(userId) {
       'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
       'dailyZeroMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
       'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
-      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit'
+      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseZeroOrderSpendLimit'
     ).lean() : null
   ]);
   return mergeAutoConfig(globalConfig || {}, userConfig || {});
@@ -1642,7 +1645,6 @@ function getPauseReason(provider, spend, messages, costPerMessage, clicks, costP
   const limitZero = isDaily ? limits.dailyZeroMessageSpendLimit : limits.lifetimeZeroMessageSpendLimit;
   const limitHighCostPerMsg = isDaily ? limits.dailyHighCostPerMessageLimit : limits.lifetimeHighCostPerMessageLimit;
   const limitHighCostSpend = isDaily ? limits.dailyHighCostSpendLimit : limits.lifetimeHighCostSpendLimit;
-  const limitClicks = isDaily ? limits.dailyClickLimit : limits.lifetimeClickLimit;
   const configuredLimitCpc = isDaily ? limits.dailyCpcLimit : limits.lifetimeCpcLimit;
   const limitCpc = normalizedProvider === 'shopee'
     ? Number(configuredLimitCpc || 600)
@@ -1657,10 +1659,6 @@ function getPauseReason(provider, spend, messages, costPerMessage, clicks, costP
 
   if (normalizedProvider !== 'facebook') {
     return null;
-  }
-
-  if (limitClicks > 0 && clicks >= limitClicks) {
-    return `Clicks tren lien ket >= ${limitClicks.toLocaleString()}`;
   }
 
   if (messages <= 1 && spend >= limitZero) {
@@ -1711,7 +1709,7 @@ async function getTodayOrderSkuCountsForAuto(account) {
       'warn',
       `Khong lay duoc don hang de tinh CPO auto: ${error.message}`
     );
-    return {};
+    return null;
   }
 }
 
@@ -1722,9 +1720,22 @@ function getAutoPauseDecision({ provider, campaignName, spend, messages, costPer
     return { pauseReason: basePauseReason, orderCount: 0, costPerOrder: 0 };
   }
 
-  const cpoLimit = Number(limits?.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT);
+  if (!skuCounts || typeof skuCounts !== 'object') {
+    return { pauseReason: basePauseReason, orderCount: 0, costPerOrder: 0 };
+  }
+
   const orderCount = getOrderCountForCampaignName(campaignName, skuCounts);
   const costPerOrder = orderCount > 0 ? spend / orderCount : 0;
+  const zeroOrderSpendLimit = Number(limits?.autoPauseZeroOrderSpendLimit ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT);
+  if (zeroOrderSpendLimit > 0 && orderCount <= 0 && spend >= zeroOrderSpendLimit) {
+    return {
+      pauseReason: `Campaign khong co don va da tieu tu ${zeroOrderSpendLimit.toLocaleString()}d`,
+      orderCount,
+      costPerOrder
+    };
+  }
+
+  const cpoLimit = Number(limits?.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT);
   if (cpoLimit > 0 && orderCount > 0 && costPerOrder > cpoLimit) {
     return {
       pauseReason: `CPO ${Math.round(costPerOrder).toLocaleString()}d > ${cpoLimit.toLocaleString()}d (${orderCount} don)`,
@@ -1872,11 +1883,9 @@ function buildScheduledPauseTargets(campaigns = [], options = {}) {
     if (relevantCampaigns.length <= 1) continue;
 
     const keeper = [...relevantCampaigns].sort(compareCampaignPriority)[0];
-    const keeperId = getCampaignStableId(keeper);
     const todayCreatedCampaigns = relevantCampaigns
       .filter(campaign => !campaign?.isScheduled && isTodayCreatedDuplicateCandidate(campaign, dailyDate));
     const todayCreatedKeeper = [...todayCreatedCampaigns].sort(compareCampaignPriority)[0];
-    const todayCreatedKeeperId = getCampaignStableId(todayCreatedKeeper);
     const hasMultipleTodayCreatedCampaigns = todayCreatedCampaigns.length > 1;
     const activeSpendBaseCampaign = [...relevantCampaigns]
       .filter(campaign =>
@@ -1885,41 +1894,33 @@ function buildScheduledPauseTargets(campaigns = [], options = {}) {
         && getCampaignSpendValue(campaign) > 0
       )
       .sort(compareCampaignPriority)[0];
-    const activeSpendBaseCampaignId = getCampaignStableId(activeSpendBaseCampaign);
+    const groupKeeper = activeSpendBaseCampaign || todayCreatedKeeper || keeper;
+    const groupKeeperId = getCampaignStableId(groupKeeper);
     const duplicatePauseCandidates = relevantCampaigns.filter(campaign => {
-      if (Boolean(campaign?.isScheduled)) return true;
       const campaignId = getCampaignStableId(campaign);
-      if (!isTodayCreatedDuplicateCandidate(campaign, dailyDate)) return false;
-
-      if (activeSpendBaseCampaignId) return campaignId !== activeSpendBaseCampaignId;
-
-      if (hasMultipleTodayCreatedCampaigns) return campaignId !== todayCreatedKeeperId;
-      return false;
+      return campaignId && campaignId !== groupKeeperId;
     });
     if (!duplicatePauseCandidates.length) continue;
 
     for (const campaign of duplicatePauseCandidates) {
       const campaignId = getCampaignStableId(campaign);
       const isTodayCreated = isCampaignCreatedOnDate(campaign, dailyDate);
-      if (campaign?.isScheduled && campaignId === keeperId) continue;
-      if (!campaign?.isScheduled && isTodayCreated && !activeSpendBaseCampaignId && campaignId === todayCreatedKeeperId) continue;
-      if (!campaign?.isScheduled && !isTodayCreated && campaignId === keeperId) continue;
       const isSameDayCloneDuplicate = isTodayCreated
         && !campaign?.isScheduled
-        && !activeSpendBaseCampaignId
+        && !activeSpendBaseCampaign
         && hasMultipleTodayCreatedCampaigns
-        && campaignId !== todayCreatedKeeperId;
+        && campaignId !== groupKeeperId;
       items.push({
         campaign,
-        keeper: activeSpendBaseCampaign || todayCreatedKeeper || keeper,
+        keeper: groupKeeper,
         pauseLabel: isTodayCreated && !campaign?.isScheduled ? 'camp nhan hom nay' : 'camp len lich',
         pauseReason: isSameDayCloneDuplicate
-          ? `Camp nhan hom nay trung voi camp nhan hom nay ${todayCreatedKeeper?.name || todayCreatedKeeper?.campaignId}`
+          ? `Camp nhan hom nay trung voi camp nhan hom nay ${groupKeeper?.name || groupKeeper?.campaignId}`
           : (isTodayCreated && !campaign?.isScheduled
-          ? `Camp nhan hom nay trung voi camp da tieu tien ${(activeSpendBaseCampaign || keeper).name || (activeSpendBaseCampaign || keeper).campaignId}`
-          : (isLifetimeCampaign(keeper)
-            ? `Camp len lich trung, uu tien giu camp tron doi ${keeper.name || keeper.campaignId}`
-            : `Camp len lich trung voi camp dang chay ${keeper.name || keeper.campaignId}`))
+          ? `Camp nhan hom nay trung voi camp da tieu tien ${groupKeeper.name || groupKeeper.campaignId}`
+          : (isLifetimeCampaign(groupKeeper)
+            ? `Camp trung, uu tien giu camp tron doi ${groupKeeper.name || groupKeeper.campaignId}`
+            : `Camp trung voi camp dang chay ${groupKeeper.name || groupKeeper.campaignId}`))
       });
     }
   }
@@ -2436,6 +2437,121 @@ async function getScheduledDuplicateCandidatesForAccount(account, dailyDate = to
   }
 }
 
+function getScheduledDuplicateScopeKey(account) {
+  const ownerKey = account?.ownerUserId ? String(account.ownerUserId) : 'legacy';
+  return `${normalizeProvider(account?.provider)}:${ownerKey}`;
+}
+
+function getCampaignAccountIdValue(campaign) {
+  const accountId = campaign?.accountId;
+  if (!accountId) return '';
+  if (accountId._id) return String(accountId._id);
+  return String(accountId);
+}
+
+async function getScheduledDuplicateScopeAccounts(account) {
+  if (normalizeProvider(account?.provider) !== 'facebook') return [];
+
+  const ownerFilter = account?.ownerUserId
+    ? { ownerUserId: account.ownerUserId }
+    : { $or: [{ ownerUserId: { $exists: false } }, { ownerUserId: null }] };
+  const filter = {
+    autoEnabled: true,
+    $and: [
+      buildAccountProviderFilter('facebook'),
+      ownerFilter
+    ]
+  };
+
+  const accounts = await Account.find(filter);
+  return accounts.length ? accounts : [account];
+}
+
+async function getScheduledDuplicateCandidatesForScope(accounts = [], dailyDate = todayStr()) {
+  const candidates = [];
+  for (const account of accounts) {
+    const accountCandidates = await getScheduledDuplicateCandidatesForAccount(account, dailyDate);
+    candidates.push(...accountCandidates);
+  }
+  return candidates;
+}
+
+async function pauseScheduledDuplicateTarget(item, accountsById, fallbackAccount, dailyDate) {
+  const campaignGraphId = item.campaign.id || item.campaign.campaignId;
+  if (!campaignGraphId) return false;
+
+  const targetAccountId = getCampaignAccountIdValue(item.campaign) || String(fallbackAccount._id);
+  const targetAccount = accountsById.get(targetAccountId) || fallbackAccount;
+  const { fbToken } = await getEffectiveSecrets(targetAccount);
+
+  await fbPost(fbToken, campaignGraphId, { status: 'PAUSED' });
+  await Campaign.findOneAndUpdate(
+    { accountId: targetAccount._id, campaignId: campaignGraphId, date: dailyDate },
+    { $set: { status: 'PAUSED', updatedAt: new Date() } },
+    { new: true }
+  );
+  clearCampaignReadCache();
+  await addLog(
+    targetAccount._id,
+    targetAccount.name,
+    'warn',
+    `Auto tat ${item.pauseLabel || 'camp len lich'} ${item.campaign.name || campaignGraphId}: ${item.pauseReason}`
+  );
+  return true;
+}
+
+async function runScheduledDuplicatePauseForScope(account, config, dailyDate = todayStr()) {
+  if (normalizeProvider(account?.provider) !== 'facebook') return;
+
+  const scopeKey = getScheduledDuplicateScopeKey(account);
+  const lastRunAt = scheduledDuplicateScopeLastRunAt[scopeKey] || 0;
+  if (scheduledDuplicateScopeRuns[scopeKey]) return;
+  if (Date.now() - lastRunAt < SCHEDULED_DUPLICATE_SCOPE_COOLDOWN_MS) return;
+
+  scheduledDuplicateScopeRuns[scopeKey] = true;
+  try {
+    const scopeAccounts = await getScheduledDuplicateScopeAccounts(account);
+    if (!scopeAccounts.length) return;
+
+    const scheduledPauseCandidates = await getScheduledDuplicateCandidatesForScope(scopeAccounts, dailyDate);
+    const scheduledPauseTargets = buildScheduledPauseTargets(scheduledPauseCandidates, {
+      scheduledDuplicatePauseTime: config?.scheduledDuplicatePauseTime,
+      dailyDate
+    });
+    if (!scheduledPauseTargets.length) return;
+
+    const accountsById = new Map(scopeAccounts.map(scopeAccount => [String(scopeAccount._id), scopeAccount]));
+    let pausedCount = 0;
+    for (const item of scheduledPauseTargets) {
+      try {
+        if (await pauseScheduledDuplicateTarget(item, accountsById, account, dailyDate)) {
+          pausedCount += 1;
+        }
+      } catch (error) {
+        const targetAccount = accountsById.get(getCampaignAccountIdValue(item.campaign)) || account;
+        await addLog(
+          targetAccount._id,
+          targetAccount.name,
+          'error',
+          `Loi auto tat camp trung ${item.campaign.name || item.campaign.campaignId || ''}: ${error.message}`
+        );
+      }
+    }
+
+    if (pausedCount > 0) {
+      await addLog(
+        account._id,
+        account.name,
+        'warn',
+        `Auto tat ${pausedCount} camp trung tren ${scopeAccounts.length} tai khoan quang cao`
+      );
+    }
+  } finally {
+    scheduledDuplicateScopeLastRunAt[scopeKey] = Date.now();
+    delete scheduledDuplicateScopeRuns[scopeKey];
+  }
+}
+
 async function fetchShopeeAccountData(account) {
   const today = todayStr();
   let campaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
@@ -2683,11 +2799,7 @@ async function runAutoControl(account) {
       );
     }
 
-    const scheduledPauseCandidates = await getScheduledDuplicateCandidatesForAccount(account, today);
-    const scheduledPauseTargets = buildScheduledPauseTargets(scheduledPauseCandidates, {
-      scheduledDuplicatePauseTime: config?.scheduledDuplicatePauseTime,
-      dailyDate: today
-    });
+    await runScheduledDuplicatePauseForScope(account, config, today);
 
     if (claudeKey) {
       try {
@@ -2778,26 +2890,6 @@ async function runAutoControl(account) {
       );
     }
 
-    if (scheduledPauseTargets.length > 0) {
-      for (const item of scheduledPauseTargets) {
-        const campaignGraphId = item.campaign.id || item.campaign.campaignId;
-        if (!campaignGraphId) continue;
-
-        await fbPost(fbToken, campaignGraphId, { status: 'PAUSED' });
-        await Campaign.findOneAndUpdate(
-          { accountId: account._id, campaignId: campaignGraphId, date: today },
-          { $set: { status: 'PAUSED', updatedAt: new Date() } },
-          { new: true }
-        );
-        clearCampaignReadCache();
-        await addLog(
-          account._id,
-          account.name,
-          'warn',
-          `Auto tat ${item.pauseLabel || 'camp len lich'} ${item.campaign.name || campaignGraphId}: ${item.pauseReason}`
-        );
-      }
-    }
   } catch (error) {
     if (!isMongoReady()) return;
 
@@ -2821,6 +2913,8 @@ async function runAutoControl(account) {
 const accountTimers = {};
 const accountRuns = {};
 const accountSchedulerActive = {};
+const scheduledDuplicateScopeRuns = {};
+const scheduledDuplicateScopeLastRunAt = {};
 let facebookTokenCronTask = null;
 let finalSpendCronTask = null;
 let todayCampaignSpendSyncTimer = null;
@@ -3532,7 +3626,7 @@ app.get('/api/config', async (req, res) => {
       'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
       'dailyZeroMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
       'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
-      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit'
+      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseZeroOrderSpendLimit'
     ).lean();
     const autoConfig = mergeAutoConfig(config || {}, user || {});
     res.json({
@@ -3564,7 +3658,8 @@ app.get('/api/config', async (req, res) => {
       lifetimeHighCostSpendLimit: autoConfig.lifetimeHighCostSpendLimit,
       lifetimeClickLimit: autoConfig.lifetimeClickLimit,
       lifetimeCpcLimit: autoConfig.lifetimeCpcLimit,
-      autoPauseCpoLimit: autoConfig.autoPauseCpoLimit
+      autoPauseCpoLimit: autoConfig.autoPauseCpoLimit,
+      autoPauseZeroOrderSpendLimit: autoConfig.autoPauseZeroOrderSpendLimit
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -3737,6 +3832,7 @@ app.put('/api/auto-limits', async (req, res) => {
       lifetimeClickLimit: Number(req.body.lifetimeClickLimit || 0),
       lifetimeCpcLimit: Number(req.body.lifetimeCpcLimit || 0),
       autoPauseCpoLimit: Number(req.body.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT),
+      autoPauseZeroOrderSpendLimit: Number(req.body.autoPauseZeroOrderSpendLimit ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
       updatedAt: new Date()
     };
 

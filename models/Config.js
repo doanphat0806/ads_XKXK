@@ -30,6 +30,7 @@ const ConfigSchema = new mongoose.Schema({
   lifetimeClickLimit: { type: Number, default: 0 },
   lifetimeCpcLimit: { type: Number, default: 500 },
   autoPauseCpoLimit: { type: Number, default: 100000 },
+  autoPauseZeroOrderSpendLimit: { type: Number, default: 60000 },
 
   updatedAt: { type: Date, default: Date.now }
 });

@@ -32,6 +32,7 @@ const UserSchema = new mongoose.Schema({
   lifetimeClickLimit: { type: Number },
   lifetimeCpcLimit: { type: Number },
   autoPauseCpoLimit: { type: Number },
+  autoPauseZeroOrderSpendLimit: { type: Number },
   active: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }

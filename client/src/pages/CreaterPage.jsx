@@ -186,7 +186,7 @@ export default function CreaterPage() {
       return data;
     } catch (error) {
       if (error.name === 'AbortError') {
-        throw new Error('Upload file qua lau, vui long thu file nho hon hoac thu lai');
+        throw new Error('Upload file qua lau, vui long thu file nho hon hoac thu lai', { cause: error });
       }
       throw error;
     } finally {
