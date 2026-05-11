@@ -177,7 +177,7 @@ const CampaignRow = React.memo(function CampaignRow({
 });
 
 export default function Dashboard() {
-  const { provider, stats: globalStats, loading: globalLoading } = useAppContext();
+  const { provider, stats: globalStats } = useAppContext();
   const showOrders = provider !== 'shopee';
   const isShopee = provider === 'shopee';
   const dashboardRef = useRef(null);
@@ -197,6 +197,7 @@ export default function Dashboard() {
   const [localStats, setLocalStats] = useState({});
   const [localCampaigns, setLocalCampaigns] = useState([]);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [campaignsLoading, setCampaignsLoading] = useState(false);
   const [skuCounts, setSkuCounts] = useState({});
   const [skuTotal, setSkuTotal] = useState(0);
   const [returnStatsBySku, setReturnStatsBySku] = useState({});
@@ -246,26 +247,32 @@ export default function Dashboard() {
   };
 
   const loadDashboardData = useCallback(async (from, to) => {
-    setStatsLoading(true);
-    try {
-      const statsUrl = `/stats?provider=${provider}&fromDate=${from}&toDate=${to}`;
-      const campaignsUrl = `/campaigns/today?provider=${provider}&fromDate=${from}&toDate=${to}`;
-      const cachedStats = readResponseCache(`GET:${statsUrl}`);
-      const cachedCampaigns = readResponseCache(`GET:${campaignsUrl}`);
-      if (cachedStats) setLocalStats(cachedStats);
-      if (cachedCampaigns) setLocalCampaigns(cachedCampaigns.map(keepCurrentSortStatus));
-      if (cachedStats && cachedCampaigns) setStatsLoading(false);
+    const statsUrl = `/stats?provider=${provider}&fromDate=${from}&toDate=${to}&includeOrders=false`;
+    const campaignsUrl = `/campaigns/today?provider=${provider}&fromDate=${from}&toDate=${to}`;
+    const cachedStats = readResponseCache(`GET:${statsUrl}`);
+    const cachedCampaigns = readResponseCache(`GET:${campaignsUrl}`);
+    if (cachedStats) setLocalStats(cachedStats);
+    if (cachedCampaigns) setLocalCampaigns(cachedCampaigns.map(keepCurrentSortStatus));
 
-      const [sData, cData] = await Promise.all([
-        cachedApi('GET', statsUrl),
-        cachedApi('GET', campaignsUrl, null, { timeoutMs: 5 * 60 * 1000 })
-      ]);
-      setLocalStats(sData);
-      setLocalCampaigns(cData.map(keepCurrentSortStatus));
+    setStatsLoading(!cachedStats);
+    setCampaignsLoading(!cachedCampaigns);
+
+    try {
+      const statsPromise = cachedApi('GET', statsUrl)
+        .then(data => setLocalStats(data))
+        .catch(e => console.error('Failed to load dashboard stats', e))
+        .finally(() => setStatsLoading(false));
+
+      const campaignsPromise = cachedApi('GET', campaignsUrl, null, { timeoutMs: 5 * 60 * 1000 })
+        .then(data => setLocalCampaigns(data.map(keepCurrentSortStatus)))
+        .catch(e => console.error('Failed to load dashboard campaigns', e))
+        .finally(() => setCampaignsLoading(false));
+
+      await Promise.all([statsPromise, campaignsPromise]);
     } catch (e) {
       console.error('Failed to load dashboard data', e);
-    } finally {
       setStatsLoading(false);
+      setCampaignsLoading(false);
     }
   }, [provider]);
 
@@ -397,17 +404,31 @@ export default function Dashboard() {
     if (!from || !to || provider === 'shopee') return;
     const { silent = false, includeReturnStats = true } = options;
     if (!silent) setSkuLoading(true);
+    let hasCachedSkuCounts = false;
     try {
-      const data = await api('GET', `/orders/sku-counts?fromDate=${from}&toDate=${to}`);
+      const skuCountsUrl = `/orders/sku-counts?fromDate=${from}&toDate=${to}`;
+      const cachedSkuCounts = readResponseCache(`GET:${skuCountsUrl}`);
+      if (cachedSkuCounts) {
+        hasCachedSkuCounts = true;
+        setSkuCounts(cachedSkuCounts.counts || {});
+        setSkuTotal(cachedSkuCounts.totalOrders || 0);
+        setOrderReturnStats(cachedSkuCounts.returnStats || EMPTY_RETURN_STATS);
+        if (!silent) setSkuLoading(false);
+      }
+      const data = await cachedApi('GET', skuCountsUrl);
       setSkuCounts(data.counts || {});
       setSkuTotal(data.totalOrders || 0);
       setOrderReturnStats(data.returnStats || EMPTY_RETURN_STATS);
       if (includeReturnStats) {
-        const returnData = await api('GET', `/orders/sku-counts?fromDate=${CAMPAIGN_RETURN_STATS_FROM_DATE}&toDate=${todayString()}`);
-        setReturnStatsBySku(returnData.returnStatsBySku || {});
+        const returnStatsUrl = `/orders/sku-counts?fromDate=${CAMPAIGN_RETURN_STATS_FROM_DATE}&toDate=${todayString()}`;
+        const cachedReturnStats = readResponseCache(`GET:${returnStatsUrl}`);
+        if (cachedReturnStats) setReturnStatsBySku(cachedReturnStats.returnStatsBySku || {});
+        cachedApi('GET', returnStatsUrl)
+          .then(returnData => setReturnStatsBySku(returnData.returnStatsBySku || {}))
+          .catch(() => {});
       }
     } catch {
-      if (!silent) {
+      if (!silent && !hasCachedSkuCounts) {
         setSkuCounts({});
         setSkuTotal(0);
         setReturnStatsBySku({});
@@ -765,7 +786,7 @@ export default function Dashboard() {
 
       <div className="card dashboard-table-card">
         <div className="tbl-wrap" id="dashCampTable">
-          {(globalLoading || statsLoading) ? (
+          {campaignsLoading ? (
             <div className="empty"><span className="spin">...</span><p style={{ marginTop: '10px' }}>Dang tai...</p></div>
           ) : processedCampaigns.length === 0 ? (
             <div className="empty"><div className="ei">-</div><p>Không có dữ liệu ngày hôm nay </p></div>

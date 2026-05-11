@@ -23,6 +23,7 @@ function getHttpErrorMessage(status, text) {
 }
 
 const responseCache = new Map();
+const inFlightCacheRequests = new Map();
 const RESPONSE_CACHE_PREFIX = 'adsctrl:api-cache:';
 const RESPONSE_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
@@ -106,9 +107,21 @@ export async function api(method, path, body = null, options = {}) {
 
 export async function cachedApi(method, path, body = null, options = {}) {
   const cacheKey = options.cacheKey || `${method}:${path}`;
-  const data = await api(method, path, body, options);
-  if (method === 'GET') writeResponseCache(cacheKey, data);
-  return data;
+  if (method === 'GET' && inFlightCacheRequests.has(cacheKey)) {
+    return inFlightCacheRequests.get(cacheKey);
+  }
+
+  const request = api(method, path, body, options)
+    .then(data => {
+      if (method === 'GET') writeResponseCache(cacheKey, data);
+      return data;
+    })
+    .finally(() => {
+      if (method === 'GET') inFlightCacheRequests.delete(cacheKey);
+    });
+
+  if (method === 'GET') inFlightCacheRequests.set(cacheKey, request);
+  return request;
 }
 
 export async function downloadFile(path, filenameFallback = 'download.csv') {

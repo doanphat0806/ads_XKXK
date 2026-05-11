@@ -3528,7 +3528,8 @@ app.get('/api/stats', async (req, res) => {
     const filter = withUserFilter(req, provider ? buildAccountProviderFilter(provider) : {});
     const fDate = fromDate || date || todayStr();
     const tDate = toDate || date || fDate;
-    const cacheKey = userScopedCacheKey(req, `stats:${provider || 'all'}:${fDate}:${tDate}`);
+    const includeOrders = req.query.includeOrders !== 'false' && req.query.includeOrders !== false;
+    const cacheKey = userScopedCacheKey(req, `stats:${provider || 'all'}:${fDate}:${tDate}:${includeOrders ? 'with-orders' : 'no-orders'}`);
     const cached = getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
@@ -3585,9 +3586,12 @@ app.get('/api/stats', async (req, res) => {
       }
     ]).allowDiskUse(true);
 
-    let totalOrders = 0;
-    let ordersError = '';
-    try {
+    let totalOrders;
+    let ordersError;
+    if (includeOrders) {
+      totalOrders = 0;
+      ordersError = '';
+      try {
       if (useSheetOrders()) {
         const todayRows = await getOrderSheetOrders({ fromDate: fDate, toDate: tDate, limit: 5000 });
         // Chỉ đếm dòng có ID2 (orderId) không trống
@@ -3595,8 +3599,9 @@ app.get('/api/stats', async (req, res) => {
       } else {
         totalOrders = await Order.countDocuments(buildOrderQuery({ fromDate: fDate, toDate: tDate }));
       }
-    } catch (error) {
-      ordersError = error.message;
+      } catch (error) {
+        ordersError = error.message;
+      }
     }
 
     res.json(setReadCache(cacheKey, {
@@ -3608,8 +3613,7 @@ app.get('/api/stats', async (req, res) => {
       totalMessages: campaignTotals.totalMessages || 0,
       totalClicks: campaignTotals.totalClicks || 0,
       avgCPM: campaignTotals.avgCPM || 0,
-      totalOrders,
-      ordersError,
+      ...(includeOrders ? { totalOrders, ordersError } : {}),
       fromDate: fDate,
       toDate: tDate
     }));

@@ -73,7 +73,8 @@ export const AppProvider = ({ children }) => {
 
   const loadStats = useCallback(async () => {
     try {
-      const url = `/stats?provider=${provider}`;
+      const today = todayString();
+      const url = `/stats?provider=${provider}&fromDate=${today}&toDate=${today}&includeOrders=false`;
       const cached = readResponseCache(`GET:${url}`);
       if (cached) setStats(cached);
       const data = await cachedApi('GET', url);
@@ -94,7 +95,8 @@ export const AppProvider = ({ children }) => {
 
   const loadTodayCampaigns = useCallback(async () => {
     try {
-      const url = `/campaigns/today?provider=${provider}`;
+      const today = todayString();
+      const url = `/campaigns/today?provider=${provider}&fromDate=${today}&toDate=${today}`;
       const cached = readResponseCache(`GET:${url}`);
       if (cached) setAllTodayCampaigns(cached);
       const data = await cachedApi('GET', url, null, { timeoutMs: 5 * 60 * 1000 });
@@ -107,7 +109,10 @@ export const AppProvider = ({ children }) => {
   const loadTodayOrderSkuCounts = useCallback(async () => {
     try {
       const today = todayString();
-      const data = await api('GET', `/orders/sku-counts?fromDate=${today}`);
+      const url = `/orders/sku-counts?fromDate=${today}&toDate=${today}`;
+      const cached = readResponseCache(`GET:${url}`);
+      if (cached) setTodayOrderSkuCounts(cached.counts || {});
+      const data = await cachedApi('GET', url);
       setTodayOrderSkuCounts(data.counts || {});
     } catch (e) {
       if (e.status === 401) logout();
