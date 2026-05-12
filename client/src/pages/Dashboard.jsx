@@ -68,6 +68,34 @@ const CPO_WARNING_THRESHOLD = 100000;
 const ORDER_REFRESH_MS = 10000;
 const EMPTY_RETURN_STATS = { returned: 0, returning: 0, received: 0, denominator: 0, rate: 0 };
 
+const buildStatsFromCampaigns = (campaigns = [], isShopee = false) => {
+  const totals = campaigns.reduce((items, campaign) => {
+    const spend = Number(campaign.spend || 0);
+    const messages = Number(campaign.messages || 0);
+    const clicks = Number(campaign.clicks || 0);
+    const hasSpend = spend > 0;
+    const status = normalizeStatus(campaign.status);
+
+    items.totalSpend += spend;
+    items.totalMessages += messages;
+    items.totalClicks += clicks;
+    if (hasSpend && status === 'ACTIVE') items.activeCount += 1;
+    if (hasSpend && status === 'PAUSED') items.pausedCount += 1;
+    return items;
+  }, {
+    activeCount: 0,
+    pausedCount: 0,
+    totalSpend: 0,
+    totalMessages: 0,
+    totalClicks: 0
+  });
+
+  return {
+    ...totals,
+    avgCPM: !isShopee && totals.totalMessages > 0 ? totals.totalSpend / totals.totalMessages : 0
+  };
+};
+
 const CampaignRow = React.memo(function CampaignRow({
   campaign,
   isActive,
@@ -248,7 +276,7 @@ export default function Dashboard() {
 
   const loadDashboardData = useCallback(async (from, to) => {
     const statsUrl = `/stats?provider=${provider}&fromDate=${from}&toDate=${to}&includeOrders=false`;
-    const campaignsUrl = `/campaigns/today?provider=${provider}&fromDate=${from}&toDate=${to}`;
+    const campaignsUrl = `/campaigns/today?provider=${provider}&fromDate=${from}&toDate=${to}&includeMetaInsights=${provider === 'shopee' ? 'false' : 'true'}`;
     const cachedStats = readResponseCache(`GET:${statsUrl}`);
     const cachedCampaigns = readResponseCache(`GET:${campaignsUrl}`);
     if (cachedStats) setLocalStats(cachedStats);
@@ -264,7 +292,14 @@ export default function Dashboard() {
         .finally(() => setStatsLoading(false));
 
       const campaignsPromise = cachedApi('GET', campaignsUrl, null, { timeoutMs: 5 * 60 * 1000 })
-        .then(data => setLocalCampaigns(data.map(keepCurrentSortStatus)))
+        .then(data => {
+          const nextCampaigns = data.map(keepCurrentSortStatus);
+          setLocalCampaigns(nextCampaigns);
+          setLocalStats(currentStats => ({
+            ...currentStats,
+            ...buildStatsFromCampaigns(nextCampaigns, provider === 'shopee')
+          }));
+        })
         .catch(e => console.error('Failed to load dashboard campaigns', e))
         .finally(() => setCampaignsLoading(false));
 
@@ -553,10 +588,11 @@ export default function Dashboard() {
     return processedCampaigns.slice((page - 1) * DASHBOARD_CAMPAIGNS_PER_PAGE, page * DASHBOARD_CAMPAIGNS_PER_PAGE);
   }, [currentPage, processedCampaigns, totalPages]);
   const visibleCampaigns = useMemo(() => pageCampaigns.slice(0, renderLimit), [pageCampaigns, renderLimit]);
+  const campaignStats = useMemo(() => buildStatsFromCampaigns(localCampaigns, isShopee), [localCampaigns, isShopee]);
   const metaAvgCPM = useMemo(() => {
     if (isShopee) return 0;
-    return Number(localStats.avgCPM || 0);
-  }, [localStats.avgCPM, isShopee]);
+    return Number(campaignStats.avgCPM || 0);
+  }, [campaignStats.avgCPM, isShopee]);
 
   const duplicateCampaignsToPause = useMemo(() => {
     const groups = processedCampaigns.reduce((items, campaign) => {
@@ -715,16 +751,16 @@ export default function Dashboard() {
         </div>
         <div className="stat b">
           <div className="stat-label">Camp dang chay</div>
-          <div className="stat-value b" id="sActive">{localStats.activeCount !== undefined ? formatNumber(localStats.activeCount) : '-'}</div>
+          <div className="stat-value b" id="sActive">{formatNumber(campaignStats.activeCount || 0)}</div>
           <div className="stat-sub">Tong: {formatNumber(processedCampaigns.length)} camp</div>
         </div>
         <div className="stat o">
           <div className="stat-label">Chi tieu {dateLabel}</div>
-          <div className="stat-value o stat-value-compact" id="sSpend">{localStats.totalSpend ? formatVND(localStats.totalSpend) : '-'}</div>
+          <div className="stat-value o stat-value-compact" id="sSpend">{campaignStats.totalSpend ? formatVND(campaignStats.totalSpend) : '-'}</div>
         </div>
         <div className="stat p">
           <div className="stat-label">{isShopee ? 'Luot click' : 'Tin nhan'} {dateLabel}</div>
-          <div className="stat-value p" id="sMessages">{isShopee ? formatNumber(localStats.totalClicks || 0) : (localStats.totalMessages ? formatNumber(localStats.totalMessages) : '-')}</div>
+          <div className="stat-value p" id="sMessages">{isShopee ? formatNumber(campaignStats.totalClicks || 0) : (campaignStats.totalMessages ? formatNumber(campaignStats.totalMessages) : '-')}</div>
           <div className="stat-sub">{!isShopee && metaAvgCPM > 0 ? `Chi phi/luot tro chuyen: ${formatVND(metaAvgCPM)}` : '-'}</div>
         </div>
         {showOrders && (
@@ -738,7 +774,7 @@ export default function Dashboard() {
           <div className="stat r" style={{ borderColor: 'var(--r)' }}>
             <div className="stat-label">CPO {dateLabel}</div>
             <div className="stat-value" id="sCPO" style={{ color: 'var(--r)', fontSize: skuLoading ? '1.4rem' : undefined }}>
-              {skuLoading ? '...' : (skuTotal > 0 && localStats.totalSpend > 0) ? formatVND(localStats.totalSpend / skuTotal) : '-'}
+              {skuLoading ? '...' : (skuTotal > 0 && campaignStats.totalSpend > 0) ? formatVND(campaignStats.totalSpend / skuTotal) : '-'}
             </div>
             <div className="stat-sub">Chi tiêu / Đơn</div>
           </div>

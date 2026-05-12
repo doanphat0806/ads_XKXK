@@ -1954,6 +1954,187 @@ async function fetchCampaignMetaMap(fbToken, campaignIds = []) {
   return campaignMetaById;
 }
 
+function getMetaCampaignInsightMetrics(insight = {}) {
+  const spend = parseFloat(insight.spend || 0);
+  const impressions = parseInt(insight.impressions || 0, 10);
+  const clicks = parseInt(insight.clicks || 0, 10);
+  const msgAction = getMetaMessageActionFromInsight(insight);
+  const messages = parseInt(msgAction?.value || 0, 10);
+  const metaOrders = getMetaOrdersFromInsight(insight);
+  const costPerMessage = getMetaCostPerMessageFromInsight(insight);
+
+  return {
+    spend: Number.isFinite(spend) ? spend : 0,
+    impressions: Number.isFinite(impressions) ? impressions : 0,
+    clicks: Number.isFinite(clicks) ? clicks : 0,
+    messages: Number.isFinite(messages) ? messages : 0,
+    metaOrders: Number.isFinite(metaOrders) ? metaOrders : 0,
+    costPerMessage: Number.isFinite(costPerMessage) ? costPerMessage : 0,
+    costPerMessageWeight: Number.isFinite(messages) && messages > 0 ? messages : 0
+  };
+}
+
+function hasMetaCampaignInsightMetrics(metrics = {}) {
+  return Number(metrics.spend || 0) > 0
+    || Number(metrics.impressions || 0) > 0
+    || Number(metrics.clicks || 0) > 0
+    || Number(metrics.messages || 0) > 0
+    || Number(metrics.metaOrders || 0) > 0;
+}
+
+function mergeMetaInsightMetrics(target = {}, source = {}) {
+  target.spend = Number(target.spend || 0) + Number(source.spend || 0);
+  target.impressions = Number(target.impressions || 0) + Number(source.impressions || 0);
+  target.clicks = Number(target.clicks || 0) + Number(source.clicks || 0);
+  target.messages = Number(target.messages || 0) + Number(source.messages || 0);
+  target.metaOrders = Number(target.metaOrders || 0) + Number(source.metaOrders || 0);
+  const currentWeight = Number(target.costPerMessageWeight || 0);
+  const sourceWeight = Number(source.costPerMessageWeight || 0);
+  if (sourceWeight > 0) {
+    const weightedTotal = (Number(target.costPerMessage || 0) * currentWeight) + (Number(source.costPerMessage || 0) * sourceWeight);
+    const nextWeight = currentWeight + sourceWeight;
+    target.costPerMessage = nextWeight > 0 ? weightedTotal / nextWeight : Number(source.costPerMessage || target.costPerMessage || 0);
+    target.costPerMessageWeight = nextWeight;
+  } else if (!Number(target.costPerMessage || 0)) {
+    target.costPerMessage = Number(source.costPerMessage || 0);
+  }
+  return target;
+}
+
+function buildReportAccountInfo(account) {
+  return {
+    _id: account._id,
+    name: account.name,
+    adAccountId: account.adAccountId,
+    provider: account.provider
+  };
+}
+
+async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toDate, options = {}) {
+  const includeAccountInfo = options.includeAccountInfo === true;
+  const concurrency = parseBoundedInt(options.concurrency, 2, 1, 5);
+  const facebookAccounts = (accounts || []).filter(account => account?.provider !== 'shopee');
+  if (!facebookAccounts.length) return [];
+
+  const accountResults = await mapWithConcurrency(facebookAccounts, async (account) => {
+    const accountId = String(account?._id || '');
+    if (!accountId || getAccountRateLimitDelayMs(accountId) > 0) return [];
+
+    try {
+      const { fbToken } = await getEffectiveSecrets(account);
+      if (!fbToken) return [];
+
+      const insights = await fetchAccountInsightsInRange(account, fromDate, toDate);
+      const metricsByCampaignId = new Map();
+
+      for (const insight of insights) {
+        const campaignId = String(insight.campaign_id || '').trim();
+        if (!campaignId) continue;
+
+        const metrics = getMetaCampaignInsightMetrics(insight);
+        if (!hasMetaCampaignInsightMetrics(metrics)) continue;
+
+        if (!metricsByCampaignId.has(campaignId)) {
+          metricsByCampaignId.set(campaignId, {
+            campaignId,
+            name: insight.campaign_name || '',
+            spend: 0,
+            impressions: 0,
+            clicks: 0,
+            messages: 0,
+            metaOrders: 0,
+            costPerMessage: 0
+          });
+        }
+
+        const aggregate = metricsByCampaignId.get(campaignId);
+        if (insight.campaign_name) aggregate.name = insight.campaign_name;
+        mergeMetaInsightMetrics(aggregate, metrics);
+      }
+
+      if (!metricsByCampaignId.size) return [];
+
+      let campaignMetaById = new Map();
+      try {
+        campaignMetaById = await fetchCampaignMetaMap(fbToken, [...metricsByCampaignId.keys()]);
+      } catch (error) {
+        console.warn(`[campaigns:meta] campaign metadata failed for ${account?.name || account?._id}: ${error.message}`);
+      }
+
+      return [...metricsByCampaignId.values()].map(metricRow => {
+        const meta = campaignMetaById.get(metricRow.campaignId) || {};
+        return {
+          campaignId: metricRow.campaignId,
+          accountId: includeAccountInfo ? buildReportAccountInfo(account) : account._id,
+          name: metricRow.name || meta.name || '',
+          status: meta.status || '',
+          dailyBudget: Number(meta.dailyBudget || 0),
+          lifetimeBudget: Number(meta.lifetimeBudget || 0),
+          budgetType: meta.budgetType || (Number(meta.lifetimeBudget || 0) > 0 ? 'LIFETIME' : 'DAILY'),
+          createdTime: meta.createdTime,
+          spend: metricRow.spend,
+          messages: metricRow.messages,
+          clicks: metricRow.clicks,
+          impressions: metricRow.impressions,
+          metaOrders: metricRow.metaOrders,
+          costPerMessage: metricRow.costPerMessage
+        };
+      });
+    } catch (error) {
+      if (error?.rateLimited) markAccountRateLimited(account._id);
+      console.warn(`[campaigns:meta] skip account ${account?.name || account?._id}: ${error.message}`);
+      return [];
+    }
+  }, concurrency);
+
+  return accountResults.flatMap(result => Array.isArray(result) ? result : []);
+}
+
+function applyMetaCampaignMetricRows(baseRows = [], metaRows = []) {
+  if (!metaRows.length) return baseRows;
+
+  const byCampaignId = new Map();
+  const merged = [];
+
+  for (const row of baseRows) {
+    const campaignId = String(row?.campaignId || row?.id || '').trim();
+    if (!campaignId || byCampaignId.has(campaignId)) continue;
+    const current = { ...row };
+    byCampaignId.set(campaignId, current);
+    merged.push(current);
+  }
+
+  for (const metaRow of metaRows) {
+    const campaignId = String(metaRow?.campaignId || metaRow?.id || '').trim();
+    if (!campaignId) continue;
+
+    const existing = byCampaignId.get(campaignId);
+    if (existing) {
+      Object.assign(existing, {
+        name: metaRow.name || existing.name,
+        status: metaRow.status || existing.status,
+        dailyBudget: Number(metaRow.dailyBudget || 0) > 0 ? metaRow.dailyBudget : existing.dailyBudget,
+        lifetimeBudget: Number(metaRow.lifetimeBudget || 0) > 0 ? metaRow.lifetimeBudget : existing.lifetimeBudget,
+        budgetType: metaRow.budgetType || existing.budgetType,
+        createdTime: metaRow.createdTime || existing.createdTime,
+        spend: Number(metaRow.spend || 0),
+        messages: Number(metaRow.messages || 0),
+        clicks: Number(metaRow.clicks || 0),
+        impressions: Number(metaRow.impressions || 0),
+        metaOrders: Number(metaRow.metaOrders || 0),
+        costPerMessage: Number(metaRow.costPerMessage || 0)
+      });
+      continue;
+    }
+
+    const added = { ...metaRow };
+    byCampaignId.set(campaignId, added);
+    merged.push(added);
+  }
+
+  return merged.sort(sortCampaignRowsForReport);
+}
+
 function dateRangeIncludesToday(fromDate, toDate) {
   const today = todayStr();
   return String(fromDate || today) <= today && String(toDate || fromDate || today) >= today;
@@ -5180,9 +5361,13 @@ app.get('/api/campaigns/today', async (req, res) => {
     const tDate = toDate || date || fDate;
     const includeScheduledNoSpend = req.query.includeScheduledNoSpend === 'true' || req.query.includeScheduledNoSpend === true;
     const includeLiveCreated = req.query.includeLiveCreated === 'true' || req.query.includeLiveCreated === true;
+    const includeMetaInsights = req.query.includeMetaInsights === 'true' || req.query.includeMetaInsights === true;
     const includeLiveCampaigns = includeScheduledNoSpend && includeLiveCreated && dateRangeTouchesTodayOrFuture(fDate, tDate);
-    const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}`);
-    const cached = includeLiveCampaigns ? null : getReadCache(cacheKey);
+    const today = todayStr();
+    const shouldFetchMetaInsights = includeMetaInsights && provider !== 'shopee' && String(fDate) <= today;
+    const metaInsightsToDate = String(tDate) > today ? today : tDate;
+    const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}:${shouldFetchMetaInsights ? 'meta-insights' : 'stored-insights'}`);
+    const cached = includeLiveCampaigns || shouldFetchMetaInsights ? null : getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
     const accountFilter = provider ? buildAccountProviderFilter(provider) : {};
@@ -5292,8 +5477,13 @@ app.get('/api/campaigns/today', async (req, res) => {
       }
     }
 
-    console.log(`[campaigns:today] provider=${provider || 'all'} ${fDate}..${tDate} rows=${result.length} ${Date.now() - startedAt}ms`);
-    res.json(includeLiveCampaigns ? result : setReadCache(cacheKey, result));
+    if (shouldFetchMetaInsights && accounts.length > 0) {
+      const metaRows = await fetchMetaCampaignMetricRowsForReport(accounts, fDate, metaInsightsToDate, { includeAccountInfo: true });
+      result = applyMetaCampaignMetricRows(result, metaRows);
+    }
+
+    console.log(`[campaigns:today] provider=${provider || 'all'} ${fDate}..${tDate} rows=${result.length} meta=${shouldFetchMetaInsights ? 'yes' : 'no'} ${Date.now() - startedAt}ms`);
+    res.json(includeLiveCampaigns || shouldFetchMetaInsights ? result : setReadCache(cacheKey, result));
   } catch (error) {
     console.error(`[campaigns:today] failed after ${Date.now() - startedAt}ms: ${error.message}`);
     res.status(500).json({ error: error.message });
