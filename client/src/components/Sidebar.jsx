@@ -23,7 +23,7 @@ export default function Sidebar() {
   return (
     <nav className="sidebar" id="sidebar">
       <div className="sidebar-logo">
-        <h1>XK <span className="text">XekoXuka Shop</span></h1>
+        <h1><span className="text">XekoXuka Shop</span></h1>
       </div>
 
       <div className="nav-section">Menu</div>
