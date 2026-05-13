@@ -325,6 +325,204 @@ function clearAllReadCache() {
   readCache.clear();
 }
 
+function parseCsvPreviewRows(text = '', maxRows = 51) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (inQuotes) {
+      if (ch === '"' && next === '"') {
+        cell += '"';
+        i += 1;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+      if (rows.length >= maxRows) break;
+    } else if (ch !== '\r') {
+      cell += ch;
+    }
+  }
+
+  if (rows.length < maxRows) {
+    row.push(cell);
+    if (row.length > 1 || row[0] !== '') rows.push(row);
+  }
+  return rows;
+}
+
+function normalizePreviewHeader(value, index) {
+  const text = String(value || '').trim();
+  return text || `Cot ${index + 1}`;
+}
+
+function toColumnLetter(index) {
+  let current = Number(index);
+  if (!Number.isInteger(current) || current < 0) return '';
+
+  let label = '';
+  while (current >= 0) {
+    label = String.fromCharCode((current % 26) + 65) + label;
+    current = Math.floor(current / 26) - 1;
+  }
+  return label;
+}
+
+function getGoogleSheetCsvPreviewUrl(inputUrl) {
+  const raw = String(inputUrl || '').trim();
+  if (!raw) throw new Error('Thieu link du lieu Shopee');
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('Link du lieu khong hop le');
+  }
+
+  const sheetMatch = parsed.href.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!sheetMatch) return parsed.href;
+
+  const gid = parsed.searchParams.get('gid') || '0';
+  return `https://docs.google.com/spreadsheets/d/${sheetMatch[1]}/export?format=csv&gid=${encodeURIComponent(gid)}`;
+}
+
+function parseCommissionDateKey(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw === '-') return '';
+
+  const yyyyFirst = raw.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (yyyyFirst) {
+    const [, y, m, d] = yyyyFirst;
+    return `${y.padStart(4, '0')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+
+  const slashDate = raw.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  if (slashDate) {
+    const [, first, second, rawYear] = slashDate;
+    const y = rawYear.length === 2 ? `20${rawYear}` : rawYear;
+    const a = Number(first);
+    const b = Number(second);
+    const dmy = b >= 1 && b <= 12 && a >= 1 && a <= 31
+      ? `${y.padStart(4, '0')}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`
+      : '';
+    const mdy = a >= 1 && a <= 12 && b >= 1 && b <= 31
+      ? `${y.padStart(4, '0')}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`
+      : '';
+
+    if (a > 12) return dmy;
+    if (b > 12) return mdy;
+    return mdy || dmy;
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    const vnDate = new Date(parsed.getTime() + VN_OFFSET_MS);
+    return vnDate.toISOString().split('T')[0];
+  }
+
+  return '';
+}
+
+function normalizeCommissionColumnName(value) {
+  const normalized = String(value || '')
+    .replace(/[\u0111\u0110]/g, 'd')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+  return normalized;
+}
+
+function findCommissionDateColumn(columns = []) {
+  const candidates = [
+    'thoigiandathang',
+    'ngaydathang',
+    'thoigianclick',
+    'ngay',
+    'date',
+    'orderdate'
+  ];
+  return (columns || []).find(column => {
+    const normalized = normalizeCommissionColumnName(column.name);
+    return candidates.some(candidate => normalized.includes(candidate));
+  }) || null;
+}
+
+async function fetchShopeeCommissionSelectedRows(source = {}, spendByDate = new Map(), options = {}) {
+  const columns = Array.isArray(source?.columns) ? source.columns : [];
+  if (!source?.url || !columns.length) return { columns, rows: [], dateColumn: null, error: '' };
+
+  try {
+    const csvUrl = getGoogleSheetCsvPreviewUrl(source.url);
+    const response = await axios.get(csvUrl, {
+      timeout: 45000,
+      responseType: 'text',
+      maxContentLength: 10 * 1024 * 1024,
+      headers: { Accept: 'text/csv,text/plain,*/*' }
+    });
+    const csv = String(response.data || '').replace(/^\uFEFF/, '').trim();
+    if (!csv || csv.startsWith('<') || csv.startsWith('{')) {
+      throw new Error('Nguon du lieu Shopee khong tra ve CSV');
+    }
+
+    const rows = parseCsvPreviewRows(csv, 5001).filter(row => row.some(cell => String(cell || '').trim()));
+    const dateColumn = findCommissionDateColumn(columns);
+    if (!dateColumn) {
+      return {
+        columns,
+        rows: [],
+        dateColumn: null,
+        error: 'Can luu kem cot thoi gian dat hang hoac thoi gian click de ghep chi tieu theo ngay'
+      };
+    }
+    const limit = parseBoundedInt(options.limit, 5000, 1, 5000);
+
+    const mappedRows = rows.slice(1).map((row, index) => {
+      const dateValue = row[dateColumn.index];
+      const dateKey = parseCommissionDateKey(dateValue);
+      return {
+        rowNumber: index + 2,
+        date: dateKey,
+        cells: columns.map(column => String(row[column.index] || '').trim()),
+        spend: dateKey ? Number(spendByDate.get(dateKey) || 0) : 0
+      };
+    }).filter(row => {
+      if (!row.date) return false;
+      if (options.fromDate && row.date && row.date < options.fromDate) return false;
+      if (options.toDate && row.date && row.date > options.toDate) return false;
+      return true;
+    }).slice(0, limit);
+
+    return {
+      columns,
+      rows: mappedRows,
+      dateColumn: dateColumn ? { index: dateColumn.index, name: dateColumn.name, letter: dateColumn.letter, number: dateColumn.number } : null,
+      error: ''
+    };
+  } catch (error) {
+    return { columns, rows: [], dateColumn: null, error: error.message };
+  }
+}
+
 const META_PURCHASE_ACTION_TYPES = new Set([
   'purchase',
   'omni_purchase',
@@ -2012,6 +2210,7 @@ function buildReportAccountInfo(account) {
 
 async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toDate, options = {}) {
   const includeAccountInfo = options.includeAccountInfo === true;
+  const persist = options.persist === true;
   const concurrency = parseBoundedInt(options.concurrency, 2, 1, 5);
   const facebookAccounts = (accounts || []).filter(account => account?.provider !== 'shopee');
   if (!facebookAccounts.length) return [];
@@ -2026,6 +2225,7 @@ async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toD
 
       const insights = await fetchAccountInsightsInRange(account, fromDate, toDate);
       const metricsByCampaignId = new Map();
+      const dailyMetricRows = [];
 
       for (const insight of insights) {
         const campaignId = String(insight.campaign_id || '').trim();
@@ -2050,6 +2250,7 @@ async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toD
         const aggregate = metricsByCampaignId.get(campaignId);
         if (insight.campaign_name) aggregate.name = insight.campaign_name;
         mergeMetaInsightMetrics(aggregate, metrics);
+        dailyMetricRows.push({ campaignId, insight, metrics });
       }
 
       if (!metricsByCampaignId.size) return [];
@@ -2059,6 +2260,23 @@ async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toD
         campaignMetaById = await fetchCampaignMetaMap(fbToken, [...metricsByCampaignId.keys()]);
       } catch (error) {
         console.warn(`[campaigns:meta] campaign metadata failed for ${account?.name || account?._id}: ${error.message}`);
+      }
+
+      if (persist) {
+        for (const dailyRow of dailyMetricRows) {
+          const dailyDate = normalizeCampaignDate(dailyRow.insight.date_start || fromDate);
+          const meta = campaignMetaById.get(dailyRow.campaignId) || {};
+          await upsertDailyCampaign(account._id, dailyRow.campaignId, dailyDate, {
+            ...meta,
+            name: dailyRow.insight.campaign_name || meta.name || '',
+            spend: dailyRow.metrics.spend,
+            impressions: dailyRow.metrics.impressions,
+            clicks: dailyRow.metrics.clicks,
+            messages: dailyRow.metrics.messages,
+            costPerMessage: dailyRow.metrics.costPerMessage,
+            metaOrders: dailyRow.metrics.metaOrders
+          });
+        }
       }
 
       return [...metricsByCampaignId.values()].map(metricRow => {
@@ -5478,7 +5696,7 @@ app.get('/api/campaigns/today', async (req, res) => {
     }
 
     if (shouldFetchMetaInsights && accounts.length > 0) {
-      const metaRows = await fetchMetaCampaignMetricRowsForReport(accounts, fDate, metaInsightsToDate, { includeAccountInfo: true });
+      const metaRows = await fetchMetaCampaignMetricRowsForReport(accounts, fDate, metaInsightsToDate, { includeAccountInfo: true, persist: true });
       result = applyMetaCampaignMetricRows(result, metaRows);
     }
 
@@ -5985,6 +6203,208 @@ app.get('/api/reports/export-spending', async (req, res) => {
     res.status(200).send(csv);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/shopee/commission-summary', async (req, res) => {
+  try {
+    const defaultFromDate = '2026-04-27';
+    const fromDate = normalizeCampaignDate(req.query.fromDate || defaultFromDate);
+    const toDate = normalizeCampaignDate(req.query.toDate || todayStr());
+    if (fromDate > toDate) {
+      return res.status(400).json({ error: 'fromDate phai nho hon hoac bang toDate' });
+    }
+
+    const accountFilter = withUserFilter(req, buildAccountProviderFilter('shopee'));
+    const [accounts, user] = await Promise.all([
+      Account.find(accountFilter).select('_id name adAccountId').lean(),
+      User.findById(req.currentUser._id).select('shopeeCommissionSource').lean()
+    ]);
+    const accountIds = accounts.map(account => account._id);
+
+    const match = {
+      accountId: { $in: accountIds },
+      date: { $gte: fromDate, $lte: toDate }
+    };
+
+    const [totalRows, byDate, byAccount] = await Promise.all([
+      Campaign.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            totalSpend: { $sum: '$spend' },
+            totalClicks: { $sum: '$clicks' },
+            totalCampaignRows: { $sum: 1 },
+            activeDays: { $addToSet: '$date' }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            totalSpend: 1,
+            totalClicks: 1,
+            totalCampaignRows: 1,
+            activeDayCount: { $size: '$activeDays' }
+          }
+        }
+      ]),
+      Campaign.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: '$date',
+            spend: { $sum: '$spend' },
+            clicks: { $sum: '$clicks' },
+            campaignRows: { $sum: 1 }
+          }
+        },
+        { $project: { _id: 0, date: '$_id', spend: 1, clicks: 1, campaignRows: 1 } },
+        { $sort: { date: 1 } }
+      ]),
+      Campaign.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: '$accountId',
+            spend: { $sum: '$spend' },
+            clicks: { $sum: '$clicks' },
+            campaignRows: { $sum: 1 }
+          }
+        },
+        {
+          $lookup: {
+            from: 'accounts',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'account'
+          }
+        },
+        { $unwind: { path: '$account', preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            _id: 0,
+            accountId: '$_id',
+            accountName: '$account.name',
+            adAccountId: '$account.adAccountId',
+            spend: 1,
+            clicks: 1,
+            campaignRows: 1
+          }
+        },
+        { $sort: { spend: -1 } }
+      ])
+    ]);
+
+    const totals = totalRows[0] || {};
+    const spendByDate = new Map((byDate || []).map(item => [String(item.date), Number(item.spend || 0)]));
+    const source = user?.shopeeCommissionSource || { url: '', columns: [] };
+    const selectedData = await fetchShopeeCommissionSelectedRows(source, spendByDate, { fromDate, toDate });
+
+    res.json({
+      fromDate,
+      toDate,
+      accountCount: accounts.length,
+      totalSpend: totals.totalSpend || 0,
+      totalClicks: totals.totalClicks || 0,
+      totalCampaignRows: totals.totalCampaignRows || 0,
+      activeDayCount: totals.activeDayCount || 0,
+      source,
+      selectedData,
+      byDate,
+      byAccount
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/shopee/commission-source', async (req, res) => {
+  try {
+    const url = String(req.body?.url || '').trim();
+    const columns = Array.isArray(req.body?.columns) ? req.body.columns : [];
+    if (!url) return res.status(400).json({ error: 'Thieu link du lieu Shopee' });
+    if (!columns.length) return res.status(400).json({ error: 'Chua chon cot nao de luu' });
+
+    const safeColumns = columns
+      .map(column => ({
+        index: Number(column.index),
+        number: Number(column.number),
+        letter: String(column.letter || '').trim(),
+        name: String(column.name || '').trim()
+      }))
+      .filter(column => Number.isInteger(column.index) && column.index >= 0)
+      .sort((a, b) => a.index - b.index);
+
+    if (!safeColumns.length) return res.status(400).json({ error: 'Danh sach cot khong hop le' });
+
+    const source = {
+      url,
+      columns: safeColumns,
+      updatedAt: new Date()
+    };
+
+    await User.findByIdAndUpdate(req.currentUser._id, {
+      shopeeCommissionSource: source,
+      updatedAt: new Date()
+    });
+
+    res.json({ ok: true, source });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/shopee/commission-source/preview', async (req, res) => {
+  try {
+    const sourceUrl = String(req.body?.url || '').trim();
+    const csvUrl = getGoogleSheetCsvPreviewUrl(sourceUrl);
+    const response = await axios.get(csvUrl, {
+      timeout: 45000,
+      responseType: 'text',
+      maxContentLength: 5 * 1024 * 1024,
+      headers: {
+        Accept: 'text/csv,text/plain,*/*'
+      }
+    });
+
+    const csv = String(response.data || '').replace(/^\uFEFF/, '').trim();
+    if (!csv || csv.startsWith('<')) {
+      throw new Error('Khong doc duoc file. Hay dung link CSV hoac Google Sheet da share quyen xem.');
+    }
+    if (csv.startsWith('{')) {
+      throw new Error('Nguon du lieu khong tra ve CSV. Hay kiem tra quyen share/link export.');
+    }
+
+    const rows = parseCsvPreviewRows(csv).filter(row => row.some(cell => String(cell || '').trim()));
+    if (!rows.length) {
+      throw new Error('File khong co du lieu');
+    }
+
+    const headerRow = rows[0] || [];
+    const maxColumns = Math.max(...rows.slice(0, 20).map(row => row.length), headerRow.length);
+    const headers = Array.from({ length: maxColumns }, (_, index) => normalizePreviewHeader(headerRow[index], index));
+    const sampleRows = rows.slice(1, 11).map((row, rowIndex) => ({
+      rowNumber: rowIndex + 2,
+      cells: headers.map((_, index) => String(row[index] || '').trim())
+    }));
+
+    res.json({
+      ok: true,
+      sourceUrl,
+      csvUrl,
+      rowCountPreviewed: rows.length,
+      columns: headers.map((name, index) => ({
+        index,
+        number: index + 1,
+        letter: toColumnLetter(index),
+        name,
+        sampleValues: sampleRows.slice(0, 5).map(row => row.cells[index] || '').filter(Boolean)
+      })),
+      sampleRows
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
   }
 });
 

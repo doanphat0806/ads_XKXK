@@ -5,6 +5,7 @@ import {
   BookText,
   Boxes,
   CirclePlus,
+  Coins,
   CopyPlus,
   FileSpreadsheet,
   LayoutDashboard,
@@ -19,6 +20,7 @@ import { useAppContext } from '../contexts/AppContext';
 export default function Sidebar() {
   const { stats, allAccounts, openModal, provider } = useAppContext();
   const showOrders = provider !== 'shopee';
+  const showInventory = provider !== 'shopee';
 
   return (
     <nav className="sidebar" id="sidebar">
@@ -61,13 +63,23 @@ export default function Sidebar() {
         </NavLink>
       )}
 
-      <NavLink to="/inventory" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-        <span className="icon"><Boxes size={16} strokeWidth={2} /></span><span>Kho</span>
-      </NavLink>
+      {showInventory && (
+        <>
+          <NavLink to="/inventory" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <span className="icon"><Boxes size={16} strokeWidth={2} /></span><span>Kho</span>
+          </NavLink>
 
-      <NavLink to="/inventory-summary" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-        <span className="icon"><BookText size={16} strokeWidth={2} /></span><span>Thong ke kho</span>
-      </NavLink>
+          <NavLink to="/inventory-summary" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <span className="icon"><BookText size={16} strokeWidth={2} /></span><span>Thong ke kho</span>
+          </NavLink>
+        </>
+      )}
+
+      {provider === 'shopee' && (
+        <NavLink to="/shopee-commission" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <span className="icon"><Coins size={16} strokeWidth={2} /></span><span>Hoa hong</span>
+        </NavLink>
+      )}
 
       <NavLink to="/google-sheets" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <span className="icon"><FileSpreadsheet size={16} strokeWidth={2} /></span><span>Google Sheet</span>

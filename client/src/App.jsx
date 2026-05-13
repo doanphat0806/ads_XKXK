@@ -18,6 +18,7 @@ import InventorySummary from './pages/InventorySummary';
 import GoogleSheets from './pages/GoogleSheets';
 import CreaterPage from './pages/CreaterPage';
 import CreateCampaign from './pages/Pages';
+import ShopeeCommission from './pages/ShopeeCommission';
 import ModalContainer from './components/ModalContainer';
 
 function AppContent() {
@@ -46,6 +47,8 @@ function AppContent() {
         return 'Kho';
       case '/inventory-summary':
         return 'Thong ke kho';
+      case '/shopee-commission':
+        return 'Hoa hong Shopee';
       case '/google-sheets':
         return 'Google Sheets';
       case '/creater-page':
@@ -75,6 +78,7 @@ function AppContent() {
             <Route path="/orders" element={<Orders />} />
             <Route path="/inventory" element={<Inventory />} />
             <Route path="/inventory-summary" element={<InventorySummary />} />
+            <Route path="/shopee-commission" element={<ShopeeCommission />} />
             <Route path="/google-sheets" element={<GoogleSheets />} />
             <Route path="/creater-page" element={<CreaterPage />} />
             <Route path="/logs" element={<Logs />} />
