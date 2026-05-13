@@ -273,6 +273,7 @@ const AUTH_SECRET = String(process.env.AUTH_SECRET || process.env.SESSION_SECRET
 const DEFAULT_LOGIN_USERS = [
   { username: 'admin', password: process.env.USER_ADMIN_PASSWORD || 'admin', displayName: 'Admin', provider: 'facebook' },
   { username: 'admin1', password: process.env.USER_ADMIN1_PASSWORD || 'admin', displayName: 'Shopee Admin', provider: 'shopee' },
+  { username: 'phat', password: process.env.USER_PHAT_PASSWORD || 'phat', displayName: 'Phat', provider: 'shopee' },
   { username: 'user2', password: process.env.USER2_PASSWORD || 'admin', displayName: 'User 2', provider: 'facebook' },
   { username: 'user3', password: process.env.USER3_PASSWORD || 'admin', displayName: 'User 3', provider: 'facebook' },
   { username: 'user4', password: process.env.USER4_PASSWORD || 'admin', displayName: 'User 4', provider: 'facebook' }
