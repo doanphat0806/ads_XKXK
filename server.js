@@ -1249,6 +1249,20 @@ function parseCampaignAgeRange(ageMinValue, ageMaxValue, defaultAgeMin = 22, def
   return { ageMin, ageMax };
 }
 
+function parseCampaignGender(value, defaultValue = 'all') {
+  const normalized = String(value || defaultValue).trim().toLowerCase();
+  if (normalized === 'male' || normalized === 'nam' || normalized === '1') return 'male';
+  if (normalized === 'female' || normalized === 'nu' || normalized === 'nữ' || normalized === '2') return 'female';
+  return 'all';
+}
+
+function getMetaGenderTargeting(value) {
+  const gender = parseCampaignGender(value);
+  if (gender === 'male') return [1];
+  if (gender === 'female') return [2];
+  return [];
+}
+
 async function exchangeToken(shortToken, appId, appSecret) {
   try {
     const response = await axios.get('https://graph.facebook.com/oauth/access_token', {
@@ -5197,6 +5211,8 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
     const optimizationGoal = isShopee ? 'LINK_CLICKS' : DEFAULT_AD_SET_OPTIMIZATION_GOAL;
     const campaignBidStrategy = isShopee ? SHOPEE_CAMPAIGN_BID_STRATEGY : DEFAULT_CAMPAIGN_BID_STRATEGY;
     const shopeeCallToActionType = normalizeShopeeCallToActionType(req.body.callToActionType);
+    const campaignGender = isShopee ? parseCampaignGender(req.body.gender) : 'female';
+    const genderTargeting = getMetaGenderTargeting(campaignGender);
 
     const scheduledStart = parseVietnamCampaignStart(req.body.startTime);
     const campaignDate = campaignDateFromScheduledStart(scheduledStart);
@@ -5297,11 +5313,10 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
               advantage_audience: 0
             },
             ...(isShopee ? {
-              publisher_platforms: ['facebook', 'instagram', 'messenger'],
+              publisher_platforms: ['facebook'],
               facebook_positions: ['feed', 'facebook_reels', 'facebook_reels_overlay', 'profile_feed', 'notification', 'instream_video', 'marketplace', 'story', 'search'],
-              instagram_positions: ['stream', 'ig_search', 'story', 'explore', 'reels', 'explore_home', 'profile_feed'],
-              messenger_positions: ['story'],
-              device_platforms: ['mobile', 'desktop']
+              device_platforms: ['mobile', 'desktop'],
+              ...(genderTargeting.length ? { genders: genderTargeting } : {})
             } : {
               genders: [2]
             }),
@@ -5370,6 +5385,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
             campaignBidStrategy,
             bidAmount: isShopee ? shopeeBidAmount : undefined,
             callToActionType: isShopee ? shopeeCallToActionType : undefined,
+            gender: isShopee ? campaignGender : 'female',
             destinationUrl: isShopee ? destinationUrl : undefined,
             adName: finalAdName,
             campaignId: campaign.id,
@@ -5398,6 +5414,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
             campaignBidStrategy,
             bidAmount: isShopee ? shopeeBidAmount : undefined,
             callToActionType: isShopee ? shopeeCallToActionType : undefined,
+            gender: isShopee ? campaignGender : 'female',
             destinationUrl: isShopee ? destinationUrl : undefined,
             postPageId: matchedPostInfo?.pageId,
             postPageName: matchedPostInfo?.pageName,

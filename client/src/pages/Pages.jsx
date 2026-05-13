@@ -19,6 +19,11 @@ const SHOPEE_CTA_OPTIONS = [
   { value: 'NO_BUTTON', label: 'Khong them' },
   { value: 'SHOP_NOW', label: 'Mua ngay' }
 ];
+const SHOPEE_GENDER_OPTIONS = [
+  { value: 'all', label: 'Tat ca' },
+  { value: 'female', label: 'Nu' },
+  { value: 'male', label: 'Nam' }
+];
 const AD_NAME_PREFIX_OPTIONS = ['PHAT', 'BINH', 'HIEU'];
 const AD_STATUS_OPTIONS = ['Sale', 'Sẵn', 'Win', 'Test'];
 
@@ -126,6 +131,7 @@ export default function CreateCampaign() {
   const [campaignCodes, setCampaignCodes] = useState('');
   const [campaignLinks, setCampaignLinks] = useState('');
   const [shopeeCallToActionType, setShopeeCallToActionType] = useState('NO_BUTTON');
+  const [shopeeGender, setShopeeGender] = useState('all');
   const [dailyBudget, setDailyBudget] = useState(
     isInitialShopeeProvider ? SHOPEE_DEFAULT_DAILY_BUDGET : FACEBOOK_DEFAULT_DAILY_BUDGET
   );
@@ -436,7 +442,7 @@ export default function CreateCampaign() {
         ageMin,
         ageMax,
         ...(selectedProvider === 'shopee'
-          ? { bidAmount, callToActionType: shopeeCallToActionType }
+          ? { bidAmount, callToActionType: shopeeCallToActionType, gender: shopeeGender }
           : { adNamePrefix, adNameStatus }),
         pageId: selectedPage?.id || ''
       }, {
@@ -521,7 +527,7 @@ export default function CreateCampaign() {
   };
 
   const campaignFormColumns = selectedProvider === 'shopee'
-    ? 'minmax(200px, 0.85fr) minmax(250px, 1fr) minmax(280px, 1.1fr) minmax(145px, 0.55fr) 120px 90px 170px 75px 75px'
+    ? 'minmax(200px, 0.85fr) minmax(250px, 1fr) minmax(280px, 1.1fr) minmax(145px, 0.55fr) 120px 90px 170px 92px 75px 75px'
     : 'minmax(260px, 1fr) 120px minmax(340px, 1.4fr) 150px 190px 90px 90px';
 
   return (
@@ -695,6 +701,16 @@ export default function CreateCampaign() {
                   value={bidAmount}
                   onChange={e => setBidAmount(Number(e.target.value || 0))}
                 />
+              </div>
+            )}
+            {selectedProvider === 'shopee' && (
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Gioi tinh</label>
+                <select value={shopeeGender} onChange={e => setShopeeGender(e.target.value)}>
+                  {SHOPEE_GENDER_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
               </div>
             )}
             <div className="form-group" style={{ marginBottom: 0 }}>
