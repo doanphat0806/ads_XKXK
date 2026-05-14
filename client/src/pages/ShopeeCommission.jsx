@@ -4,6 +4,57 @@ import { api, formatNumber, formatVND, todayString } from '../lib/api';
 
 const DEFAULT_FROM_DATE = '2026-04-27';
 
+function normalizeShopeeColumnName(value) {
+  return String(value || '')
+    .replace(/[\u0111\u0110]/g, 'd')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function findShopeeSubIdColumn(columns = []) {
+  return columns.find(column => {
+    const normalized = normalizeShopeeColumnName(column.name);
+    return normalized.includes('subid2') || normalized.includes('subid') || normalized === 'sub';
+  }) || null;
+}
+
+function findShopeeCommissionColumn(columns = []) {
+  return columns.find(column => {
+    const normalized = normalizeShopeeColumnName(column.name);
+    return normalized.includes('hoahong') || normalized.includes('commission');
+  }) || null;
+}
+
+function parseShopeeMoney(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw === '-') return 0;
+
+  let cleaned = raw
+    .replace(/[^\d,.-]/g, '')
+    .replace(/(?!^)-/g, '');
+  if (!cleaned || cleaned === '-') return 0;
+
+  const lastComma = cleaned.lastIndexOf(',');
+  const lastDot = cleaned.lastIndexOf('.');
+  if (lastComma >= 0 && lastDot >= 0) {
+    cleaned = lastComma > lastDot
+      ? cleaned.replace(/\./g, '').split(',')[0]
+      : cleaned.replace(/,/g, '');
+  } else if (lastComma >= 0) {
+    cleaned = cleaned.split(',')[0].replace(/,/g, '');
+  } else if (lastDot >= 0) {
+    const parts = cleaned.split('.');
+    cleaned = parts.length === 2 && parts[1].length === 3
+      ? cleaned.replace(/\./g, '')
+      : parts[0];
+  }
+
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export default function ShopeeCommission() {
   const [fromDate, setFromDate] = useState(DEFAULT_FROM_DATE);
   const [toDate, setToDate] = useState(() => todayString());
@@ -46,6 +97,39 @@ export default function ShopeeCommission() {
   const selectedData = summary?.selectedData || {};
   const selectedRows = selectedData.rows || [];
   const selectedDataColumns = selectedData.columns || savedColumns;
+  const subIdColumn = useMemo(() => findShopeeSubIdColumn(selectedDataColumns), [selectedDataColumns]);
+  const commissionColumn = useMemo(() => findShopeeCommissionColumn(selectedDataColumns), [selectedDataColumns]);
+  const selectedColumnPositionByIndex = useMemo(() => (
+    new Map(selectedDataColumns.map((column, index) => [column.index, index]))
+  ), [selectedDataColumns]);
+  const commissionBySubId = useMemo(() => {
+    if (!subIdColumn || !commissionColumn) return [];
+
+    const subIdPosition = selectedColumnPositionByIndex.get(subIdColumn.index);
+    const commissionPosition = selectedColumnPositionByIndex.get(commissionColumn.index);
+    if (!Number.isInteger(subIdPosition) || !Number.isInteger(commissionPosition)) return [];
+
+    const groups = new Map();
+    for (const row of selectedRows) {
+      const subId = String(row.cells?.[subIdPosition] || '').trim();
+      if (!subId) continue;
+
+      const commission = parseShopeeMoney(row.cells?.[commissionPosition]);
+      if (!groups.has(subId)) {
+        groups.set(subId, { subId, commission: 0, rowCount: 0 });
+      }
+      const group = groups.get(subId);
+      group.commission += commission;
+      group.rowCount += 1;
+    }
+
+    return [...groups.values()]
+      .map(group => ({
+        ...group,
+        commission: Math.round(group.commission)
+      }))
+      .sort((a, b) => b.commission - a.commission || a.subId.localeCompare(b.subId));
+  }, [commissionColumn, selectedColumnPositionByIndex, selectedRows, subIdColumn]);
   const avgDailySpend = useMemo(() => {
     const dayCount = Number(summary?.activeDayCount || 0);
     return dayCount > 0 ? Number(summary?.totalSpend || 0) / dayCount : 0;
@@ -263,7 +347,7 @@ export default function ShopeeCommission() {
         </div>
         {savedColumns.length > 0 && (
           <div style={{ padding: '0 20px 16px', color: 'var(--muted2)', fontSize: '12px' }}>
-            Bang nay chi hien cac cot sheet da luu. Cot cuoi la so tien chi tieu theo ngay khop voi cot thoi gian da chon.
+            Bang nay tong hop hoa hong theo tung SUB_ID2 va lam tron so tien hoa hong.
             {selectedData.error ? ` Loi doc sheet: ${selectedData.error}` : ''}
           </div>
         )}
@@ -271,7 +355,24 @@ export default function ShopeeCommission() {
           {loading && !summary ? (
             <div className="empty"><span className="spin">...</span><p>Dang tai...</p></div>
           ) : savedColumns.length > 0 ? (
-            selectedRows.length === 0 ? (
+            commissionBySubId.length > 0 ? (
+              <table className="tbl" style={{ minWidth: '620px' }}>
+                <thead>
+                  <tr>
+                    <th>SUB_ID2</th>
+                    <th className="text-right">Tong hoa hong</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {commissionBySubId.map(row => (
+                    <tr key={row.subId}>
+                      <td>{row.subId}</td>
+                      <td className="text-right mono-sm">{formatVND(row.commission || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : selectedRows.length === 0 ? (
               <div className="empty"><div className="ei">0</div><p>Chua co du lieu sheet da luu</p></div>
             ) : (
               <table className="tbl" style={{ minWidth: `${Math.max(760, selectedDataColumns.length * 150 + 180)}px` }}>

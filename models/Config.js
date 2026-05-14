@@ -31,6 +31,7 @@ const ConfigSchema = new mongoose.Schema({
   lifetimeCpcLimit: { type: Number, default: 500 },
   autoPauseCpoLimit: { type: Number, default: 100000 },
   autoPauseZeroOrderSpendLimit: { type: Number, default: 60000 },
+  dataPurchaseOrderMeta: { type: mongoose.Schema.Types.Mixed, default: {} },
 
   updatedAt: { type: Date, default: Date.now }
 });

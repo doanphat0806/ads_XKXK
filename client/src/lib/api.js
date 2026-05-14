@@ -124,6 +124,51 @@ export async function cachedApi(method, path, body = null, options = {}) {
   return request;
 }
 
+export async function uploadForm(path, formData, options = {}) {
+  const controller = new AbortController();
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 120000;
+  const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  const headers = {};
+  const token = getAuthToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let res;
+  try {
+    res = await fetch(apiUrl(path), {
+      method: 'POST',
+      headers,
+      body: formData,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('Request qua lau, vui long thu lai hoac cap nhat it du lieu hon', { cause: error });
+    }
+    throw error;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+
+  const text = await res.text();
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: getHttpErrorMessage(res.status, text) };
+    }
+  }
+
+  if (!res.ok) {
+    const error = new Error(data?.error || getHttpErrorMessage(res.status, text));
+    error.status = res.status;
+    if (data && typeof data === 'object') Object.assign(error, data);
+    throw error;
+  }
+
+  return data;
+}
+
 export async function downloadFile(path, filenameFallback = 'download.csv') {
   const controller = new AbortController();
   const opts = {

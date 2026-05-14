@@ -12,6 +12,8 @@ import Accounts from './pages/Accounts';
 import Campaigns from './pages/Campaigns';
 import CloneCampaigns from './pages/CloneCampaigns';
 import Orders from './pages/Orders';
+import PurchaseOrders from './pages/PurchaseOrders';
+import DataPurchaseOrders from './pages/DataPurchaseOrders';
 import Logs from './pages/Logs';
 import Inventory from './pages/Inventory';
 import InventorySummary from './pages/InventorySummary';
@@ -41,6 +43,10 @@ function AppContent() {
         return 'Nhan Camp';
       case '/orders':
         return 'Don hang';
+      case '/purchase-orders':
+        return 'Đặt Hàng';
+      case '/data-purchase-orders':
+        return 'DATA ĐẶT HÀNG';
       case '/logs':
         return 'Nhat ky';
       case '/inventory':
@@ -76,6 +82,8 @@ function AppContent() {
             <Route path="/campaigns" element={<Campaigns />} />
             <Route path="/clone-campaigns" element={<CloneCampaigns />} />
             <Route path="/orders" element={<Orders />} />
+            <Route path="/purchase-orders" element={<PurchaseOrders />} />
+            <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
             <Route path="/inventory" element={<Inventory />} />
             <Route path="/inventory-summary" element={<InventorySummary />} />
             <Route path="/shopee-commission" element={<ShopeeCommission />} />

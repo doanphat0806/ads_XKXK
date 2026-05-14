@@ -139,6 +139,8 @@ const FacebookToken = require('./models/FacebookToken');
 const Order = require('./models/Order');
 const InventoryItem = require('./models/InventoryItem');
 const FacebookPost = require('./models/FacebookPost');
+const DataPurchaseOrder = require('./models/DataPurchaseOrder');
+const PurchaseOrder = require('./models/PurchaseOrder');
 const {
   buildOrderQuery,
   getOrderItemsFromRaw,
@@ -147,6 +149,7 @@ const {
   useSheetOrders,
   normalizeStatusKey,
   buildOrderSkuStats,
+  buildOrderTableStats,
   fetchOrderSheetRows,
   getOrderSheetOrders,
   getOrderStatsCacheKey,
@@ -167,6 +170,15 @@ const {
   fetchInventorySheetItemsWithGoogleAccess,
   updateInventorySheetSalePriceWithGoogleAccess
 } = require('./services/inventorySheetService');
+const {
+  getDataPurchaseOrders,
+  importDataPurchaseOrdersFromCsvText,
+  syncDataPurchaseOrdersFromSheet
+} = require('./services/dataPurchaseOrderSheetService');
+const {
+  getPurchaseOrders,
+  updatePurchaseOrder
+} = require('./services/purchaseOrderService');
 const {
   DEFAULT_CAMPAIGN_DAILY_BUDGET,
   SHOPEE_CAMPAIGN_DAILY_BUDGET,
@@ -240,6 +252,10 @@ function buildAccountProviderFilter(provider) {
     };
   }
   return { provider: normalizedProvider };
+}
+
+function escapeRegExp(value = '') {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function isShopeeAdAccountName(name) {
@@ -6500,22 +6516,27 @@ app.post('/api/webhooks/pancake', async (req, res) => {
 app.get('/api/orders', async (req, res) => {
   try {
     const { fromDate, toDate } = req.query;
+    const search = String(req.query.search || '').trim();
     const page = parseBoundedInt(req.query.page, 1, 1, 100000);
     const limit = parseBoundedInt(req.query.limit, 100, 1, 1000);
     const wantsPaged = req.query.page !== undefined || req.query.limit !== undefined;
 
     if (useSheetOrders()) {
-      const orders = await getOrderSheetOrders({ fromDate, toDate });
+      const orders = await getOrderSheetOrders({ fromDate, toDate, search });
       if (wantsPaged) {
         const total = orders.length;
         const start = (page - 1) * limit;
         res.json({
           ok: true,
+          source: 'google_sheet',
           orders: orders.slice(start, start + limit),
           total,
           page,
           limit,
-          totalPages: Math.ceil(total / limit) || 1
+          totalPages: Math.ceil(total / limit) || 1,
+          stats: buildOrderTableStats(orders),
+          cachedAt: ordersSheetCache.fetchedAt ? new Date(ordersSheetCache.fetchedAt).toISOString() : '',
+          lastError: ordersSheetCache.lastError || ''
         });
         return;
       }
@@ -6524,17 +6545,40 @@ app.get('/api/orders', async (req, res) => {
     }
 
     const query = buildOrderQuery({ fromDate, toDate });
+    if (search) {
+      const searchRegex = escapeRegExp(search);
+      query.$or = [
+        { orderId: { $regex: searchRegex, $options: 'i' } },
+        { status: { $regex: searchRegex, $options: 'i' } },
+        { customerName: { $regex: searchRegex, $options: 'i' } },
+        { 'rawData.status_name': { $regex: searchRegex, $options: 'i' } },
+        { 'rawData.sheetColumns.col4': { $regex: searchRegex, $options: 'i' } },
+        { 'rawData.sheetColumns.col8': { $regex: searchRegex, $options: 'i' } },
+        { 'rawData.sheetColumns.col11': { $regex: searchRegex, $options: 'i' } },
+        { 'rawData.sheetColumns.col13': { $regex: searchRegex, $options: 'i' } }
+      ];
+    }
     if (wantsPaged) {
-      const [orders, total] = await Promise.all([
+      const [orders, total, statsOrders] = await Promise.all([
         Order.find(query)
           .select('orderId status rawData createdAt')
           .sort('-createdAt')
           .skip((page - 1) * limit)
           .limit(limit)
           .lean(),
-        Order.countDocuments(query)
+        Order.countDocuments(query),
+        Order.find(query).select('rawData orderId status customerName').limit(200000).lean()
       ]);
-      res.json({ ok: true, orders, total, page, limit, totalPages: Math.ceil(total / limit) || 1 });
+      res.json({
+        ok: true,
+        source: 'database',
+        orders,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 1,
+        stats: buildOrderTableStats(statsOrders)
+      });
       return;
     }
 
@@ -6580,6 +6624,103 @@ app.get('/api/orders/sku-counts', async (req, res) => {
 });
 
 // ── Đồng bộ đơn hàng từ Google Sheet ──
+
+app.get('/api/data-purchase-orders', async (req, res) => {
+  try {
+    const page = parseBoundedInt(req.query.page, 1, 1, 100000);
+    const limit = parseBoundedInt(req.query.limit, 100, 1, 1000);
+    const search = String(req.query.search || '').trim();
+    const refresh = ['1', 'true', 'yes'].includes(String(req.query.refresh || '').toLowerCase());
+
+    if (refresh) {
+      let accessToken = '';
+      try {
+        accessToken = await getGoogleAccessToken(req);
+      } catch {
+        accessToken = '';
+      }
+      await syncDataPurchaseOrdersFromSheet({ accessToken });
+    }
+
+    const data = await getDataPurchaseOrders({ page, limit, search });
+    res.json({ ok: true, ...data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/data-purchase-orders/sync', async (req, res) => {
+  try {
+    let accessToken = '';
+
+    try {
+      accessToken = await getGoogleAccessToken(req);
+    } catch {
+      accessToken = '';
+    }
+
+    const result = await syncDataPurchaseOrdersFromSheet({ accessToken });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/data-purchase-orders/import-csv', async (req, res) => {
+  try {
+    const contentType = String(req.headers['content-type'] || '').toLowerCase();
+    let csvText = '';
+
+    if (contentType.includes('multipart/form-data')) {
+      const request = new Request(`http://localhost${req.originalUrl || req.url}`, {
+        method: req.method,
+        headers: req.headers,
+        body: req,
+        duplex: 'half'
+      });
+      const formData = await request.formData();
+      const csvFile = formData.get('file') || formData.get('csv');
+      if (!csvFile || typeof csvFile.text !== 'function') {
+        return res.status(400).json({ error: 'Chưa chọn file CSV' });
+      }
+      csvText = await csvFile.text();
+    } else {
+      csvText = String(req.body?.csv || '');
+    }
+
+    if (!csvText.trim()) {
+      return res.status(400).json({ error: 'CSV rỗng hoặc không đọc được dữ liệu' });
+    }
+
+    const result = await importDataPurchaseOrdersFromCsvText(csvText);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/purchase-orders', async (req, res) => {
+  try {
+    const page = parseBoundedInt(req.query.page, 1, 1, 100000);
+    const limit = parseBoundedInt(req.query.limit, 100, 1, 1000);
+    const fromDate = String(req.query.fromDate || '').trim();
+    const toDate = String(req.query.toDate || '').trim();
+    const search = String(req.query.search || '').trim();
+    const data = await getPurchaseOrders({ fromDate, toDate, search, page, limit });
+    res.json({ ok: true, ...data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/purchase-orders/:orderId', async (req, res) => {
+  try {
+    const result = await updatePurchaseOrder(req.params.orderId, req.body || {});
+    res.json({ ok: true, order: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 app.get('/api/inventory', async (req, res) => {
   try {
@@ -7138,13 +7279,35 @@ async function ensureCampaignDailyStorage() {
   console.log('Campaign daily indexes ready');
 }
 
+async function ensurePurchaseOrderStorage() {
+  const purchaseOrdersCollection = mongoose.connection.collection('purchaseorders');
+  const legacyIndexNames = [
+    'purchase_order_sheet_row_unique',
+    'sheetId_1_sheetName_1_rowNumber_1'
+  ];
+
+  for (const indexName of legacyIndexNames) {
+    try {
+      await purchaseOrdersCollection.dropIndex(indexName);
+      console.log(`Dropped legacy purchase order index: ${indexName}`);
+    } catch (error) {
+      if (!['IndexNotFound', 'NamespaceNotFound'].includes(error?.codeName)) {
+        throw error;
+      }
+    }
+  }
+}
+
 async function ensureApplicationIndexes() {
+  await ensurePurchaseOrderStorage();
   await Promise.all([
     Account.createIndexes(),
     Log.createIndexes(),
     Order.createIndexes(),
     InventoryItem.createIndexes(),
     FacebookPost.createIndexes(),
+    DataPurchaseOrder.createIndexes(),
+    PurchaseOrder.createIndexes(),
     Config.createIndexes(),
     User.createIndexes(),
     FacebookToken.createIndexes()

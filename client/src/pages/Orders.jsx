@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, RefreshCw, Search } from 'lucide-react';
 import { useAppContext } from '../contexts/AppContext';
 import { api } from '../lib/api';
 import { toast } from 'react-toastify';
-
 
 const DEFAULT_ORDERS_PER_PAGE = 100;
 const ORDER_SYNC_DONE_STATES = new Set(['completed', 'completed_with_errors', 'failed']);
@@ -32,44 +32,112 @@ const formatCreatedAt = (value) => {
   return date.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
 };
 
-// Trạng thái → badge class
+const normalizeStatus = (value = '') => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[đĐ]/g, 'd')
+  .toLowerCase()
+  .replace(/\s+/g, ' ')
+  .trim();
+
 const getStatusClass = (rawStatus = '') => {
-  const s = String(rawStatus).toLowerCase().trim();
-  if (['đã giao', 'da giao', 'thành công', 'thanh cong', 'success', 'completed'].some(k => s.includes(k))) return 'active';
-  if (['hoàn trả', 'hoan tra', 'đã hủy', 'da huy', 'cancelled', 'returned'].some(k => s.includes(k))) return 'error';
+  const status = normalizeStatus(rawStatus);
+  if (['da giao', 'thanh cong', 'success', 'completed', 'da nhan'].some(key => status.includes(key))) {
+    return 'active';
+  }
+  if (['hoan tra', 'dang hoan', 'da hoan', 'da huy', 'huy', 'cancelled', 'returned'].some(key => status.includes(key))) {
+    return 'error';
+  }
   return 'paused';
 };
 
-// Map đơn từ Google Sheet
-// col12(L)=ID2(Mã đơn), col2(B)=Ngày tạo, col4(D)=Mã SP,
-// col7(G)=Số lượng, col8(H)=Trạng thái, col11(K)=SIZE, col13(M)=Thẻ
-const mapSheetOrder = (order) => {
+const getFirstItem = (raw = {}) => {
+  const items = [raw.items, raw.line_items, raw.products, raw.details].find(Array.isArray) || [];
+  return asObject(items[0]);
+};
+
+const getItemSku = (item = {}, sheet = {}) => {
+  const variationInfo = asObject(item.variation_info);
+  return toText(
+    sheet.col4 ||
+      variationInfo.product_display_id ||
+      variationInfo.display_id ||
+      item.sku ||
+      item.item_code ||
+      item.product_name ||
+      item.name
+  );
+};
+
+const getItemQuantity = (item = {}, sheet = {}) => toText(
+  sheet.col7 ||
+    item.quantity ||
+    item.qty ||
+    item.amount ||
+    item.count,
+  '1'
+);
+
+const getItemSize = (item = {}, sheet = {}) => {
+  const variationInfo = asObject(item.variation_info);
+  return toText(
+    sheet.col11 ||
+      item.size ||
+      item.variation_value ||
+      variationInfo.detail ||
+      variationInfo.name
+  );
+};
+
+const mapSheetOrder = (order, index) => {
   const raw = asObject(order.rawData);
   const sheet = asObject(raw.sheetColumns);
-  const statusRaw = toText(sheet.col8 || raw.status_name || order.status, '');
+  const item = getFirstItem(raw);
+  const statusRaw = toText(sheet.col8 || raw.status_name || raw.status || order.status, '');
+  const tags = Array.isArray(raw.tags) ? raw.tags.join(', ') : '';
 
-  return [{
-    rawDate:     new Date(order.createdAt),
-    dateStr:     toText(sheet.col2, formatCreatedAt(order.createdAt)),
-    orderId:     toText(order.orderId || sheet.col12),
-    sku:         toText(sheet.col4),
-    qty:         toText(sheet.col7, '1'),
-    posStatus:   statusRaw || '-',
-    size:        toText(sheet.col11),
-    tagsStr:     toText(sheet.col13),
+  return {
+    key: `${raw.rowNumber || order.orderId || index}-${sheet.col4 || index}`,
+    rowNumber: raw.rowNumber || '',
+    dateStr: toText(sheet.col2, formatCreatedAt(order.createdAt)),
+    orderId: toText(order.orderId || sheet.col12),
+    sku: getItemSku(item, sheet),
+    qty: getItemQuantity(item, sheet),
+    posStatus: statusRaw || '-',
+    size: getItemSize(item, sheet),
+    tagsStr: toText(sheet.col13 || tags, '-'),
     statusClass: getStatusClass(statusRaw)
-  }];
+  };
+};
+
+const getStatusSummary = (statusCounts = {}) => {
+  const entries = Object.entries(statusCounts)
+    .filter(([, count]) => Number(count) > 0)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, 3);
+
+  if (!entries.length) return '-';
+  return entries.map(([status, count]) => `${status}: ${Number(count).toLocaleString('vi-VN')}`).join(' | ');
 };
 
 export default function Orders() {
   const { provider, loadAll } = useAppContext();
-  const [allOrderRows, setAllOrderRows] = useState([]);
+  const [orderRows, setOrderRows] = useState([]);
   const [totalRows, setTotalRows] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [summary, setSummary] = useState({
+    totalQuantity: 0,
+    uniqueSkus: 0,
+    statusCounts: {}
+  });
+  const [source, setSource] = useState('google_sheet');
+  const [lastSyncedAt, setLastSyncedAt] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const [filterFromDate, setFilterFromDate] = useState(() => daysAgoString(7));
   const [filterToDate, setFilterToDate] = useState(() => daysAgoString(0));
+  const [searchTerm, setSearchTerm] = useState('');
 
   const [currentPage, setCurrentPage] = useState(1);
   const [ordersPerPage, setOrdersPerPage] = useState(DEFAULT_ORDERS_PER_PAGE);
@@ -80,10 +148,11 @@ export default function Orders() {
     try {
       const fromDate = filterFromDate;
       const toDate = filterToDate;
+      const search = searchTerm.trim();
 
       if (shouldSync) {
         toast.info('Đang tải dữ liệu từ Google Sheet...');
-        const result = await api('POST', '/orders/sync', { fromDate, toDate });
+        const result = await api('POST', '/orders/sync', { fromDate, toDate, queue: true });
         let synced = result.synced ?? 0;
 
         if (result.queued && result.jobId) {
@@ -100,21 +169,26 @@ export default function Orders() {
           }
         }
 
-        toast.success(`Đã tải ${synced} dòng đơn hàng`);
+        toast.success(`Đã tải ${Number(synced || 0).toLocaleString('vi-VN')} dòng đơn hàng`);
       }
 
       const params = new URLSearchParams();
       if (fromDate) params.set('fromDate', fromDate);
       if (toDate) params.set('toDate', toDate);
+      if (search) params.set('search', search);
       params.set('page', String(page));
       params.set('limit', String(ordersPerPage));
 
       const data = await api('GET', `/orders?${params.toString()}`);
       const orders = Array.isArray(data) ? data : data.orders || [];
-      const rows = orders.flatMap(order => mapSheetOrder(order));
+      const rows = orders.map((order, index) => mapSheetOrder(order, index));
 
-      setAllOrderRows(rows);
-      setTotalRows(Array.isArray(data) ? rows.length : data.total || 0);
+      setOrderRows(rows);
+      setTotalRows(Array.isArray(data) ? rows.length : Number(data.total || 0));
+      setTotalPages(Array.isArray(data) ? 1 : Number(data.totalPages || 1));
+      setSummary(data?.stats || { totalQuantity: 0, uniqueSkus: 0, statusCounts: {} });
+      setSource(data?.source || 'google_sheet');
+      setLastSyncedAt(data?.cachedAt || '');
       setCurrentPage(page);
       if (shouldSync) loadAll?.();
     } catch (e) {
@@ -130,17 +204,21 @@ export default function Orders() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, currentPage, ordersPerPage]);
 
-  const pageRows = useMemo(() => allOrderRows, [allOrderRows]);
-  const totalPages = Math.ceil(totalRows / ordersPerPage) || 1;
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [ordersPerPage, filterFromDate, filterToDate, searchTerm]);
 
-  useEffect(() => { setCurrentPage(1); }, [ordersPerPage, filterFromDate, filterToDate]);
+  const pageRows = useMemo(() => orderRows, [orderRows]);
+  const rangeStart = totalRows === 0 ? 0 : ((currentPage - 1) * ordersPerPage) + 1;
+  const rangeEnd = Math.min(totalRows, currentPage * ordersPerPage);
+  const sourceLabel = source === 'google_sheet' ? 'Google Sheet' : 'Cơ sở dữ liệu';
 
   if (provider === 'shopee') {
     return (
       <div id="page-orders">
         <div className="card">
           <div className="card-header"><div className="card-title">Đơn hàng không khả dụng với Shopee</div></div>
-          <div className="card-body" style={{ padding: '20px' }}>
+          <div className="card-body orders-card-body">
             <p>Trang Đơn hàng chỉ hiển thị với Facebook.</p>
           </div>
         </div>
@@ -150,16 +228,23 @@ export default function Orders() {
 
   return (
     <div id="page-orders">
-      {/* Bộ lọc lấy dữ liệu */}
-      <div className="card section-gap">
+      <div className="card section-gap orders-filter-card">
         <div className="card-header">
-          <div className="card-title">Dữ liệu đơn hàng từ Google Sheet</div>
+          <div>
+            <div className="card-title">Bảng đặt hàng từ Google Sheet</div>
+            <div className="orders-source-note">
+              Nguồn: {sourceLabel}
+              {lastSyncedAt ? ` | Cache: ${formatCreatedAt(lastSyncedAt)}` : ''}
+            </div>
+          </div>
           <button className="btn btn-g btn-sm" onClick={() => loadOrders({ shouldSync: true, page: 1 })} disabled={loading}>
-            {loading ? 'Đang tải...' : 'Tải lại'}
+            <RefreshCw size={14} className={loading ? 'spin' : ''} />
+            {loading ? 'Đang tải' : 'Tải từ Sheet'}
           </button>
         </div>
-        <div style={{ padding: '16px 18px' }}>
-          <div className="form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+
+        <div className="orders-filter-body">
+          <div className="form-grid orders-filter-grid">
             <div className="form-group">
               <label>Từ ngày</label>
               <input type="date" value={filterFromDate} onChange={e => setFilterFromDate(e.target.value)} />
@@ -168,8 +253,20 @@ export default function Orders() {
               <label>Đến ngày</label>
               <input type="date" value={filterToDate} onChange={e => setFilterToDate(e.target.value)} />
             </div>
-            <div className="form-group" style={{ justifyContent: 'flex-end' }}>
+            <div className="form-group orders-search-field">
+              <label>Tìm đơn / SKU / trạng thái</label>
+              <input
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') loadOrders({ page: 1 });
+                }}
+                placeholder="Nhập mã đơn, mã sản phẩm..."
+              />
+            </div>
+            <div className="form-group orders-filter-action">
               <button className="btn btn-ghost" onClick={() => loadOrders({ page: 1 })} disabled={loading}>
+                <Search size={14} />
                 Lọc dữ liệu
               </button>
             </div>
@@ -177,44 +274,76 @@ export default function Orders() {
         </div>
       </div>
 
-      {/* Bảng chi tiết */}
+      <div className="orders-summary-grid section-gap">
+        <div className="stat">
+          <div className="stat-label">Dòng đơn hàng</div>
+          <div className="stat-value">{totalRows.toLocaleString('vi-VN')}</div>
+          <div className="stat-sub">{rangeStart.toLocaleString('vi-VN')} - {rangeEnd.toLocaleString('vi-VN')} đang hiển thị</div>
+        </div>
+        <div className="stat b">
+          <div className="stat-label">Tổng số lượng</div>
+          <div className="stat-value b">{Number(summary.totalQuantity || 0).toLocaleString('vi-VN')}</div>
+          <div className="stat-sub">Theo bộ lọc hiện tại</div>
+        </div>
+        <div className="stat teal">
+          <div className="stat-label">Mã sản phẩm</div>
+          <div className="stat-value teal">{Number(summary.uniqueSkus || 0).toLocaleString('vi-VN')}</div>
+          <div className="stat-sub">SKU duy nhất</div>
+        </div>
+        <div className="stat o">
+          <div className="stat-label">Trạng thái nhiều nhất</div>
+          <div className="stat-value orders-status-summary">{getStatusSummary(summary.statusCounts)}</div>
+          <div className="stat-sub">Top 3 trạng thái</div>
+        </div>
+      </div>
+
       <div className="card">
-        <div className="card-header">
+        <div className="card-header orders-table-header">
           <div className="card-title">
             Chi tiết đơn hàng (<span id="orderCount">{totalRows.toLocaleString('vi-VN')} dòng</span>)
           </div>
+          <div className="orders-page-size">
+            <span>Hiển thị</span>
+            <select value={ordersPerPage} onChange={e => setOrdersPerPage(Number(e.target.value))}>
+              <option value="100">100 / trang</option>
+              <option value="500">500 / trang</option>
+              <option value="1000">1000 / trang</option>
+            </select>
+          </div>
         </div>
 
-        <div className="tbl-wrap">
+        <div className="tbl-wrap orders-table-wrap">
           {loading ? (
-            <div className="empty"><span className="spin">...</span><p style={{ marginTop: '10px' }}>Đang tải dữ liệu...</p></div>
+            <div className="empty"><span className="spin">...</span><p>Đang tải dữ liệu...</p></div>
           ) : error ? (
-            <div className="empty"><p style={{ color: 'var(--r)' }}>Lỗi: {error}</p></div>
+            <div className="empty"><p className="orders-error">Lỗi: {error}</p></div>
           ) : pageRows.length === 0 ? (
             <div className="empty"><div className="ei">0</div><p>Chưa có đơn hàng nào</p></div>
           ) : (
-            <table className="tbl">
+            <table className="tbl orders-table">
               <thead>
                 <tr>
+                  <th>Dòng</th>
                   <th>Ngày tạo đơn</th>
                   <th>ID2 (Mã đơn)</th>
                   <th>Mã sản phẩm</th>
-                  <th style={{ textAlign: 'center' }}>Số lượng</th>
+                  <th className="text-center">Số lượng</th>
                   <th>Trạng thái</th>
-                  <th>Thuộc tính SIZE</th>
+                  <th>Thuộc tính size</th>
                   <th>Thẻ</th>
                 </tr>
               </thead>
               <tbody>
-                {pageRows.map((row, index) => (
-                  <tr key={index} style={{ verticalAlign: 'middle' }}>
-                    <td style={{ fontFamily: 'var(--mono)', color: 'var(--muted)', whiteSpace: 'nowrap' }}>{row.dateStr}</td>
-                    <td style={{ fontFamily: 'var(--mono)', fontWeight: 'bold' }}>{row.orderId}</td>
-                    <td style={{ fontWeight: 600, color: '#1890ff', whiteSpace: 'nowrap' }}>{row.sku}</td>
-                    <td style={{ textAlign: 'center', fontFamily: 'var(--mono)' }}>{row.qty}</td>
+                {pageRows.map((row) => (
+                  <tr key={row.key}>
+                    <td className="orders-row-number">{row.rowNumber || '-'}</td>
+                    <td className="orders-date">{row.dateStr}</td>
+                    <td className="orders-id">{row.orderId}</td>
+                    <td className="orders-sku">{row.sku}</td>
+                    <td className="orders-qty">{row.qty}</td>
                     <td><span className={`badge ${row.statusClass}`}>{row.posStatus}</span></td>
-                    <td style={{ fontWeight: 600 }}>{row.size}</td>
-                    <td><span style={{ fontSize: '11px', background: 'var(--s2)', padding: '2px 6px', borderRadius: '4px', color: 'var(--txt)' }}>{row.tagsStr}</span></td>
+                    <td className="orders-size">{row.size}</td>
+                    <td><span className="orders-tag">{row.tagsStr}</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -223,21 +352,29 @@ export default function Orders() {
         </div>
 
         {totalRows > 0 && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', padding: '12px', background: 'var(--s1)', borderTop: '1px solid var(--border)' }}>
-            <button className="btn btn-ghost btn-sm" style={{ padding: '4px 8px', fontWeight: 'bold' }}
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1}>&lt;</button>
-            <div style={{ border: '1px solid #1890ff', color: '#1890ff', padding: '4px 12px', borderRadius: '4px', fontWeight: 'bold', fontSize: '13px', background: 'rgba(24,144,255,0.1)' }}>
-              {currentPage} / {totalPages}
+          <div className="orders-pagination">
+            <div className="orders-range">
+              {rangeStart.toLocaleString('vi-VN')} - {rangeEnd.toLocaleString('vi-VN')} / {totalRows.toLocaleString('vi-VN')} dòng
             </div>
-            <button className="btn btn-ghost btn-sm" style={{ padding: '4px 8px', fontWeight: 'bold' }}
-              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}>&gt;</button>
-            <select className="form-control"
-              style={{ width: 'auto', height: '32px', fontSize: '13px', marginLeft: '10px', background: 'var(--s3)', color: 'var(--txt)', border: '1px solid var(--border)', borderRadius: '4px', padding: '0 8px' }}
-              value={ordersPerPage} onChange={e => setOrdersPerPage(Number(e.target.value))}>
-              <option value="100">100 / trang</option>
-              <option value="500">500 / trang</option>
-              <option value="1000">1000 / trang</option>
-            </select>
+            <button
+              className="btn btn-ghost btn-sm btn-icon"
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage <= 1 || loading}
+              title="Trang trước"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <div className="orders-current-page">
+              {currentPage.toLocaleString('vi-VN')} / {totalPages.toLocaleString('vi-VN')}
+            </div>
+            <button
+              className="btn btn-ghost btn-sm btn-icon"
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage >= totalPages || loading}
+              title="Trang sau"
+            >
+              <ChevronRight size={16} />
+            </button>
           </div>
         )}
       </div>

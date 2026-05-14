@@ -73,6 +73,16 @@ function normalizeSkuKey(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
 }
 
+function normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[đĐ]/g, 'd')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function normalizeStatusKey(value) {
   return String(value || '')
     .normalize('NFD')
@@ -265,6 +275,67 @@ function mapOrderSheetRow(row, rowIndex) {
   };
 }
 
+function getOrderSearchText(order = {}) {
+  const raw = order.rawData || {};
+  const sheet = raw.sheetColumns || {};
+  const itemText = getOrderItemsFromRaw(raw)
+    .map(item => [
+      getOrderItemSku(item),
+      item.name,
+      item.product_name,
+      item.variation_value,
+      item.size,
+      item.variation_info?.name,
+      item.variation_info?.detail
+    ].filter(Boolean).join(' '))
+    .join(' ');
+
+  return normalizeSearchText([
+    order.orderId,
+    order.status,
+    order.customerName,
+    sheet.col12,
+    sheet.col2,
+    sheet.col4,
+    sheet.col7,
+    sheet.col8,
+    sheet.col11,
+    sheet.col13,
+    raw.status_name,
+    Array.isArray(raw.tags) ? raw.tags.join(' ') : raw.tags,
+    itemText
+  ].filter(Boolean).join(' '));
+}
+
+function orderMatchesSearch(order = {}, search = '') {
+  const term = normalizeSearchText(search);
+  if (!term) return true;
+  return getOrderSearchText(order).includes(term);
+}
+
+function buildOrderTableStats(orders = []) {
+  const uniqueSkus = new Set();
+  const statusCounts = {};
+  let totalQuantity = 0;
+
+  for (const order of orders) {
+    const status = toSheetText(order.status || order.rawData?.status_name || 'unknown', 'unknown');
+    statusCounts[status] = (statusCounts[status] || 0) + 1;
+
+    for (const item of getOrderItemsFromRaw(order.rawData || {})) {
+      const sku = normalizeSkuKey(getOrderItemSku(item));
+      if (sku) uniqueSkus.add(sku);
+      totalQuantity += getOrderItemQuantity(item);
+    }
+  }
+
+  return {
+    totalQuantity,
+    uniqueSkus: uniqueSkus.size,
+    statusCounts
+  };
+}
+
 function getOrderStatsCacheKey({ fromDate, toDate } = {}) {
   return `${fromDate || ''}:${toDate || ''}:${ordersSheetCache.fetchedAt || 0}`;
 }
@@ -419,11 +490,12 @@ async function fetchOrderSheetRows({ refresh = false } = {}) {
   return rows;
 }
 
-async function getOrderSheetOrders({ fromDate, toDate, limit, refresh = false } = {}) {
+async function getOrderSheetOrders({ fromDate, toDate, limit, refresh = false, search = '' } = {}) {
   const rows = await fetchOrderSheetRows({ refresh });
   let filtered = rows.filter(row => {
     if (fromDate && row.dateKey < fromDate) return false;
     if (toDate && row.dateKey > toDate) return false;
+    if (!orderMatchesSearch(row, search)) return false;
     return true;
   });
 
@@ -445,9 +517,11 @@ module.exports = {
   getOrderItemQuantity,
   normalizeSkuKey,
   normalizeStatusKey,
+  orderMatchesSearch,
   classifyReturnStatus,
   useSheetOrders,
   buildOrderSkuStats,
+  buildOrderTableStats,
   fetchOrderSheetRows,
   getOrderSheetOrders,
   getOrderStatsCacheKey,

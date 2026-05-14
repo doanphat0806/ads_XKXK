@@ -1,9 +1,10 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
   BarChart3,
   BookText,
   Boxes,
+  ChevronDown,
   CirclePlus,
   Coins,
   CopyPlus,
@@ -12,6 +13,7 @@ import {
   Megaphone,
   Package,
   PenSquare,
+  ShoppingCart,
   Settings,
   Users
 } from 'lucide-react';
@@ -19,8 +21,16 @@ import { useAppContext } from '../contexts/AppContext';
 
 export default function Sidebar() {
   const { stats, allAccounts, openModal, provider } = useAppContext();
+  const location = useLocation();
   const showOrders = provider !== 'shopee';
   const showInventory = provider !== 'shopee';
+  const dataPaths = ['/data-purchase-orders', '/inventory', '/orders', '/google-sheets'];
+  const dataRouteActive = dataPaths.some(path => location.pathname === path);
+  const [dataOpen, setDataOpen] = React.useState(dataRouteActive);
+
+  React.useEffect(() => {
+    if (dataRouteActive) setDataOpen(true);
+  }, [dataRouteActive]);
 
   return (
     <nav className="sidebar" id="sidebar">
@@ -58,21 +68,15 @@ export default function Sidebar() {
       </NavLink>
 
       {showOrders && (
-        <NavLink to="/orders" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="icon"><Package size={16} strokeWidth={2} /></span><span>Don hang</span>
+        <NavLink to="/purchase-orders" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <span className="icon"><ShoppingCart size={16} strokeWidth={2} /></span><span>Đặt Hàng</span>
         </NavLink>
       )}
 
       {showInventory && (
-        <>
-          <NavLink to="/inventory" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-            <span className="icon"><Boxes size={16} strokeWidth={2} /></span><span>Kho</span>
-          </NavLink>
-
-          <NavLink to="/inventory-summary" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-            <span className="icon"><BookText size={16} strokeWidth={2} /></span><span>Thong ke kho</span>
-          </NavLink>
-        </>
+        <NavLink to="/inventory-summary" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <span className="icon"><BookText size={16} strokeWidth={2} /></span><span>Thong ke kho</span>
+        </NavLink>
       )}
 
       {provider === 'shopee' && (
@@ -81,9 +85,46 @@ export default function Sidebar() {
         </NavLink>
       )}
 
-      <NavLink to="/google-sheets" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-        <span className="icon"><FileSpreadsheet size={16} strokeWidth={2} /></span><span>Google Sheet</span>
-      </NavLink>
+      {(showOrders || showInventory) && (
+        <div className={`nav-group ${dataOpen ? 'open' : ''}`}>
+          <button
+            type="button"
+            className={`nav-item nav-group-trigger ${dataRouteActive ? 'active' : ''}`}
+            onClick={() => setDataOpen(open => !open)}
+            aria-expanded={dataOpen}
+          >
+            <span className="icon"><FileSpreadsheet size={16} strokeWidth={2} /></span>
+            <span>DATA</span>
+            <ChevronDown className="nav-group-chevron" size={15} strokeWidth={2} />
+          </button>
+
+          {dataOpen && (
+            <div className="nav-subitems">
+              {showOrders && (
+                <NavLink to="/data-purchase-orders" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`}>
+                  <span className="icon"><FileSpreadsheet size={16} strokeWidth={2} /></span><span>DATA ĐẶT HÀNG</span>
+                </NavLink>
+              )}
+
+              {showInventory && (
+                <NavLink to="/inventory" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`}>
+                  <span className="icon"><Boxes size={16} strokeWidth={2} /></span><span>Kho</span>
+                </NavLink>
+              )}
+
+              {showOrders && (
+                <NavLink to="/orders" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`}>
+                  <span className="icon"><Package size={16} strokeWidth={2} /></span><span>Don hang</span>
+                </NavLink>
+              )}
+
+              <NavLink to="/google-sheets" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`}>
+                <span className="icon"><FileSpreadsheet size={16} strokeWidth={2} /></span><span>Google Sheet</span>
+              </NavLink>
+            </div>
+          )}
+        </div>
+      )}
 
       <NavLink to="/logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <span className="icon"><BookText size={16} strokeWidth={2} /></span><span>Nhat ky</span>
