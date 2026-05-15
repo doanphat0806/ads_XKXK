@@ -227,7 +227,6 @@ export default function Dashboard() {
   const [localCampaigns, setLocalCampaigns] = useState([]);
   const [statsLoading, setStatsLoading] = useState(false);
   const [campaignsLoading, setCampaignsLoading] = useState(false);
-  const [metaInsightsLoading, setMetaInsightsLoading] = useState(false);
   const [skuCounts, setSkuCounts] = useState({});
   const [skuTotal, setSkuTotal] = useState(0);
   const [returnStatsBySku, setReturnStatsBySku] = useState({});
@@ -281,7 +280,6 @@ export default function Dashboard() {
     dashboardLoadSeqRef.current = loadSeq;
     const statsUrl = `/stats?provider=${provider}&fromDate=${from}&toDate=${to}&includeOrders=false`;
     const campaignsUrl = `/campaigns/today?provider=${provider}&fromDate=${from}&toDate=${to}`;
-    const metaCampaignsUrl = `/campaigns/today?provider=${provider}&fromDate=${from}&toDate=${to}&includeMetaInsights=true`;
     const cachedStats = readResponseCache(`GET:${statsUrl}`);
     const cachedCampaigns = readResponseCache(`GET:${campaignsUrl}`);
     if (cachedStats) setLocalStats(cachedStats);
@@ -289,7 +287,6 @@ export default function Dashboard() {
 
     setStatsLoading(!cachedStats);
     setCampaignsLoading(!cachedCampaigns);
-    setMetaInsightsLoading(false);
 
     const applyCampaignRows = (data) => {
       if (dashboardLoadSeqRef.current !== loadSeq) return;
@@ -299,17 +296,6 @@ export default function Dashboard() {
         ...currentStats,
         ...buildStatsFromCampaigns(nextCampaigns, provider === 'shopee')
       }));
-    };
-
-    const refreshMetaInsights = () => {
-      if (provider === 'shopee' || dashboardLoadSeqRef.current !== loadSeq) return;
-      setMetaInsightsLoading(true);
-      cachedApi('GET', metaCampaignsUrl, null, { timeoutMs: 5 * 60 * 1000 })
-        .then(applyCampaignRows)
-        .catch(e => console.error('Failed to refresh dashboard Meta insights', e))
-        .finally(() => {
-          if (dashboardLoadSeqRef.current === loadSeq) setMetaInsightsLoading(false);
-        });
     };
 
     try {
@@ -325,11 +311,9 @@ export default function Dashboard() {
       const campaignsPromise = cachedApi('GET', campaignsUrl, null, { timeoutMs: 5 * 60 * 1000 })
         .then(data => {
           applyCampaignRows(data);
-          refreshMetaInsights();
         })
         .catch(e => {
           console.error('Failed to load dashboard campaigns', e);
-          refreshMetaInsights();
         })
         .finally(() => {
           if (dashboardLoadSeqRef.current === loadSeq) setCampaignsLoading(false);
@@ -340,7 +324,6 @@ export default function Dashboard() {
       console.error('Failed to load dashboard data', e);
       setStatsLoading(false);
       setCampaignsLoading(false);
-      setMetaInsightsLoading(false);
     }
   }, [provider]);
 
@@ -847,7 +830,7 @@ export default function Dashboard() {
             >
               {disablingDuplicates ? 'Dang tat...' : `Tat camp trung (${duplicateCampaignsToPause.length})`}
             </button>
-            {(skuLoading || statsLoading || metaInsightsLoading || isSortPending) && <span className="spin" style={{ fontSize: '14px' }}>...</span>}
+            {(skuLoading || statsLoading || isSortPending) && <span className="spin" style={{ fontSize: '14px' }}>...</span>}
           </div>
         </div>
       </div>
