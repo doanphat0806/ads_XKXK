@@ -141,6 +141,7 @@ const InventoryItem = require('./models/InventoryItem');
 const FacebookPost = require('./models/FacebookPost');
 const DataPurchaseOrder = require('./models/DataPurchaseOrder');
 const PurchaseOrder = require('./models/PurchaseOrder');
+const ShopeeCommission = require('./models/ShopeeCommission');
 const {
   buildOrderQuery,
   getOrderItemsFromRaw,
@@ -177,6 +178,7 @@ const {
 } = require('./services/dataPurchaseOrderSheetService');
 const {
   getPurchaseOrders,
+  importPurchaseOrderStatusesFromCsvText,
   updatePurchaseOrder
 } = require('./services/purchaseOrderService');
 const {
@@ -342,202 +344,62 @@ function clearAllReadCache() {
   readCache.clear();
 }
 
-function parseCsvPreviewRows(text = '', maxRows = 51) {
+function parseDelimitedRows(text = '', delimiter = ',') {
   const rows = [];
   let row = [];
   let cell = '';
   let inQuotes = false;
+  const source = String(text || '').replace(/^\uFEFF/, '');
 
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    const next = text[i + 1];
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
 
     if (inQuotes) {
-      if (ch === '"' && next === '"') {
+      if (char === '"' && next === '"') {
         cell += '"';
-        i += 1;
-      } else if (ch === '"') {
+        index += 1;
+      } else if (char === '"') {
         inQuotes = false;
       } else {
-        cell += ch;
+        cell += char;
       }
       continue;
     }
 
-    if (ch === '"') {
+    if (char === '"') {
       inQuotes = true;
-    } else if (ch === ',') {
+    } else if (char === delimiter) {
       row.push(cell);
       cell = '';
-    } else if (ch === '\n') {
+    } else if (char === '\n') {
       row.push(cell);
       rows.push(row);
       row = [];
       cell = '';
-      if (rows.length >= maxRows) break;
-    } else if (ch !== '\r') {
-      cell += ch;
+    } else if (char !== '\r') {
+      cell += char;
     }
   }
 
-  if (rows.length < maxRows) {
-    row.push(cell);
-    if (row.length > 1 || row[0] !== '') rows.push(row);
-  }
+  row.push(cell);
+  if (row.length > 1 || row[0] !== '') rows.push(row);
   return rows;
 }
 
-function normalizePreviewHeader(value, index) {
-  const text = String(value || '').trim();
-  return text || `Cot ${index + 1}`;
-}
-
-function toColumnLetter(index) {
-  let current = Number(index);
-  if (!Number.isInteger(current) || current < 0) return '';
-
-  let label = '';
-  while (current >= 0) {
-    label = String.fromCharCode((current % 26) + 65) + label;
-    current = Math.floor(current / 26) - 1;
-  }
-  return label;
-}
-
-function getGoogleSheetCsvPreviewUrl(inputUrl) {
-  const raw = String(inputUrl || '').trim();
-  if (!raw) throw new Error('Thieu link du lieu Shopee');
-
-  let parsed;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    throw new Error('Link du lieu khong hop le');
-  }
-
-  const sheetMatch = parsed.href.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  if (!sheetMatch) return parsed.href;
-
-  const gid = parsed.searchParams.get('gid') || '0';
-  return `https://docs.google.com/spreadsheets/d/${sheetMatch[1]}/export?format=csv&gid=${encodeURIComponent(gid)}`;
-}
-
-function parseCommissionDateKey(value) {
-  const raw = String(value || '').trim();
-  if (!raw || raw === '-') return '';
-
-  const yyyyFirst = raw.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
-  if (yyyyFirst) {
-    const [, y, m, d] = yyyyFirst;
-    return `${y.padStart(4, '0')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-  }
-
-  const slashDate = raw.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
-  if (slashDate) {
-    const [, first, second, rawYear] = slashDate;
-    const y = rawYear.length === 2 ? `20${rawYear}` : rawYear;
-    const a = Number(first);
-    const b = Number(second);
-    const dmy = b >= 1 && b <= 12 && a >= 1 && a <= 31
-      ? `${y.padStart(4, '0')}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`
-      : '';
-    const mdy = a >= 1 && a <= 12 && b >= 1 && b <= 31
-      ? `${y.padStart(4, '0')}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`
-      : '';
-
-    if (a > 12) return dmy;
-    if (b > 12) return mdy;
-    return mdy || dmy;
-  }
-
-  const parsed = new Date(raw);
-  if (!Number.isNaN(parsed.getTime())) {
-    const vnDate = new Date(parsed.getTime() + VN_OFFSET_MS);
-    return vnDate.toISOString().split('T')[0];
-  }
-
-  return '';
-}
-
-function normalizeCommissionColumnName(value) {
-  const normalized = String(value || '')
-    .replace(/[\u0111\u0110]/g, 'd')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '');
-  return normalized;
-}
-
-function findCommissionDateColumn(columns = []) {
-  const candidates = [
-    'thoigiandathang',
-    'ngaydathang',
-    'thoigianclick',
-    'ngay',
-    'date',
-    'orderdate'
+function detectCsvDelimiter(text = '') {
+  const firstLine = String(text || '').split(/\r?\n/).find(line => line.trim()) || '';
+  const counts = [
+    { delimiter: ',', count: parseDelimitedRows(firstLine, ',')[0]?.length || 0 },
+    { delimiter: ';', count: parseDelimitedRows(firstLine, ';')[0]?.length || 0 },
+    { delimiter: '\t', count: parseDelimitedRows(firstLine, '\t')[0]?.length || 0 }
   ];
-  return (columns || []).find(column => {
-    const normalized = normalizeCommissionColumnName(column.name);
-    return candidates.some(candidate => normalized.includes(candidate));
-  }) || null;
+  return counts.sort((a, b) => b.count - a.count)[0]?.delimiter || ',';
 }
 
-async function fetchShopeeCommissionSelectedRows(source = {}, spendByDate = new Map(), options = {}) {
-  const columns = Array.isArray(source?.columns) ? source.columns : [];
-  if (!source?.url || !columns.length) return { columns, rows: [], dateColumn: null, error: '' };
-
-  try {
-    const csvUrl = getGoogleSheetCsvPreviewUrl(source.url);
-    const response = await axios.get(csvUrl, {
-      timeout: 45000,
-      responseType: 'text',
-      maxContentLength: 10 * 1024 * 1024,
-      headers: { Accept: 'text/csv,text/plain,*/*' }
-    });
-    const csv = String(response.data || '').replace(/^\uFEFF/, '').trim();
-    if (!csv || csv.startsWith('<') || csv.startsWith('{')) {
-      throw new Error('Nguon du lieu Shopee khong tra ve CSV');
-    }
-
-    const rows = parseCsvPreviewRows(csv, 5001).filter(row => row.some(cell => String(cell || '').trim()));
-    const dateColumn = findCommissionDateColumn(columns);
-    if (!dateColumn) {
-      return {
-        columns,
-        rows: [],
-        dateColumn: null,
-        error: 'Can luu kem cot thoi gian dat hang hoac thoi gian click de ghep chi tieu theo ngay'
-      };
-    }
-    const limit = parseBoundedInt(options.limit, 5000, 1, 5000);
-
-    const mappedRows = rows.slice(1).map((row, index) => {
-      const dateValue = row[dateColumn.index];
-      const dateKey = parseCommissionDateKey(dateValue);
-      return {
-        rowNumber: index + 2,
-        date: dateKey,
-        cells: columns.map(column => String(row[column.index] || '').trim()),
-        spend: dateKey ? Number(spendByDate.get(dateKey) || 0) : 0
-      };
-    }).filter(row => {
-      if (!row.date) return false;
-      if (options.fromDate && row.date && row.date < options.fromDate) return false;
-      if (options.toDate && row.date && row.date > options.toDate) return false;
-      return true;
-    }).slice(0, limit);
-
-    return {
-      columns,
-      rows: mappedRows,
-      dateColumn: dateColumn ? { index: dateColumn.index, name: dateColumn.name, letter: dateColumn.letter, number: dateColumn.number } : null,
-      error: ''
-    };
-  } catch (error) {
-    return { columns, rows: [], dateColumn: null, error: error.message };
-  }
+function parseCsvRows(text = '') {
+  return parseDelimitedRows(text, detectCsvDelimiter(text))
+    .filter(row => row.some(cell => String(cell || '').trim()));
 }
 
 const META_PURCHASE_ACTION_TYPES = new Set([
@@ -1942,9 +1804,41 @@ async function getTodayOrderSkuCountsForAuto(account) {
   }
 }
 
-function getAutoPauseDecision({ provider, campaignName, spend, messages, costPerMessage, clicks, costPerClick, limits, budgetType, skuCounts }) {
+async function getTodayShopeeCommissionsForAuto(account, dateStr) {
+  try {
+    const records = await ShopeeCommission.find({
+      ownerUserId: account.ownerUserId || account._id,
+      date: dateStr
+    }).lean();
+    
+    const map = {};
+    for (const r of records) {
+      const key = String(r.subId2 || '').trim().toLowerCase();
+      map[key] = (map[key] || 0) + (r.commission || 0);
+    }
+    return map;
+  } catch (err) {
+    console.error('Loi getTodayShopeeCommissionsForAuto:', err);
+    return {};
+  }
+}
+
+function getAutoPauseDecision({ provider, campaignName, spend, messages, costPerMessage, clicks, costPerClick, limits, budgetType, skuCounts, shopeeCommission }) {
   const normalizedProvider = normalizeProvider(provider);
   const basePauseReason = getPauseReason(provider, spend, messages, costPerMessage, clicks, costPerClick, limits, budgetType);
+  if (normalizedProvider === 'shopee') {
+    const zeroOrderSpendLimit = Number(limits?.autoPauseZeroOrderSpendLimit ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT);
+    if (spend >= zeroOrderSpendLimit) {
+      const commission = shopeeCommission || 0;
+      const doanhThu = commission - spend;
+      const roi = spend > 0 ? (doanhThu / spend) * 100 : 0;
+      if (roi < 10) {
+        return { pauseReason: `ROI ${roi.toFixed(1)}% < 10% (Tieu ${Math.round(spend).toLocaleString()}d, HH ${Math.round(commission).toLocaleString()}d)`, orderCount: 0, costPerOrder: 0 };
+      }
+    }
+    return { pauseReason: basePauseReason, orderCount: 0, costPerOrder: 0 };
+  }
+
   if (normalizedProvider !== 'facebook') {
     return { pauseReason: basePauseReason, orderCount: 0, costPerOrder: 0 };
   }
@@ -3199,6 +3093,7 @@ async function runAutoControl(account) {
     let campaignsToPause = [];
     if (isWithinAutoRuleTimeWindow(ruleStart, ruleEnd)) {
       const skuCounts = await getTodayOrderSkuCountsForAuto(account);
+      const shopeeCommissionsMap = isShopee ? await getTodayShopeeCommissionsForAuto(account, today) : {};
       campaignsToPause = campaigns
         .filter(campaign => campaign.status === 'ACTIVE')
         .map(campaign => {
@@ -3215,7 +3110,8 @@ async function runAutoControl(account) {
             costPerClick,
             limits: config,
             budgetType,
-            skuCounts
+            skuCounts,
+            shopeeCommission: isShopee ? (shopeeCommissionsMap[String(campaign.name || '').trim().toLowerCase()] || 0) : 0
           });
           return pauseReason ? { campaign, spend, messages, costPerMessage, clicks, costPerClick, orderCount, costPerOrder, pauseReason } : null;
         })
@@ -5763,6 +5659,7 @@ async function fetchAccountInsightsInRange(account, fromDate, toDate) {
 
 async function syncAccountHistoricalData(account, fromDate, toDate, options = {}) {
   const insights = await fetchAccountInsightsInRange(account, fromDate, toDate);
+  const isShopee = normalizeProvider(account?.provider) === 'shopee';
   let count = 0;
   const seenByDate = new Map();
 
@@ -5775,10 +5672,10 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
     const spend = parseFloat(insight.spend || 0);
     const impressions = parseInt(insight.impressions || 0, 10);
     const clicks = parseInt(insight.clicks || 0, 10);
-    const msgAction = getMetaMessageActionFromInsight(insight);
-    const messages = parseInt(msgAction?.value || 0, 10);
-    const costPerMessage = getMetaCostPerMessageFromInsight(insight);
-    const metaOrders = getMetaOrdersFromInsight(insight);
+    const msgAction = isShopee ? null : getMetaMessageActionFromInsight(insight);
+    const messages = isShopee ? 0 : parseInt(msgAction?.value || 0, 10);
+    const costPerMessage = isShopee ? 0 : getMetaCostPerMessageFromInsight(insight);
+    const metaOrders = isShopee ? 0 : getMetaOrdersFromInsight(insight);
 
     await upsertDailyCampaign(account._id, insight.campaign_id, date, {
       name: insight.campaign_name,
@@ -5859,7 +5756,6 @@ async function runSyncHistoryJob(jobId, { fromDate, toDate, provider, accountId 
     if (job.ownerUserId) filter.ownerUserId = job.ownerUserId;
     const account = await Account.findOne(filter);
     if (!account) throw new Error('Khong tim thay tai khoan can dong bo');
-    if (account.provider === 'shopee') throw new Error('Shopee khong can dong bo Meta insights');
 
     const dates = assertPastCampaignSyncRange(fromDate, toDate);
     setSyncHistoryJob(jobId, {
@@ -5934,9 +5830,6 @@ async function processCampaignSyncHistoryJob(data = {}, onProgress = null) {
   }
   const accounts = await Account.find(filter).sort('name');
   if (!accounts.length) throw new Error('Khong tim thay tai khoan can dong bo');
-  if (accounts.some(account => account.provider === 'shopee')) {
-    throw new Error('Shopee khong can dong bo Meta insights');
-  }
 
   const dates = assertPastCampaignSyncRange(fromDate, toDate);
   const totalSteps = Math.max(1, accounts.length * dates.length);
@@ -6178,6 +6071,447 @@ app.get('/api/campaigns/sync-history/:jobId', async (req, res) => {
   }
 });
 
+function parseCsvRows(text = '') {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (inQuotes) {
+      if (ch === '"' && next === '"') {
+        cell += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else if (ch !== '\r') {
+      cell += ch;
+    }
+  }
+
+  row.push(cell);
+  if (row.length > 1 || row[0] !== '') rows.push(row);
+  return rows;
+}
+
+function normalizeCsvHeader(value = '') {
+  return String(value || '')
+    .replace(/^\uFEFF/, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function getCsvColumnIndex(headers = [], candidates = []) {
+  const normalizedCandidates = candidates.map(normalizeCsvHeader).filter(Boolean);
+  return headers.findIndex(header => {
+    const normalizedHeader = normalizeCsvHeader(header);
+    return normalizedCandidates.some(candidate =>
+      normalizedHeader === candidate ||
+      normalizedHeader.startsWith(candidate) ||
+      candidate.startsWith(normalizedHeader)
+    );
+  });
+}
+
+function getCsvCell(row = [], indexes = [], fallback = '') {
+  for (const index of indexes) {
+    if (index < 0) continue;
+    const value = row[index];
+    if (value !== undefined && String(value).trim() !== '') return String(value).trim();
+  }
+  return fallback;
+}
+
+function parseCsvNumber(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw === '-') return 0;
+  const cleaned = raw.replace(/\s/g, '').replace(/[^\d,.-]/g, '');
+  if (!cleaned) return 0;
+
+  let normalized = cleaned;
+  const hasComma = cleaned.includes(',');
+  const hasDot = cleaned.includes('.');
+  if (hasComma && hasDot) {
+    normalized = cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')
+      ? cleaned.replace(/\./g, '').replace(',', '.')
+      : cleaned.replace(/,/g, '');
+  } else if (hasComma) {
+    const parts = cleaned.split(',');
+    normalized = parts.length === 2 && parts[1].length <= 2
+      ? cleaned.replace(',', '.')
+      : cleaned.replace(/,/g, '');
+  } else if (hasDot) {
+    const parts = cleaned.split('.');
+    normalized = parts.length > 1 && parts.slice(1).every(part => part.length === 3)
+      ? cleaned.replace(/\./g, '')
+      : cleaned;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseCsvInteger(value) {
+  return Math.round(parseCsvNumber(value));
+}
+
+function formatCsvDate(year, month, day) {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (!y || m < 1 || m > 12 || d < 1 || d > 31) return '';
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function parseCsvCampaignDate(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const isoMatch = raw.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (isoMatch) return formatCsvDate(isoMatch[1], isoMatch[2], isoMatch[3]);
+
+  const slashMatch = raw.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (slashMatch) {
+    const first = Number(slashMatch[1]);
+    const second = Number(slashMatch[2]);
+    if (first <= 12 && second > 12) return formatCsvDate(slashMatch[3], first, second);
+    return formatCsvDate(slashMatch[3], second, first);
+  }
+
+  const timestamp = Date.parse(raw);
+  if (!Number.isNaN(timestamp)) return new Date(timestamp).toISOString().split('T')[0];
+
+  return '';
+}
+
+const SHOPEE_COMMISSION_DATE_HEADERS = [
+  'Thời Gian Đặt Hàng',
+  'Thoi Gian Dat Hang',
+  'Thời gian đặt hàng',
+  'Ngay dat hang',
+  'Order Time',
+  'Order Date'
+];
+const SHOPEE_COMMISSION_SUB_ID2_HEADERS = ['Sub_id2', 'Sub ID2', 'sub_id2', 'subid2'];
+const SHOPEE_COMMISSION_TOTAL_HEADERS = [
+  'Tổng hoa hồng đơn hàng(₫)',
+  'Tong hoa hong don hang',
+  'Tổng hoa hồng đơn hàng',
+  'Tổng hoa hồng',
+  'Total Order Commission',
+  'Total Commission'
+];
+
+function getRequiredCsvColumnIndex(headers = [], candidates = [], label = '') {
+  const index = getCsvColumnIndex(headers, candidates);
+  if (index < 0) throw new Error(`CSV thieu cot ${label || candidates[0]}`);
+  return index;
+}
+
+async function importShopeeCommissionsFromCsvText(req, csvText = '', options = {}) {
+  const rows = parseCsvRows(csvText);
+  if (rows.length < 2) throw new Error('File CSV khong co du lieu');
+
+  const headers = rows[0];
+  const dateIndex = getRequiredCsvColumnIndex(headers, SHOPEE_COMMISSION_DATE_HEADERS, 'ngay thang');
+  const subId2Index = getRequiredCsvColumnIndex(headers, SHOPEE_COMMISSION_SUB_ID2_HEADERS, 'Sub_id2');
+  const commissionIndex = getRequiredCsvColumnIndex(headers, SHOPEE_COMMISSION_TOTAL_HEADERS, 'tong hoa hong');
+  const ownerUserId = req.currentUser?._id;
+  if (!ownerUserId) throw new Error('Chua xac dinh duoc user import');
+
+  const grouped = new Map();
+  const skipped = {
+    noDate: 0,
+    noSubId2: 0,
+    zeroCommission: 0
+  };
+
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    if (!row.some(cell => String(cell || '').trim())) continue;
+
+    const date = parseCsvCampaignDate(row[dateIndex]);
+    if (!date) {
+      skipped.noDate += 1;
+      continue;
+    }
+
+    const subId2 = String(row[subId2Index] || '').trim();
+    if (!subId2) {
+      skipped.noSubId2 += 1;
+      continue;
+    }
+
+    const rawCommission = String(row[commissionIndex] || '').split('.')[0];
+    const commission = parseCsvNumber(rawCommission);
+    if (!commission) skipped.zeroCommission += 1;
+
+    const key = `${date}\u0000${subId2}`;
+    const current = grouped.get(key) || { date, subId2, commission: 0, rowCount: 0 };
+    current.commission += commission;
+    current.rowCount += 1;
+    grouped.set(key, current);
+  }
+
+  if (!grouped.size) throw new Error('CSV khong co dong hoa hong hop le de import');
+
+  const now = new Date();
+  const sourceFileName = String(options.sourceFileName || '').trim().slice(0, 300);
+  const operations = [...grouped.values()].map(item => ({
+    updateOne: {
+      filter: { ownerUserId, date: item.date, subId2: item.subId2 },
+      update: {
+        $set: {
+          commission: item.commission,
+          rowCount: item.rowCount,
+          sourceFileName,
+          importedAt: now,
+          updatedAt: now
+        },
+        $setOnInsert: { ownerUserId }
+      },
+      upsert: true
+    }
+  }));
+
+  const result = await ShopeeCommission.bulkWrite(operations, { ordered: false });
+  const totalCommission = [...grouped.values()].reduce((sum, item) => sum + item.commission, 0);
+
+  return {
+    ok: true,
+    imported: grouped.size,
+    sourceRows: Math.max(0, rows.length - 1),
+    matched: result.matchedCount || 0,
+    modified: result.modifiedCount || 0,
+    upserted: result.upsertedCount || 0,
+    totalCommission,
+    skipped
+  };
+}
+
+function resolveCsvCampaignAccount(row, columnIndexes, accountsById, accountsByAdId, accountsByName, fallbackAccount) {
+  const accountObjectId = getCsvCell(row, columnIndexes.accountObjectIds);
+  if (accountObjectId && accountsById.has(accountObjectId)) return accountsById.get(accountObjectId);
+
+  const adAccountId = getCsvCell(row, columnIndexes.adAccountIds);
+  if (adAccountId) {
+    const normalizedAdAccountId = normalizeAdAccountId(adAccountId);
+    const numericAdAccountId = normalizedAdAccountId.replace(/^act_/i, '');
+    const matched = accountsByAdId.get(normalizedAdAccountId) || accountsByAdId.get(numericAdAccountId);
+    if (matched) return matched;
+  }
+
+  const accountName = getCsvCell(row, columnIndexes.accountNames);
+  if (accountName) {
+    const matched = accountsByName.get(accountName.toLowerCase());
+    if (matched) return matched;
+  }
+
+  return fallbackAccount || null;
+}
+
+async function importCampaignsFromCsvText(req, csvText = '', options = {}) {
+  const rows = parseCsvRows(csvText);
+  if (rows.length < 2) throw new Error('File CSV khong co du lieu');
+
+  const headers = rows[0];
+  const provider = normalizeProvider(options.provider || 'facebook');
+  const accountFilter = withUserFilter(req, buildAccountProviderFilter(provider));
+  const accounts = await Account.find(accountFilter).select('_id name adAccountId provider').lean();
+  if (!accounts.length) throw new Error('Khong tim thay tai khoan de import');
+
+  let fallbackAccount = null;
+  if (options.accountId) {
+    fallbackAccount = accounts.find(account => String(account._id) === String(options.accountId)) || null;
+    if (!fallbackAccount) throw new Error('Tai khoan import khong hop le');
+  }
+
+  const accountsById = new Map(accounts.map(account => [String(account._id), account]));
+  const accountsByAdId = new Map();
+  const accountsByName = new Map();
+  for (const account of accounts) {
+    const normalizedAdAccountId = normalizeAdAccountId(account.adAccountId);
+    if (normalizedAdAccountId) {
+      accountsByAdId.set(normalizedAdAccountId, account);
+      accountsByAdId.set(normalizedAdAccountId.replace(/^act_/i, ''), account);
+    }
+    if (account.name) accountsByName.set(String(account.name).trim().toLowerCase(), account);
+  }
+
+  const columnIndexes = {
+    dates: [getCsvColumnIndex(headers, ['Ngay', 'Date', 'Day', 'Date Start', 'date_start', 'dateStart', 'Start Date', 'Reporting starts', 'Ngay bat dau bao cao'])],
+    endDates: [getCsvColumnIndex(headers, ['Date End', 'date_stop', 'dateStop', 'End Date', 'Reporting ends', 'Ngay ket thuc bao cao'])],
+    campaignIds: [getCsvColumnIndex(headers, ['ID Campaign', 'Campaign ID', 'campaign_id', 'campaignId', 'Ma campaign', 'ID chien dich'])],
+    campaignNames: [getCsvColumnIndex(headers, ['Ten Campaign', 'Campaign name', 'campaign_name', 'campaignName', 'Campaign', 'Ten chien dich', 'Chien dich'])],
+    accountObjectIds: [getCsvColumnIndex(headers, ['accountId', 'Account Object ID', '_id'])],
+    adAccountIds: [getCsvColumnIndex(headers, ['ID TKQC', 'Ad account ID', 'Account ID', 'account_id', 'adAccountId', 'ID tai khoan quang cao', 'ID tai khoan'])],
+    accountNames: [getCsvColumnIndex(headers, ['Ten TKQC', 'Account name', 'Ad account name', 'account_name', 'Ten tai khoan quang cao', 'Ten tai khoan'])],
+    adNames: [getCsvColumnIndex(headers, ['Ad Name', 'Ten quang cao', 'ad_name'])],
+    statuses: [getCsvColumnIndex(headers, ['Trang Thai', 'Status', 'Delivery', 'campaign_status', 'Phan phoi'])],
+    spends: [getCsvColumnIndex(headers, ['Chi tieu', 'Spend', 'Amount spent', 'Amount Spent', 'amount_spent', 'So tien da chi tieu', 'So tien da chi tieu VND'])],
+    messages: [getCsvColumnIndex(headers, ['Tin nhan', 'Messages', 'Messaging conversations started', 'Conversations', 'Bat dau tro chuyen', 'BDCT', 'Luot bat dau cuoc tro chuyen qua tin nhan', 'So luot bat dau cuoc tro chuyen qua tin nhan'])],
+    costPerMessages: [getCsvColumnIndex(headers, ['Gia/TN', 'Cost per messaging conversation started', 'Cost per message', 'costPerMessage', 'cost_per_message', 'Chi phi tren moi luot bat dau cuoc tro chuyen qua tin nhan'])],
+    clicks: [getCsvColumnIndex(headers, ['Clicks', 'Link clicks', 'clicks', 'Luot click vao lien ket', 'Luot click'])],
+    impressions: [getCsvColumnIndex(headers, ['Hien thi', 'Impressions', 'impressions', 'Luot hien thi'])],
+    metaOrders: [getCsvColumnIndex(headers, ['Don Meta', 'Meta orders', 'Purchases', 'Website purchases', 'metaOrders', 'Luot mua', 'Giao dich mua'])]
+  };
+
+  if (columnIndexes.dates.every(index => index < 0) && columnIndexes.endDates.every(index => index < 0)) throw new Error('CSV thieu cot ngay');
+  if (columnIndexes.campaignIds.every(index => index < 0) && columnIndexes.campaignNames.every(index => index < 0)) {
+    throw new Error('CSV thieu cot campaign name hoac campaign id');
+  }
+  const hasAccountColumn = columnIndexes.adAccountIds.some(index => index >= 0)
+    || columnIndexes.accountNames.some(index => index >= 0)
+    || columnIndexes.accountObjectIds.some(index => index >= 0);
+  if (!fallbackAccount && !hasAccountColumn) {
+    throw new Error('CSV thieu cot tai khoan. Hay chon mot tai khoan truoc khi import hoac them cot ID TKQC/Ten TKQC.');
+  }
+
+  let imported = 0;
+  let skipped = 0;
+  const errors = [];
+  const campaignRowsByKey = new Map();
+
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    if (!row.some(cell => String(cell || '').trim())) continue;
+
+    const date = parseCsvCampaignDate(getCsvCell(row, columnIndexes.dates) || getCsvCell(row, columnIndexes.endDates));
+    const campaignName = getCsvCell(row, columnIndexes.campaignNames);
+    const campaignId = getCsvCell(row, columnIndexes.campaignIds) || campaignName;
+    const account = resolveCsvCampaignAccount(row, columnIndexes, accountsById, accountsByAdId, accountsByName, fallbackAccount);
+
+    if (!date || !campaignId || !account) {
+      skipped += 1;
+      if (errors.length < 20) {
+        errors.push({
+          row: rowIndex + 1,
+          error: !date ? 'Thieu ngay hop le' : (!campaignId ? 'Thieu campaign id' : 'Khong map duoc tai khoan')
+        });
+      }
+      continue;
+    }
+
+    const spend = parseCsvNumber(getCsvCell(row, columnIndexes.spends));
+    const rawCostPerMessage = parseCsvNumber(getCsvCell(row, columnIndexes.costPerMessages));
+    const rawMessages = parseCsvInteger(getCsvCell(row, columnIndexes.messages));
+    const messages = rawMessages > 0 ? rawMessages : (spend > 0 && rawCostPerMessage > 0 ? Math.round(spend / rawCostPerMessage) : 0);
+    const costPerMessage = rawCostPerMessage > 0 ? rawCostPerMessage : (messages > 0 ? spend / messages : 0);
+    const clicks = parseCsvInteger(getCsvCell(row, columnIndexes.clicks));
+    const impressions = parseCsvInteger(getCsvCell(row, columnIndexes.impressions));
+    const metaOrders = parseCsvInteger(getCsvCell(row, columnIndexes.metaOrders));
+    const key = `${account._id}:${date}:${campaignId}`;
+    const aggregate = campaignRowsByKey.get(key) || {
+      account,
+      date,
+      campaignId,
+      name: campaignName || campaignId,
+      status: getCsvCell(row, columnIndexes.statuses),
+      spend: 0,
+      messages: 0,
+      costPerMessage: 0,
+      clicks: 0,
+      impressions: 0,
+      metaOrders: 0,
+      costPerMessageWeightedTotal: 0,
+      costPerMessageWeight: 0
+    };
+
+    aggregate.spend += spend;
+    aggregate.messages += messages;
+    aggregate.clicks += clicks;
+    aggregate.impressions += impressions;
+    aggregate.metaOrders += metaOrders;
+    if (campaignName && !aggregate.name) aggregate.name = campaignName;
+    if (costPerMessage > 0 && messages > 0) {
+      aggregate.costPerMessageWeightedTotal += costPerMessage * messages;
+      aggregate.costPerMessageWeight += messages;
+    }
+    campaignRowsByKey.set(key, aggregate);
+  }
+
+  for (const aggregate of campaignRowsByKey.values()) {
+    const costPerMessage = aggregate.costPerMessageWeight > 0
+      ? aggregate.costPerMessageWeightedTotal / aggregate.costPerMessageWeight
+      : (aggregate.messages > 0 ? aggregate.spend / aggregate.messages : 0);
+
+    await upsertDailyCampaign(aggregate.account._id, aggregate.campaignId, aggregate.date, {
+      name: aggregate.name || aggregate.campaignId,
+      status: aggregate.status,
+      spend: aggregate.spend,
+      messages: aggregate.messages,
+      costPerMessage,
+      clicks: aggregate.clicks,
+      impressions: aggregate.impressions,
+      metaOrders: aggregate.metaOrders
+    });
+
+    imported += 1;
+  }
+
+  return { ok: true, imported, skipped, errors, totalRows: Math.max(0, rows.length - 1), sourceRows: Math.max(0, rows.length - 1) };
+}
+
+app.post('/api/campaigns/import-csv', async (req, res) => {
+  try {
+    const contentType = String(req.headers['content-type'] || '').toLowerCase();
+    let csvText = '';
+    let provider = '';
+    let accountId = '';
+
+    if (contentType.includes('multipart/form-data')) {
+      const request = new Request(`http://localhost${req.originalUrl || req.url}`, {
+        method: req.method,
+        headers: req.headers,
+        body: req,
+        duplex: 'half'
+      });
+      const formData = await request.formData();
+      const csvFile = formData.get('file') || formData.get('csv');
+      if (!csvFile || typeof csvFile.text !== 'function') {
+        return res.status(400).json({ error: 'Chua chon file CSV' });
+      }
+      csvText = await csvFile.text();
+      provider = String(formData.get('provider') || '');
+      accountId = String(formData.get('accountId') || '');
+    } else {
+      csvText = String(req.body?.csv || '');
+      provider = String(req.body?.provider || '');
+      accountId = String(req.body?.accountId || '');
+    }
+
+    if (!csvText.trim()) {
+      return res.status(400).json({ error: 'CSV rong hoac khong doc duoc du lieu' });
+    }
+
+    const result = await importCampaignsFromCsvText(req, csvText, { provider, accountId });
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.post('/api/campaigns/finalize-day', async (req, res) => {
   try {
     const dateKey = normalizeCampaignDate(req.body.date || dateKeyFromVnOffset(-1));
@@ -6250,18 +6584,19 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
     }
 
     const accountFilter = withUserFilter(req, buildAccountProviderFilter('shopee'));
-    const [accounts, user] = await Promise.all([
-      Account.find(accountFilter).select('_id name adAccountId').lean(),
-      User.findById(req.currentUser._id).select('shopeeCommissionSource').lean()
-    ]);
+    const accounts = await Account.find(accountFilter).select('_id name adAccountId').lean();
     const accountIds = accounts.map(account => account._id);
 
     const match = {
       accountId: { $in: accountIds },
       date: { $gte: fromDate, $lte: toDate }
     };
+    const commissionMatch = {
+      ownerUserId: req.currentUser._id,
+      date: { $gte: fromDate, $lte: toDate }
+    };
 
-    const [totalRows, byDate, byAccount] = await Promise.all([
+    const [totalRows, byDate, byAccount, commissionBySubId, commissionByDate] = await Promise.all([
       Campaign.aggregate([
         { $match: match },
         {
@@ -6327,13 +6662,94 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
           }
         },
         { $sort: { spend: -1 } }
+      ]),
+      ShopeeCommission.aggregate([
+        { $match: commissionMatch },
+        {
+          $group: {
+            _id: '$subId2',
+            commission: { $sum: '$commission' },
+            rowCount: { $sum: '$rowCount' },
+            activeDays: { $addToSet: '$date' }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            subId2: '$_id',
+            commission: 1,
+            rowCount: 1,
+            activeDayCount: { $size: '$activeDays' }
+          }
+        },
+        { $sort: { commission: -1, subId2: 1 } }
+      ]),
+      ShopeeCommission.aggregate([
+        { $match: commissionMatch },
+        {
+          $group: {
+            _id: '$date',
+            commission: { $sum: '$commission' },
+            subIdCount: { $sum: 1 },
+            rowCount: { $sum: '$rowCount' }
+          }
+        },
+        { $project: { _id: 0, date: '$_id', commission: 1, subIdCount: 1, rowCount: 1 } },
+        { $sort: { date: 1 } }
       ])
     ]);
 
     const totals = totalRows[0] || {};
-    const spendByDate = new Map((byDate || []).map(item => [String(item.date), Number(item.spend || 0)]));
-    const source = user?.shopeeCommissionSource || { url: '', columns: [] };
-    const selectedData = await fetchShopeeCommissionSelectedRows(source, spendByDate, { fromDate, toDate });
+    const commissionTotal = commissionBySubId.reduce((sum, item) => sum + Number(item.commission || 0), 0);
+
+    const spendByCampaignName = await Campaign.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: { $toLower: '$name' },
+          spend: { $sum: '$spend' },
+          originalName: { $first: '$name' }
+        }
+      }
+    ]);
+
+    const unifiedMap = new Map();
+    for (const item of commissionBySubId) {
+      const key = String(item.subId2 || '').trim().toLowerCase();
+      unifiedMap.set(key, {
+        subId2: item.subId2,
+        commission: item.commission || 0,
+        spend: 0
+      });
+    }
+
+    for (const item of spendByCampaignName) {
+      const key = String(item._id || '').trim().toLowerCase();
+      const existing = unifiedMap.get(key) || {
+        subId2: item.originalName || item._id,
+        commission: 0,
+        spend: 0
+      };
+      existing.spend += (item.spend || 0);
+      unifiedMap.set(key, existing);
+    }
+
+    let unifiedList = Array.from(unifiedMap.values()).map(item => {
+      const doanhThu = item.commission - item.spend;
+      const roi = item.spend > 0 ? (doanhThu / item.spend) * 100 : (doanhThu > 0 ? 100 : 0);
+      return {
+        ...item,
+        doanhThu,
+        roi
+      };
+    });
+
+    unifiedList.sort((a, b) => b.commission - a.commission || b.spend - a.spend);
+    unifiedList = unifiedList.slice(0, 500);
+
+    // Swap original array contents
+    commissionBySubId.length = 0;
+    commissionBySubId.push(...unifiedList);
 
     res.json({
       fromDate,
@@ -6343,8 +6759,10 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
       totalClicks: totals.totalClicks || 0,
       totalCampaignRows: totals.totalCampaignRows || 0,
       activeDayCount: totals.activeDayCount || 0,
-      source,
-      selectedData,
+      totalCommission: commissionTotal,
+      commissionSubIdCount: commissionBySubId.length,
+      commissionBySubId,
+      commissionByDate,
       byDate,
       byAccount
     });
@@ -6353,90 +6771,37 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
   }
 });
 
-app.put('/api/shopee/commission-source', async (req, res) => {
+app.post('/api/shopee/commission-import-csv', async (req, res) => {
   try {
-    const url = String(req.body?.url || '').trim();
-    const columns = Array.isArray(req.body?.columns) ? req.body.columns : [];
-    if (!url) return res.status(400).json({ error: 'Thieu link du lieu Shopee' });
-    if (!columns.length) return res.status(400).json({ error: 'Chua chon cot nao de luu' });
+    const contentType = String(req.headers['content-type'] || '').toLowerCase();
+    let csvText = '';
+    let sourceFileName = '';
 
-    const safeColumns = columns
-      .map(column => ({
-        index: Number(column.index),
-        number: Number(column.number),
-        letter: String(column.letter || '').trim(),
-        name: String(column.name || '').trim()
-      }))
-      .filter(column => Number.isInteger(column.index) && column.index >= 0)
-      .sort((a, b) => a.index - b.index);
-
-    if (!safeColumns.length) return res.status(400).json({ error: 'Danh sach cot khong hop le' });
-
-    const source = {
-      url,
-      columns: safeColumns,
-      updatedAt: new Date()
-    };
-
-    await User.findByIdAndUpdate(req.currentUser._id, {
-      shopeeCommissionSource: source,
-      updatedAt: new Date()
-    });
-
-    res.json({ ok: true, source });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.post('/api/shopee/commission-source/preview', async (req, res) => {
-  try {
-    const sourceUrl = String(req.body?.url || '').trim();
-    const csvUrl = getGoogleSheetCsvPreviewUrl(sourceUrl);
-    const response = await axios.get(csvUrl, {
-      timeout: 45000,
-      responseType: 'text',
-      maxContentLength: 5 * 1024 * 1024,
-      headers: {
-        Accept: 'text/csv,text/plain,*/*'
+    if (contentType.includes('multipart/form-data')) {
+      const request = new Request(`http://localhost${req.originalUrl || req.url}`, {
+        method: req.method,
+        headers: req.headers,
+        body: req,
+        duplex: 'half'
+      });
+      const formData = await request.formData();
+      const csvFile = formData.get('file') || formData.get('csv');
+      if (!csvFile || typeof csvFile.text !== 'function') {
+        return res.status(400).json({ error: 'Chua chon file CSV hoa hong Shopee' });
       }
-    });
-
-    const csv = String(response.data || '').replace(/^\uFEFF/, '').trim();
-    if (!csv || csv.startsWith('<')) {
-      throw new Error('Khong doc duoc file. Hay dung link CSV hoac Google Sheet da share quyen xem.');
-    }
-    if (csv.startsWith('{')) {
-      throw new Error('Nguon du lieu khong tra ve CSV. Hay kiem tra quyen share/link export.');
+      csvText = await csvFile.text();
+      sourceFileName = String(csvFile.name || '');
+    } else {
+      csvText = String(req.body?.csv || '');
+      sourceFileName = String(req.body?.sourceFileName || '');
     }
 
-    const rows = parseCsvPreviewRows(csv).filter(row => row.some(cell => String(cell || '').trim()));
-    if (!rows.length) {
-      throw new Error('File khong co du lieu');
+    if (!csvText.trim()) {
+      return res.status(400).json({ error: 'CSV rong hoac khong doc duoc du lieu' });
     }
 
-    const headerRow = rows[0] || [];
-    const maxColumns = Math.max(...rows.slice(0, 20).map(row => row.length), headerRow.length);
-    const headers = Array.from({ length: maxColumns }, (_, index) => normalizePreviewHeader(headerRow[index], index));
-    const sampleRows = rows.slice(1, 11).map((row, rowIndex) => ({
-      rowNumber: rowIndex + 2,
-      cells: headers.map((_, index) => String(row[index] || '').trim())
-    }));
-
-    res.json({
-      ok: true,
-      sourceUrl,
-      csvUrl,
-      rowCountPreviewed: rows.length,
-      columns: headers.map((name, index) => ({
-        index,
-        number: index + 1,
-        letter: toColumnLetter(index),
-        name,
-        sampleValues: sampleRows.slice(0, 5).map(row => row.cells[index] || '').filter(Boolean)
-      })),
-      sampleRows
-    });
+    const result = await importShopeeCommissionsFromCsvText(req, csvText, { sourceFileName });
+    res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -6708,6 +7073,39 @@ app.get('/api/purchase-orders', async (req, res) => {
     const search = String(req.query.search || '').trim();
     const data = await getPurchaseOrders({ fromDate, toDate, search, page, limit });
     res.json({ ok: true, ...data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/purchase-orders/import-status-csv', async (req, res) => {
+  try {
+    const contentType = String(req.headers['content-type'] || '').toLowerCase();
+    let csvText = '';
+
+    if (contentType.includes('multipart/form-data')) {
+      const request = new Request(`http://localhost${req.originalUrl || req.url}`, {
+        method: req.method,
+        headers: req.headers,
+        body: req,
+        duplex: 'half'
+      });
+      const formData = await request.formData();
+      const csvFile = formData.get('file') || formData.get('csv');
+      if (!csvFile || typeof csvFile.text !== 'function') {
+        return res.status(400).json({ error: 'Chưa chọn file CSV' });
+      }
+      csvText = await csvFile.text();
+    } else {
+      csvText = String(req.body?.csv || '');
+    }
+
+    if (!csvText.trim()) {
+      return res.status(400).json({ error: 'CSV rỗng hoặc không đọc được dữ liệu' });
+    }
+
+    const result = await importPurchaseOrderStatusesFromCsvText(csvText);
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -7308,6 +7706,7 @@ async function ensureApplicationIndexes() {
     FacebookPost.createIndexes(),
     DataPurchaseOrder.createIndexes(),
     PurchaseOrder.createIndexes(),
+    ShopeeCommission.createIndexes(),
     Config.createIndexes(),
     User.createIndexes(),
     FacebookToken.createIndexes()

@@ -33,16 +33,6 @@ const UserSchema = new mongoose.Schema({
   lifetimeCpcLimit: { type: Number },
   autoPauseCpoLimit: { type: Number },
   autoPauseZeroOrderSpendLimit: { type: Number },
-  shopeeCommissionSource: {
-    url: { type: String, default: '' },
-    columns: [{
-      index: { type: Number },
-      number: { type: Number },
-      letter: { type: String },
-      name: { type: String }
-    }],
-    updatedAt: { type: Date }
-  },
   active: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }

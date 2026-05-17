@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAppContext } from '../contexts/AppContext';
-import { api, apiUrl, formatVND, formatNumber, todayString } from '../lib/api';
+import { api, apiUrl, uploadForm, formatVND, formatNumber, todayString } from '../lib/api';
 import { toast } from 'react-toastify';
 import DateRangePicker from '../components/DateRangePicker';
 
@@ -58,6 +58,7 @@ export default function Campaigns() {
   const [syncing, setSyncing] = useState(false);
   const [syncJob, setSyncJob] = useState(null);
   const [exporting, setExporting] = useState(false);
+  const [importingCsv, setImportingCsv] = useState(false);
   const [lastToggleLog, setLastToggleLog] = useState('');
   const toggleReloadTimerRef = useRef(null);
 
@@ -213,8 +214,37 @@ export default function Campaigns() {
     window.setTimeout(() => setExporting(false), 2000);
   };
 
+  const handleImportCampaignCsv = async (file) => {
+    if (!file || importingCsv) return;
+    if (provider === 'shopee') {
+      toast.error('Import CSV ads chi ap dung cho Facebook');
+      return;
+    }
+
+    setImportingCsv(true);
+    try {
+      const formData = new FormData();
+      formData.set('file', file);
+      formData.set('provider', provider);
+      if (filterAcc) formData.set('accountId', filterAcc);
+
+      const result = await uploadForm('/campaigns/import-csv', formData, { timeoutMs: 10 * 60 * 1000 });
+      const skippedText = result.skipped ? `, bo qua ${formatNumber(result.skipped)} dong` : '';
+      const sourceText = result.sourceRows ? ` tu ${formatNumber(result.sourceRows)} dong CSV` : ' dong CSV';
+      toast.success(`Da import ${formatNumber(result.imported)} camp-ngay${sourceText}${skippedText}`);
+      if (result.errors?.length) {
+        toast.warn(`Co ${formatNumber(result.errors.length)} dong loi khi map du lieu`);
+      }
+      await loadCampaigns(true);
+    } catch (error) {
+      toast.error('Loi import CSV: ' + error.message);
+    } finally {
+      setImportingCsv(false);
+    }
+  };
+
   const syncIncludesTodayOrFuture = syncToDate >= todayString();
-  const syncDisabled = syncing || provider === 'shopee' || syncIncludesTodayOrFuture;
+  const syncDisabled = syncing || syncIncludesTodayOrFuture;
   const syncButtonTitle = syncIncludesTodayOrFuture
       ? 'Chi dong bo thu cong cac ngay truoc hom nay'
       : '';
@@ -326,6 +356,23 @@ export default function Campaigns() {
           >
             {syncing ? 'Dang dong bo...' : 'Dong bo ngay da chot'}
           </button>
+          <label
+            className="btn btn-ghost"
+            style={{ height: '38px', cursor: importingCsv || provider === 'shopee' ? 'not-allowed' : 'pointer', opacity: importingCsv || provider === 'shopee' ? 0.6 : 1 }}
+          >
+            {importingCsv ? 'Dang import...' : 'Import CSV ads'}
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              disabled={importingCsv || provider === 'shopee'}
+              onChange={event => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                handleImportCampaignCsv(file);
+              }}
+              style={{ display: 'none' }}
+            />
+          </label>
           <button 
             className="btn btn-success" 
             onClick={handleExportSpending}

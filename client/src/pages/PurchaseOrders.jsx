@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, RefreshCw, Search } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, RefreshCw, Search, Upload } from 'lucide-react';
 import { toast } from 'react-toastify';
 import DateRangePicker from '../components/DateRangePicker';
-import { api, formatNumber, todayString } from '../lib/api';
+import { api, formatNumber, todayString, uploadForm } from '../lib/api';
 
 const DEFAULT_LIMIT = 100;
 
@@ -53,8 +53,10 @@ export default function PurchaseOrders() {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [syncingData, setSyncingData] = useState(false);
+  const [importingStatusCsv, setImportingStatusCsv] = useState(false);
   const [savingKey, setSavingKey] = useState('');
   const [error, setError] = useState('');
+  const statusCsvInputRef = useRef(null);
 
   const loadRows = async ({ nextPage = page } = {}) => {
     setLoading(true);
@@ -100,6 +102,32 @@ export default function PurchaseOrders() {
       toast.error(`Lỗi đồng bộ DATA: ${err.message}`);
     } finally {
       setSyncingData(false);
+    }
+  };
+
+  const importStatusCsvFile = async (file) => {
+    if (!file || importingStatusCsv) return;
+    setImportingStatusCsv(true);
+    setError('');
+
+    try {
+      const formData = new FormData();
+      formData.set('file', file);
+      const result = await uploadForm('/purchase-orders/import-status-csv', formData, { timeoutMs: 10 * 60 * 1000 });
+      const skipped = Number(result.skippedNoOrder || 0)
+        + Number(result.skippedNoStatus || 0)
+        + Number(result.skippedInvalidStatus || 0)
+        + Number(result.skippedUnmatchedTracking || 0);
+      const notes = [];
+      if (Number(result.unmatchedInData || 0)) notes.push(`${formatNumber(result.unmatchedInData)} mã chưa có DATA`);
+      if (skipped) notes.push(`${formatNumber(skipped)} dòng bỏ qua`);
+      toast.success(`Đã nhập ${formatNumber(result.imported || 0)} trạng thái${notes.length ? ` (${notes.join(', ')})` : ''}`);
+      await loadRows({ nextPage: 1 });
+    } catch (err) {
+      setError(err.message);
+      toast.error(`Lỗi import trạng thái: ${err.message}`);
+    } finally {
+      setImportingStatusCsv(false);
     }
   };
 
@@ -222,6 +250,27 @@ export default function PurchaseOrders() {
               <RefreshCw size={14} className={syncingData ? 'spin' : ''} />
               {syncingData ? 'Đang đồng bộ' : 'Đồng bộ DATA'}
             </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => statusCsvInputRef.current?.click()}
+              disabled={loading || importingStatusCsv}
+              title="Import CSV trạng thái"
+            >
+              <Upload size={14} />
+              {importingStatusCsv ? 'Đang nhập' : 'Nhập trạng thái'}
+            </button>
+            <input
+              ref={statusCsvInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              disabled={importingStatusCsv}
+              style={{ display: 'none' }}
+              onChange={event => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                importStatusCsvFile(file);
+              }}
+            />
             <button className="btn btn-ghost btn-sm" onClick={() => loadRows({ nextPage: page })} disabled={loading}>
               <RefreshCw size={14} className={loading ? 'spin' : ''} />
               Làm mới

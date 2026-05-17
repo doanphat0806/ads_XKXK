@@ -30,7 +30,7 @@ function normalizeText(value) {
   return toText(value)
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[đĐ]/g, 'd')
+    .replace(/[đĐ\u0111\u0110]/g, 'd')
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
@@ -100,6 +100,268 @@ function getLastValidTracking(values = []) {
 function normalizeStatus(status = '') {
   const value = toText(status);
   return STATUS_BY_VALUE[value] ? value : '';
+}
+
+const STATUS_IMPORT_ALIASES = {
+  ve_du: 've_du',
+  vedu: 've_du',
+  du: 've_du',
+  full: 've_du',
+  done: 've_du',
+  complete: 've_du',
+  completed: 've_du',
+  received_full: 've_du',
+  ve_thieu: 've_thieu',
+  vethieu: 've_thieu',
+  thieu: 've_thieu',
+  missing: 've_thieu',
+  short: 've_thieu',
+  sai_hang: 'sai_hang',
+  saihang: 'sai_hang',
+  sai: 'sai_hang',
+  wrong: 'sai_hang',
+  ve_thua: 've_thua',
+  vethua: 've_thua',
+  thua: 've_thua',
+  extra: 've_thua',
+  that_lac: 'that_lac',
+  thatlac: 'that_lac',
+  lost: 'that_lac'
+};
+
+function normalizeImportToken(value = '') {
+  return normalizeText(value)
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function normalizeImportedStatus(status = '') {
+  const currentStatus = normalizeStatus(status);
+  if (currentStatus) return currentStatus;
+
+  const token = normalizeImportToken(status);
+  if (STATUS_IMPORT_ALIASES[token]) return STATUS_IMPORT_ALIASES[token];
+
+  const text = normalizeText(status);
+  if (!text) return '';
+  if (text.includes('that lac') || text.includes('lost')) return 'that_lac';
+  if (text.includes('sai') || text.includes('wrong')) return 'sai_hang';
+  if (text.includes('thieu') || text.includes('missing') || text.includes('short')) return 've_thieu';
+  if (text.includes('thua') || text.includes('extra')) return 've_thua';
+  if (text.includes('ve du') || text === 'du' || text.includes('full') || text.includes('done') || text.includes('complete')) return 've_du';
+  return '';
+}
+
+function parseCsvRows(csvText = '') {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < csvText.length; index += 1) {
+    const char = csvText[index];
+    const next = csvText[index + 1];
+
+    if (inQuotes) {
+      if (char === '"' && next === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') {
+        inQuotes = false;
+      } else {
+        cell += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+    } else if (char === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (char === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else if (char !== '\r') {
+      cell += char;
+    }
+  }
+
+  row.push(cell);
+  if (row.length > 1 || row[0] !== '') rows.push(row);
+  return rows;
+}
+
+function normalizeHeader(value = '') {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, '');
+}
+
+function findImportColumnIndex(headerRow = [], names = []) {
+  const normalizedNames = new Set(names.map(normalizeHeader));
+  return headerRow.findIndex(cell => normalizedNames.has(normalizeHeader(cell)));
+}
+
+function hasImportHeader(row = []) {
+  const orderIndex = findImportColumnIndex(row, [
+    'ma don hang',
+    'madonhang',
+    'order id',
+    'orderid',
+    'order_id'
+  ]);
+  const statusIndex = findImportColumnIndex(row, [
+    'trang thai',
+    'trangthai',
+    'status'
+  ]);
+  return orderIndex >= 0 && statusIndex >= 0;
+}
+
+function detectStatusImportColumns(rows = []) {
+  const headerIndex = rows.findIndex(hasImportHeader);
+  if (headerIndex >= 0) {
+    const headerRow = rows[headerIndex];
+    return {
+      startIndex: headerIndex + 1,
+      orderIndex: findImportColumnIndex(headerRow, [
+        'ma don hang',
+        'madonhang',
+        'order id',
+        'orderid',
+        'order_id'
+      ]),
+      trackingIndex: findImportColumnIndex(headerRow, [
+        'ma van don hang ve',
+        'mavandonhangve',
+        'ma van don',
+        'mavandon',
+        'mvd',
+        'tracking',
+        'tracking code',
+        'trackingcode',
+        'logistics tracking code'
+      ]),
+      statusIndex: findImportColumnIndex(headerRow, [
+        'trang thai',
+        'trangthai',
+        'status'
+      ]),
+      receivedQuantityIndex: findImportColumnIndex(headerRow, [
+        'so luong hang ve',
+        'soluonghangve',
+        'received quantity',
+        'receivedquantity'
+      ])
+    };
+  }
+
+  const firstDataRow = rows.find(row => row.some(cell => toText(cell)));
+  const width = firstDataRow?.length || 0;
+  return {
+    startIndex: 0,
+    orderIndex: width >= 4 ? 1 : 0,
+    trackingIndex: width >= 4 ? 2 : -1,
+    statusIndex: width >= 4 ? 3 : 1,
+    receivedQuantityIndex: -1
+  };
+}
+
+function normalizeImportOrderId(value = '') {
+  return toText(value).replace(/\s+/g, '');
+}
+
+function buildStatusImportRows(csvText = '') {
+  const rows = parseCsvRows(String(csvText || '').replace(/^\uFEFF/, ''));
+  if (!rows.length) {
+    throw new Error('File CSV khong co du lieu');
+  }
+
+  const columns = detectStatusImportColumns(rows);
+  if (columns.orderIndex < 0 && columns.trackingIndex < 0) {
+    throw new Error('CSV can co cot Ma Don Hang hoac Ma Van Don');
+  }
+  if (columns.statusIndex < 0) {
+    throw new Error('CSV can co cot Trang Thai');
+  }
+
+  const items = [];
+  const invalidStatuses = [];
+  let skippedNoOrder = 0;
+  let skippedNoStatus = 0;
+  let skippedInvalidStatus = 0;
+
+  for (let index = columns.startIndex; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (!row || !row.some(cell => toText(cell))) continue;
+
+    const orderId = columns.orderIndex >= 0 ? normalizeImportOrderId(row[columns.orderIndex]) : '';
+    const trackingCode = columns.trackingIndex >= 0 ? toText(row[columns.trackingIndex]) : '';
+    const rawStatus = toText(row[columns.statusIndex]);
+    const status = normalizeImportedStatus(rawStatus);
+    const receivedQuantity = columns.receivedQuantityIndex >= 0
+      ? toText(row[columns.receivedQuantityIndex]).slice(0, 200)
+      : '';
+
+    if (!orderId && !trackingCode) {
+      skippedNoOrder += 1;
+      continue;
+    }
+    if (!rawStatus) {
+      skippedNoStatus += 1;
+      continue;
+    }
+    if (!status) {
+      skippedInvalidStatus += 1;
+      if (invalidStatuses.length < 5) invalidStatuses.push(rawStatus);
+      continue;
+    }
+
+    items.push({
+      rowNumber: index + 1,
+      orderId,
+      trackingCode,
+      status,
+      receivedQuantity
+    });
+  }
+
+  return {
+    items,
+    skippedNoOrder,
+    skippedNoStatus,
+    skippedInvalidStatus,
+    invalidStatuses
+  };
+}
+
+async function getOrderIdsByTrackingCodes(trackingCodes = []) {
+  const cleanTrackingCodes = [...new Set(trackingCodes.map(toText).filter(Boolean))];
+  if (!cleanTrackingCodes.length) return new Map();
+
+  const docs = await DataPurchaseOrder.find({
+    sourceId: SHEET_ID,
+    sourceName: SHEET_NAME,
+    $or: [
+      { logisticsTrackingCode: { $in: cleanTrackingCodes } },
+      { col25: { $in: cleanTrackingCodes } }
+    ]
+  }).select('col3 logisticsTrackingCode col25').lean();
+
+  const orderIdByTrackingCode = new Map();
+  docs.forEach(doc => {
+    const orderId = normalizeImportOrderId(doc.col3);
+    if (!orderId) return;
+    [doc.logisticsTrackingCode, doc.col25].forEach(value => {
+      const trackingCode = toText(value);
+      if (trackingCode && !orderIdByTrackingCode.has(trackingCode)) {
+        orderIdByTrackingCode.set(trackingCode, orderId);
+      }
+    });
+  });
+
+  return orderIdByTrackingCode;
 }
 
 function buildDateFilter(fromDate, toDate) {
@@ -324,8 +586,99 @@ async function updatePurchaseOrder(orderId, patch = {}) {
   };
 }
 
+async function importPurchaseOrderStatusesFromCsvText(csvText = '') {
+  const parsed = buildStatusImportRows(csvText);
+  if (!parsed.items.length) {
+    throw new Error('Khong co dong trang thai hop le de import');
+  }
+
+  const trackingCodeMap = await getOrderIdsByTrackingCodes(
+    parsed.items
+      .filter(item => !item.orderId && item.trackingCode)
+      .map(item => item.trackingCode)
+  );
+  const itemByOrderId = new Map();
+  let skippedUnmatchedTracking = 0;
+
+  parsed.items.forEach(item => {
+    const orderId = item.orderId || trackingCodeMap.get(item.trackingCode) || '';
+    if (!orderId) {
+      skippedUnmatchedTracking += 1;
+      return;
+    }
+    itemByOrderId.set(orderId, { ...item, orderId });
+  });
+
+  const orderIds = [...itemByOrderId.keys()];
+  if (!orderIds.length) {
+    throw new Error('Khong tim thay ma don hop le de import trang thai');
+  }
+
+  const existingOrderIds = new Set(await DataPurchaseOrder.distinct('col3', {
+    sourceId: SHEET_ID,
+    sourceName: SHEET_NAME,
+    col3: { $in: orderIds }
+  }));
+  const now = new Date();
+  const operations = orderIds.map(orderId => {
+    const item = itemByOrderId.get(orderId);
+    const update = {
+      status: item.status,
+      updatedAt: now
+    };
+    if (item.receivedQuantity) update.receivedQuantity = item.receivedQuantity;
+
+    return {
+      updateOne: {
+        filter: { sourceId: SHEET_ID, sourceName: SHEET_NAME, orderId },
+        update: {
+          $set: update,
+          $setOnInsert: {
+            sourceId: SHEET_ID,
+            sourceName: SHEET_NAME,
+            orderId,
+            createdAt: now
+          }
+        },
+        upsert: true
+      }
+    };
+  });
+  const totals = {
+    matched: 0,
+    modified: 0,
+    upserted: 0
+  };
+  const chunkSize = 1000;
+
+  for (let start = 0; start < operations.length; start += chunkSize) {
+    const result = await PurchaseOrder.bulkWrite(operations.slice(start, start + chunkSize), { ordered: false });
+    totals.matched += result.matchedCount || 0;
+    totals.modified += result.modifiedCount || 0;
+    totals.upserted += result.upsertedCount || 0;
+  }
+
+  return {
+    ok: true,
+    imported: operations.length,
+    rowsRead: parsed.items.length,
+    matched: totals.matched,
+    modified: totals.modified,
+    upserted: totals.upserted,
+    matchedInData: existingOrderIds.size,
+    unmatchedInData: Math.max(0, orderIds.length - existingOrderIds.size),
+    skippedNoOrder: parsed.skippedNoOrder,
+    skippedNoStatus: parsed.skippedNoStatus,
+    skippedInvalidStatus: parsed.skippedInvalidStatus,
+    skippedUnmatchedTracking,
+    invalidStatuses: parsed.invalidStatuses,
+    importedAt: now.toISOString()
+  };
+}
+
 module.exports = {
   STATUS_OPTIONS,
   getPurchaseOrders,
+  importPurchaseOrderStatusesFromCsvText,
   updatePurchaseOrder
 };
