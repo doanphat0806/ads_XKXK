@@ -21,6 +21,20 @@ const STATUS_BY_VALUE = STATUS_OPTIONS.reduce((acc, item) => {
 
 const INVALID_TRACKING_VALUES = new Set(['', '未知', '合并订单暂无', 'unknown', 'null', 'undefined']);
 
+const DASHBOARD_METRIC_KEYS = [
+  'maDonHang',
+  'slHang',
+  'maVanDon',
+  'mvdVe',
+  'chuaCoMvd',
+  'thieuHang',
+  'saiHang',
+  'veThua',
+  'thatLac'
+];
+
+const ARRIVED_STATUS_VALUES = new Set(['ve_du', 've_thieu', 'sai_hang', 've_thua']);
+
 function toText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   return String(value).trim();
@@ -453,6 +467,207 @@ function buildSummary(rows) {
   };
 }
 
+function makeDashboardRow(ngay) {
+  return {
+    ngay,
+    maDonHang: 0,
+    slHang: 0,
+    maVanDon: 0,
+    mvdVe: 0,
+    chuaCoMvd: 0,
+    thieuHang: 0,
+    saiHang: 0,
+    veThua: 0,
+    thatLac: 0
+  };
+}
+
+function addDashboardMetrics(target, source) {
+  DASHBOARD_METRIC_KEYS.forEach(key => {
+    target[key] = Number(target[key] || 0) + Number(source[key] || 0);
+  });
+  return target;
+}
+
+function sumParsedNumbers(values = []) {
+  return values.reduce((total, value) => total + parseNumber(value), 0);
+}
+
+function getDashboardQuantityTotal(row = {}) {
+  const primaryTotal = sumParsedNumbers(row.quantityValues || []);
+  if (primaryTotal > 0) return primaryTotal;
+  return sumParsedNumbers(row.quantityFallbackValues || []);
+}
+
+async function findManualPurchaseOrderRows(orderIds = [], select = '') {
+  const rows = [];
+  const uniqueOrderIds = [...new Set(orderIds.filter(Boolean))];
+  const chunkSize = 5000;
+
+  for (let start = 0; start < uniqueOrderIds.length; start += chunkSize) {
+    let query = PurchaseOrder.find({
+      sourceId: SHEET_ID,
+      sourceName: SHEET_NAME,
+      orderId: { $in: uniqueOrderIds.slice(start, start + chunkSize) }
+    });
+    if (select) query = query.select(select);
+    rows.push(...await query.lean());
+  }
+
+  return rows;
+}
+
+function getIsoWeekInfo(dateKey = '') {
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return { key: dateKey, label: dateKey };
+
+  const current = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayNumber = current.getUTCDay() || 7;
+  current.setUTCDate(current.getUTCDate() + 4 - dayNumber);
+  const yearStart = new Date(Date.UTC(current.getUTCFullYear(), 0, 1));
+  const weekNumber = Math.ceil((((current - yearStart) / 86400000) + 1) / 7);
+  const year = current.getUTCFullYear();
+
+  return {
+    key: `${year}-W${String(weekNumber).padStart(2, '0')}`,
+    label: `Tong Ket Tuan ${weekNumber}/${year}`
+  };
+}
+
+function getMonthInfo(dateKey = '') {
+  const [year, month] = String(dateKey || '').split('-');
+  return {
+    key: `${year || ''}-${month || ''}`,
+    label: `Tong Ket Thang ${Number(month || 0) || ''}`.trim()
+  };
+}
+
+function buildDashboardRowsWithTotals(dailyStats = []) {
+  const result = [];
+  let weekTotal = null;
+  let monthTotal = null;
+  let currentWeekKey = '';
+  let currentMonthKey = '';
+
+  dailyStats.forEach(day => {
+    const weekInfo = getIsoWeekInfo(day.ngay);
+    const monthInfo = getMonthInfo(day.ngay);
+
+    if (currentWeekKey && currentWeekKey !== weekInfo.key && weekTotal) {
+      result.push({ ...weekTotal, isWeekTotal: true });
+      weekTotal = null;
+    }
+
+    if (currentMonthKey && currentMonthKey !== monthInfo.key && monthTotal) {
+      result.push({ ...monthTotal, isMonthTotal: true });
+      monthTotal = null;
+    }
+
+    if (!weekTotal) {
+      weekTotal = makeDashboardRow(weekInfo.label);
+      currentWeekKey = weekInfo.key;
+    }
+    addDashboardMetrics(weekTotal, day);
+
+    if (!monthTotal) {
+      monthTotal = makeDashboardRow(monthInfo.label);
+      currentMonthKey = monthInfo.key;
+    }
+    addDashboardMetrics(monthTotal, day);
+
+    result.push(day);
+  });
+
+  if (weekTotal) result.push({ ...weekTotal, isWeekTotal: true });
+  if (monthTotal) result.push({ ...monthTotal, isMonthTotal: true });
+
+  return result;
+}
+
+async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
+  const dateFilter = buildDateFilter(fromDate, toDate);
+  const sourceFilter = {
+    sourceId: SHEET_ID,
+    sourceName: SHEET_NAME,
+    col3: { $nin: ['', null] }
+  };
+
+  if (dateFilter.orderDateKey) {
+    sourceFilter.$or = [
+      { orderDateKey: dateFilter.orderDateKey },
+      { orderDateKey: '' },
+      { orderDateKey: { $exists: false } }
+    ];
+  }
+
+  const groupedRows = await DataPurchaseOrder.aggregate([
+    { $match: sourceFilter },
+    { $sort: { rowNumber: 1 } },
+    {
+      $group: {
+        _id: '$col3',
+        orderId: { $first: '$col3' },
+        rowNumber: { $first: '$rowNumber' },
+        orderDateKey: { $first: '$orderDateKey' },
+        orderDateTime: { $first: '$orderDateTime' },
+        orderDateRawCol4: { $first: '$col4' },
+        orderDateFallback: { $first: '$col25' },
+        trackingCandidates: { $push: '$logisticsTrackingCode' },
+        fallbackTrackingCandidates: { $push: '$col25' },
+        quantityValues: { $push: '$productQuantity' },
+        quantityFallbackValues: { $push: '$col15' }
+      }
+    },
+    { $sort: { orderDateKey: 1, rowNumber: 1 } }
+  ]).allowDiskUse(true);
+
+  const orderIds = groupedRows.map(row => row.orderId).filter(Boolean);
+  const manualRows = await findManualPurchaseOrderRows(orderIds, 'orderId status');
+  const manualByOrderId = new Map(manualRows.map(row => [row.orderId, row]));
+  const dailyMap = new Map();
+
+  groupedRows.forEach(row => {
+    const orderDate = getOrderDateTime(
+      row.orderDateTime,
+      row.orderDateRawCol4,
+      row.orderDateFallback
+    );
+    const dateKey = row.orderDateKey || normalizeDateKey(orderDate);
+    if (!dateKey || !isDateInRange(dateKey, fromDate, toDate)) return;
+
+    if (!dailyMap.has(dateKey)) {
+      dailyMap.set(dateKey, makeDashboardRow(dateKey));
+    }
+
+    const day = dailyMap.get(dateKey);
+    const trackingCode = getLastValidTracking(row.trackingCandidates) || getLastValidTracking(row.fallbackTrackingCandidates);
+    const status = normalizeStatus(manualByOrderId.get(row.orderId)?.status);
+
+    day.maDonHang += 1;
+    day.slHang += getDashboardQuantityTotal(row);
+    if (trackingCode) {
+      day.maVanDon += 1;
+    } else {
+      day.chuaCoMvd += 1;
+    }
+    if (ARRIVED_STATUS_VALUES.has(status)) day.mvdVe += 1;
+    if (status === 've_thieu') day.thieuHang += 1;
+    if (status === 'sai_hang') day.saiHang += 1;
+    if (status === 've_thua') day.veThua += 1;
+    if (status === 'that_lac') day.thatLac += 1;
+  });
+
+  const dailyStats = Array.from(dailyMap.values()).sort((a, b) => a.ngay.localeCompare(b.ngay));
+  const rows = buildDashboardRowsWithTotals(dailyStats);
+  const totals = dailyStats.reduce((acc, day) => addDashboardMetrics(acc, day), makeDashboardRow('Tong Cong'));
+
+  return {
+    dailyStats: rows,
+    totals,
+    source: 'data-purchase-orders'
+  };
+}
+
 async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page = 1, limit = 100 } = {}) {
   const safePage = Math.max(1, Number(page) || 1);
   const safeLimit = Math.max(1, Math.min(1000, Number(limit) || 100));
@@ -502,13 +717,7 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
   ]).allowDiskUse(true);
 
   const orderIds = groupedRows.map(row => row.orderId).filter(Boolean);
-  const manualRows = orderIds.length
-    ? await PurchaseOrder.find({
-      sourceId: SHEET_ID,
-      sourceName: SHEET_NAME,
-      orderId: { $in: orderIds }
-    }).lean()
-    : [];
+  const manualRows = await findManualPurchaseOrderRows(orderIds);
   const manualByOrderId = new Map(manualRows.map(row => [row.orderId, row]));
 
   const rows = groupedRows.map(row => {
@@ -691,6 +900,7 @@ async function importPurchaseOrderStatusesFromCsvText(csvText = '') {
 
 module.exports = {
   STATUS_OPTIONS,
+  getPurchaseOrderDashboard,
   getPurchaseOrders,
   importPurchaseOrderStatusesFromCsvText,
   updatePurchaseOrder

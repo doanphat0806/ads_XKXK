@@ -1341,6 +1341,16 @@
     }
 
     /* Ã¢â€â‚¬Ã¢â€â‚¬ Campaigns Page Overrides Ã¢â€â‚¬Ã¢â€â‚¬ */
+    #page-oder-dashboard .row-week-total,
+    #page-oder-dashboard .row-month-total {
+      font-weight: 800;
+      background: rgba(24, 201, 200, 0.08);
+    }
+
+    #page-oder-dashboard .row-month-total {
+      background: rgba(183, 230, 77, 0.18);
+    }
+
     #page-campaigns .filter-row {
       background: rgba(255, 255, 255, 0.94);
       border: 1px solid rgba(229, 242, 255, 0.95);

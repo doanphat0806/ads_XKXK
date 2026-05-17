@@ -178,6 +178,7 @@ const {
   syncDataPurchaseOrdersFromSheet
 } = require('./services/dataPurchaseOrderSheetService');
 const {
+  getPurchaseOrderDashboard,
   getPurchaseOrders,
   importPurchaseOrderStatusesFromCsvText,
   updatePurchaseOrder
@@ -504,6 +505,33 @@ function parseAuthToken(token = '') {
   } catch {
     return null;
   }
+}
+
+function normalizeUsername(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isAdminUser(user = {}) {
+  return normalizeUsername(user.username) === 'admin';
+}
+
+function requireAdminUser(req, res) {
+  if (!isAdminUser(req.currentUser)) {
+    res.status(403).json({ error: 'Chi admin moi co quyen quan ly users' });
+    return false;
+  }
+  return true;
+}
+
+function serializeAdminUser(user = {}) {
+  return {
+    id: user._id,
+    username: user.username,
+    displayName: user.displayName || user.username,
+    provider: user.provider || 'facebook',
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
+  };
 }
 
 const GOOGLE_OAUTH_SCOPES = [
@@ -3634,12 +3662,11 @@ app.use('/api', authenticateApiRequest);
 app.post('/api/auth/login', async (req, res) => {
   try {
     await ensureDefaultUsers();
-    const username = String(req.body.username || '').trim().toLowerCase();
+    const username = normalizeUsername(req.body.username);
     const password = String(req.body.password || '');
-    const requestedProvider = normalizeProvider(req.body.provider);
     const defaultUser = DEFAULT_LOGIN_USERS.find(item => item.username === username);
     let user = await User.findOne({ username });
-    if ((!user || !user.active) && defaultUser && password === defaultUser.password) {
+    if (!user && defaultUser && password === defaultUser.password) {
       user = await User.findOneAndUpdate(
         { username },
         {
@@ -3657,27 +3684,9 @@ app.post('/api/auth/login', async (req, res) => {
         { upsert: true, new: true }
       );
     }
-    let passwordOk = user ? verifyPassword(password, user.passwordHash) : false;
-    if (user && !passwordOk && defaultUser && password === defaultUser.password) {
-      user.passwordHash = hashPassword(defaultUser.password);
-      user.provider = defaultUser.provider || user.provider || 'facebook';
-    }
-    if (user && defaultUser && defaultUser.provider && user.provider !== defaultUser.provider) {
-      user.provider = defaultUser.provider;
-      user.active = true;
-      user.updatedAt = new Date();
-      await user.save();
-      user.active = true;
-      user.updatedAt = new Date();
-      await user.save();
-      passwordOk = true;
-    }
+    const passwordOk = user && user.active ? verifyPassword(password, user.passwordHash) : false;
     if (!user || !passwordOk) {
       return res.status(401).json({ error: 'Sai tai khoan hoac mat khau' });
-    }
-
-    if (requestedProvider && user.provider !== requestedProvider) {
-      return res.status(403).json({ error: 'Tai khoan nay khong thuoc nen tang da chon' });
     }
 
     const token = createAuthToken(user);
@@ -3706,6 +3715,116 @@ app.get('/api/auth/me', authenticateApiRequest, async (req, res) => {
       provider: req.currentUser.provider
     }
   });
+});
+
+app.get('/api/users', async (req, res) => {
+  try {
+    if (!requireAdminUser(req, res)) return;
+    const users = await User.find({ active: true })
+      .select('username displayName provider createdAt updatedAt')
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json({ ok: true, users: users.map(serializeAdminUser) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/users', async (req, res) => {
+  try {
+    if (!requireAdminUser(req, res)) return;
+    const { username, password, displayName, provider } = req.body;
+    const normalizedUsername = normalizeUsername(username);
+    if (!normalizedUsername || !password) {
+      return res.status(400).json({ error: 'Username va password la bat buoc' });
+    }
+    if (!/^[a-z0-9._-]+$/.test(normalizedUsername)) {
+      return res.status(400).json({ error: 'Username chi duoc dung chu thuong, so, dau cham, gach ngang hoac gach duoi' });
+    }
+
+    const existing = await User.findOne({ username: normalizedUsername });
+    if (existing?.active) {
+      return res.status(400).json({ error: 'Username da ton tai' });
+    }
+    const payload = {
+      username: normalizedUsername,
+      displayName: String(displayName || normalizedUsername).trim(),
+      passwordHash: hashPassword(password),
+      provider: normalizeProvider(provider),
+      active: true,
+      updatedAt: new Date()
+    };
+    const user = existing
+      ? await User.findByIdAndUpdate(
+        existing._id,
+        { $set: payload },
+        { new: true }
+      )
+      : await User.create({
+        ...payload,
+        createdAt: new Date()
+      });
+    res.json({
+      ok: true,
+      user: serializeAdminUser(user)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/users/:username', async (req, res) => {
+  try {
+    if (!requireAdminUser(req, res)) return;
+    const username = normalizeUsername(req.params.username);
+    const { password, displayName, provider } = req.body;
+    const update = { updatedAt: new Date() };
+    if (password) update.passwordHash = hashPassword(password);
+    if (Object.prototype.hasOwnProperty.call(req.body, 'displayName')) {
+      update.displayName = String(displayName || '').trim();
+    }
+    if (provider) {
+      const nextProvider = normalizeProvider(provider);
+      if (username === 'admin' && nextProvider !== 'facebook') {
+        return res.status(400).json({ error: 'Khong the doi provider cua tai khoan admin' });
+      }
+      update.provider = nextProvider;
+    }
+
+    const user = await User.findOneAndUpdate(
+      { username, active: true },
+      { $set: update },
+      { new: true }
+    ).select('username displayName provider createdAt updatedAt');
+
+    if (!user) {
+      return res.status(404).json({ error: 'User khong ton tai' });
+    }
+    res.json({ ok: true, user: serializeAdminUser(user) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/users/:username', async (req, res) => {
+  try {
+    if (!requireAdminUser(req, res)) return;
+    const username = normalizeUsername(req.params.username);
+    if (username === 'admin') {
+      return res.status(400).json({ error: 'Khong the xoa tai khoan admin' });
+    }
+    const user = await User.findOneAndUpdate(
+      { username, active: true },
+      { $set: { active: false, updatedAt: new Date() } },
+      { new: true }
+    );
+    if (!user) {
+      return res.status(404).json({ error: 'User khong ton tai' });
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.get('/api/google/oauth/start', async (req, res) => {
@@ -7146,122 +7265,8 @@ app.get('/api/oder/dashboard', async (req, res) => {
       return res.status(400).json({ error: 'fromDate va toDate la bat buoc' });
     }
 
-    const match = {
-      createdAt: {
-        $gte: new Date(fromDate),
-        $lte: new Date(new Date(toDate).setHours(23, 59, 59, 999))
-      }
-    };
-
-    const orders = await PurchaseOrder.find(match).lean();
-
-    const dailyMap = new Map();
-
-    for (const order of orders) {
-      const dateStr = order.createdAt.toISOString().split('T')[0];
-      if (!dailyMap.has(dateStr)) {
-        dailyMap.set(dateStr, {
-          ngay: dateStr,
-          maDonHang: 0,
-          slHang: 0,
-          maVanDon: 0,
-          mvdVe: 0,
-          chuaCoMvd: 0,
-          thieuHang: 0,
-          saiHang: 0,
-          veThua: 0,
-          thatLac: 0
-        });
-      }
-
-      const day = dailyMap.get(dateStr);
-      day.maDonHang++;
-
-      const qty = parseInt(order.receivedQuantity || '0', 10);
-      day.slHang += qty;
-
-      const status = String(order.status || '').toLowerCase();
-      if (status.includes('mvd') || status.includes('vận đơn')) {
-        day.maVanDon++;
-      }
-      if (status.includes('về') || status.includes('delivered')) {
-        day.mvdVe++;
-      }
-      if (!status || status === 'pending') {
-        day.chuaCoMvd++;
-      }
-      if (status.includes('thiếu')) {
-        day.thieuHang++;
-      }
-      if (status.includes('sai')) {
-        day.saiHang++;
-      }
-      if (status.includes('thừa')) {
-        day.veThua++;
-      }
-      if (status.includes('thất lạc') || status.includes('lost')) {
-        day.thatLac++;
-      }
-    }
-
-    const dailyStats = Array.from(dailyMap.values()).sort((a, b) => a.ngay.localeCompare(b.ngay));
-
-    const result = [];
-    let weekTotal = null;
-    let monthTotal = null;
-    let currentWeek = null;
-    let currentMonth = null;
-
-    for (let i = 0; i < dailyStats.length; i++) {
-      const day = dailyStats[i];
-      const date = new Date(day.ngay);
-      const weekKey = `${date.getFullYear()}-W${Math.ceil((date.getDate() + new Date(date.getFullYear(), date.getMonth(), 1).getDay()) / 7)}`;
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-
-      if (currentWeek && currentWeek !== weekKey && weekTotal) {
-        weekTotal.isWeekTotal = true;
-        result.push(weekTotal);
-        weekTotal = null;
-      }
-
-      if (currentMonth && currentMonth !== monthKey && monthTotal) {
-        monthTotal.isMonthTotal = true;
-        result.push(monthTotal);
-        monthTotal = null;
-      }
-
-      if (!weekTotal) {
-        weekTotal = { ...day, ngay: day.ngay };
-        currentWeek = weekKey;
-      } else {
-        Object.keys(day).forEach(key => {
-          if (key !== 'ngay') weekTotal[key] += day[key];
-        });
-      }
-
-      if (!monthTotal) {
-        monthTotal = { ...day, ngay: `Tổng Kết Tháng ${date.getMonth() + 1}` };
-        currentMonth = monthKey;
-      } else {
-        Object.keys(day).forEach(key => {
-          if (key !== 'ngay') monthTotal[key] += day[key];
-        });
-      }
-
-      result.push(day);
-    }
-
-    if (weekTotal) {
-      weekTotal.isWeekTotal = true;
-      result.push(weekTotal);
-    }
-
-    if (monthTotal) {
-      monthTotal.isMonthTotal = true;
-      result.push(monthTotal);
-    }
-
-    res.json({ dailyStats: result });
+    const result = await getPurchaseOrderDashboard({ fromDate, toDate });
+    return res.json({ ok: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

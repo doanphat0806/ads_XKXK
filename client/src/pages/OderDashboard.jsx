@@ -30,7 +30,6 @@ export default function OderDashboard() {
   }, []);
 
   const dailyStats = data?.dailyStats || EMPTY_ARRAY;
-  const totals = data?.totals || {};
 
   return (
     <div id="page-oder-dashboard">

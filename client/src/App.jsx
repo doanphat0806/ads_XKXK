@@ -22,11 +22,13 @@ import CreaterPage from './pages/CreaterPage';
 import CreateCampaign from './pages/Pages';
 import ShopeeCommission from './pages/ShopeeCommission';
 import OderDashboard from './pages/OderDashboard';
+import UserManagement from './pages/UserManagement';
 import ModalContainer from './components/ModalContainer';
 
 function AppContent() {
-  const { isAuthenticated, provider } = useAppContext();
+  const { isAuthenticated, provider, currentUser } = useAppContext();
   const isOder = provider === 'oder';
+  const isAdmin = currentUser?.username === 'admin';
   const location = useLocation();
 
   React.useEffect(() => {
@@ -39,6 +41,8 @@ function AppContent() {
         return 'Dashboard';
       case '/oder-dashboard':
         return 'Dashboard Đơn Hàng';
+      case '/user-management':
+        return isAdmin ? 'Quản lý tài khoản' : 'Dashboard';
       case '/accounts':
         return 'Tai khoan';
       case '/campaigns':
@@ -105,6 +109,7 @@ function AppContent() {
                 <Route path="/creater-page" element={<CreaterPage />} />
                 <Route path="/logs" element={<Logs />} />
                 <Route path="/create-campaign" element={<CreateCampaign />} />
+                <Route path="/user-management" element={isAdmin ? <UserManagement /> : <Navigate to="/" replace />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </>
             )}

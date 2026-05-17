@@ -15,15 +15,17 @@ import {
   PenSquare,
   ShoppingCart,
   Settings,
-  Users
+  Users,
+  UserCog
 } from 'lucide-react';
 import { useAppContext } from '../contexts/AppContext';
 
 export default function Sidebar() {
-  const { stats, allAccounts, openModal, provider } = useAppContext();
+  const { stats, allAccounts, openModal, provider, currentUser } = useAppContext();
   const location = useLocation();
   const showOrders = provider !== 'shopee';
   const showInventory = provider !== 'shopee';
+  const isAdmin = currentUser?.username === 'admin';
   const dataPaths = ['/data-purchase-orders', '/inventory', '/orders', '/google-sheets'];
   const dataRouteActive = dataPaths.some(path => location.pathname === path);
   const [dataOpen, setDataOpen] = React.useState(dataRouteActive);
@@ -150,6 +152,12 @@ export default function Sidebar() {
           </NavLink>
 
           <div className="nav-section">He thong</div>
+
+          {isAdmin && (
+            <NavLink to="/user-management" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <span className="icon"><UserCog size={16} strokeWidth={2} /></span><span>Quan ly users</span>
+            </NavLink>
+          )}
 
           <div className="nav-item" style={{ cursor: 'pointer' }} onClick={() => openModal('ACCOUNT')}>
             <span className="icon"><CirclePlus size={16} strokeWidth={2} /></span><span>Them tai khoan</span>
