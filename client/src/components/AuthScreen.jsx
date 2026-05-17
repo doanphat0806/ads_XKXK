@@ -5,10 +5,17 @@ export default function AuthScreen() {
   const { login } = useAppContext();
   const [user, setUser] = useState('');
   const [pass, setPass] = useState('');
-  const [provider, setProvider] = useState('facebook');
+
+  const detectProvider = (username) => {
+    const normalizedUser = username.toLowerCase().trim();
+    if (normalizedUser === 'admin1' || normalizedUser === 'phat') return 'shopee';
+    if (normalizedUser === 'oder') return 'oder';
+    return 'facebook';
+  };
 
   const handleLogin = (e) => {
     e.preventDefault();
+    const provider = detectProvider(user);
     login(user, pass, provider);
   };
 
@@ -18,14 +25,6 @@ export default function AuthScreen() {
         <h1>Đăng nhập quản trị</h1>
         <form onSubmit={handleLogin}>
           <div className="form-grid auth-form-grid">
-            <div className="form-group full">
-              <label>Nền tảng</label>
-              <select value={provider} onChange={(e) => setProvider(e.target.value)}>
-                <option value="facebook">Facebook</option>
-                <option value="shopee">Shopee</option>
-                <option value="oder">Oder</option>
-              </select>
-            </div>
             <div className="form-group full">
               <label>Tài khoản</label>
               <input 
