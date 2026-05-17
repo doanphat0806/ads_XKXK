@@ -1351,6 +1351,79 @@
       background: rgba(183, 230, 77, 0.18);
     }
 
+    #page-oder-dashboard .tbl th,
+    #page-oder-dashboard .tbl td {
+      text-align: center;
+    }
+
+    #page-oder-dashboard .dashboard-note-cell {
+      position: relative;
+      cursor: pointer;
+      background-image: linear-gradient(135deg, transparent calc(100% - 8px), #f59e0b calc(100% - 8px));
+      background-repeat: no-repeat;
+    }
+
+    #page-oder-dashboard .dashboard-note-clickable {
+      cursor: pointer;
+      user-select: none;
+      outline: none;
+    }
+
+    #page-oder-dashboard .dashboard-note-clickable:hover,
+    #page-oder-dashboard .dashboard-note-clickable:focus {
+      background-color: rgba(245, 158, 11, 0.08);
+    }
+
+    #page-oder-dashboard .dashboard-cancel-input {
+      width: 58px;
+      height: 28px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--txt);
+      font-family: var(--mono);
+      font-size: 12px;
+      text-align: center;
+      padding: 0 7px;
+      outline: none;
+    }
+
+    #page-oder-dashboard .dashboard-cancel-input:focus {
+      border-color: var(--g);
+      box-shadow: 0 0 0 3px rgba(24, 201, 200, 0.12);
+    }
+
+    #page-oder-dashboard .dashboard-note-modal {
+      padding: 0;
+      overflow: hidden;
+    }
+
+    #page-oder-dashboard .dashboard-note-modal-header {
+      gap: 12px;
+    }
+
+    #page-oder-dashboard .dashboard-note-meta {
+      margin-top: 6px;
+      color: var(--muted2);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    #page-oder-dashboard .dashboard-note-modal-body {
+      display: grid;
+      gap: 12px;
+      padding: 18px;
+    }
+
+    #page-oder-dashboard .dashboard-note-modal textarea {
+      min-height: 220px;
+      white-space: pre-wrap;
+    }
+
+    #page-oder-dashboard .dashboard-note-actions {
+      margin-top: 4px;
+    }
+
     #page-campaigns .filter-row {
       background: rgba(255, 255, 255, 0.94);
       border: 1px solid rgba(229, 242, 255, 0.95);

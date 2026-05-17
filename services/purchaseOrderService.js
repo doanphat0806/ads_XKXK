@@ -1,5 +1,6 @@
 const DataPurchaseOrder = require('../models/DataPurchaseOrder');
 const PurchaseOrder = require('../models/PurchaseOrder');
+const Config = require('../models/Config');
 const {
   SHEET_ID,
   SHEET_NAME,
@@ -27,6 +28,8 @@ const DASHBOARD_METRIC_KEYS = [
   'maVanDon',
   'mvdVe',
   'chuaCoMvd',
+  'chuaCoMvdRaw',
+  'huy',
   'thieuHang',
   'saiHang',
   'veThua',
@@ -34,6 +37,7 @@ const DASHBOARD_METRIC_KEYS = [
 ];
 
 const ARRIVED_STATUS_VALUES = new Set(['ve_du', 've_thieu', 'sai_hang', 've_thua']);
+const CONFIG_KEY = 'app';
 
 function toText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -475,10 +479,14 @@ function makeDashboardRow(ngay) {
     maVanDon: 0,
     mvdVe: 0,
     chuaCoMvd: 0,
+    chuaCoMvdRaw: 0,
+    huy: 0,
     thieuHang: 0,
     saiHang: 0,
     veThua: 0,
-    thatLac: 0
+    thatLac: 0,
+    chuaCoMvdNote: '',
+    chuaCoMvdNotes: []
   };
 }
 
@@ -486,17 +494,96 @@ function addDashboardMetrics(target, source) {
   DASHBOARD_METRIC_KEYS.forEach(key => {
     target[key] = Number(target[key] || 0) + Number(source[key] || 0);
   });
+  if (source.chuaCoMvdNote) {
+    target.chuaCoMvdNotes = [
+      ...(target.chuaCoMvdNotes || []),
+      `${source.ngay}: ${source.chuaCoMvdNote}`
+    ];
+  }
+  target.chuaCoMvdNote = buildDashboardManualNote(target);
   return target;
 }
 
-function sumParsedNumbers(values = []) {
-  return values.reduce((total, value) => total + parseNumber(value), 0);
+function getDashboardQuantityTotal(row = {}) {
+  const primaryQuantity = parseNumber(row.quantity);
+  if (primaryQuantity > 0) return primaryQuantity;
+  return parseNumber(row.quantityFallback);
 }
 
-function getDashboardQuantityTotal(row = {}) {
-  const primaryTotal = sumParsedNumbers(row.quantityValues || []);
-  if (primaryTotal > 0) return primaryTotal;
-  return sumParsedNumbers(row.quantityFallbackValues || []);
+function parseNonNegativeInteger(value) {
+  const number = Number(String(value ?? '').replace(/[^\d.-]/g, ''));
+  if (!Number.isFinite(number) || number <= 0) return 0;
+  return Math.floor(number);
+}
+
+async function getDashboardCancellationMap() {
+  const config = await Config.findOne({ key: CONFIG_KEY })
+    .select('purchaseOrderDashboardCancellations')
+    .lean();
+  return config?.purchaseOrderDashboardCancellations || {};
+}
+
+async function getDashboardNoteMap() {
+  const config = await Config.findOne({ key: CONFIG_KEY })
+    .select('purchaseOrderDashboardNotes')
+    .lean();
+  return config?.purchaseOrderDashboardNotes || {};
+}
+
+async function updatePurchaseOrderDashboardCancellation(dateKey, canceledCount) {
+  const normalizedDateKey = normalizeDateKey(dateKey);
+  if (!normalizedDateKey) throw new Error('Ngay dashboard khong hop le');
+
+  const safeCanceledCount = parseNonNegativeInteger(canceledCount);
+  const updatePath = `purchaseOrderDashboardCancellations.${normalizedDateKey}`;
+  await Config.findOneAndUpdate(
+    { key: CONFIG_KEY },
+    {
+      $set: {
+        [updatePath]: safeCanceledCount,
+        updatedAt: new Date()
+      }
+    },
+    { upsert: true, new: true }
+  ).lean();
+
+  return {
+    dateKey: normalizedDateKey,
+    huy: safeCanceledCount
+  };
+}
+
+async function updatePurchaseOrderDashboardNote(dateKey, note) {
+  const normalizedDateKey = normalizeDateKey(dateKey);
+  if (!normalizedDateKey) throw new Error('Ngay dashboard khong hop le');
+
+  const safeNote = toText(note).slice(0, 5000);
+  const updatePath = `purchaseOrderDashboardNotes.${normalizedDateKey}`;
+  await Config.findOneAndUpdate(
+    { key: CONFIG_KEY },
+    {
+      $set: {
+        [updatePath]: safeNote,
+        updatedAt: new Date()
+      }
+    },
+    { upsert: true, new: true }
+  ).lean();
+
+  return {
+    dateKey: normalizedDateKey,
+    note: safeNote
+  };
+}
+
+function buildDashboardManualNote(row = {}) {
+  const notes = Array.isArray(row.chuaCoMvdNotes) ? row.chuaCoMvdNotes.filter(Boolean) : [];
+  return notes.join('\n\n');
+}
+
+function toDashboardApiRow(row = {}) {
+  const { chuaCoMvdNotes, ...apiRow } = row;
+  return apiRow;
 }
 
 async function findManualPurchaseOrderRows(orderIds = [], select = '') {
@@ -586,6 +673,8 @@ function buildDashboardRowsWithTotals(dailyStats = []) {
 
 async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
   const dateFilter = buildDateFilter(fromDate, toDate);
+  const cancellationMap = await getDashboardCancellationMap();
+  const noteMap = await getDashboardNoteMap();
   const sourceFilter = {
     sourceId: SHEET_ID,
     sourceName: SHEET_NAME,
@@ -614,8 +703,11 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
         orderDateFallback: { $first: '$col25' },
         trackingCandidates: { $push: '$logisticsTrackingCode' },
         fallbackTrackingCandidates: { $push: '$col25' },
-        quantityValues: { $push: '$productQuantity' },
-        quantityFallbackValues: { $push: '$col15' }
+        accountName: { $first: '$col1' },
+        productAttribute: { $first: '$spec' },
+        productAttributeFallback: { $first: '$col13' },
+        quantity: { $first: '$productQuantity' },
+        quantityFallback: { $first: '$col15' }
       }
     },
     { $sort: { orderDateKey: 1, rowNumber: 1 } }
@@ -642,13 +734,15 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
     const day = dailyMap.get(dateKey);
     const trackingCode = getLastValidTracking(row.trackingCandidates) || getLastValidTracking(row.fallbackTrackingCandidates);
     const status = normalizeStatus(manualByOrderId.get(row.orderId)?.status);
+    const quantity = getDashboardQuantityTotal(row);
 
     day.maDonHang += 1;
-    day.slHang += getDashboardQuantityTotal(row);
+    day.slHang += quantity;
     if (trackingCode) {
       day.maVanDon += 1;
     } else {
       day.chuaCoMvd += 1;
+      day.chuaCoMvdRaw += 1;
     }
     if (ARRIVED_STATUS_VALUES.has(status)) day.mvdVe += 1;
     if (status === 've_thieu') day.thieuHang += 1;
@@ -658,12 +752,19 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
   });
 
   const dailyStats = Array.from(dailyMap.values()).sort((a, b) => a.ngay.localeCompare(b.ngay));
+  dailyStats.forEach(day => {
+    day.chuaCoMvdRaw = Number(day.chuaCoMvdRaw || day.chuaCoMvd || 0);
+    day.huy = parseNonNegativeInteger(cancellationMap[day.ngay]);
+    day.chuaCoMvd = Math.max(0, day.chuaCoMvdRaw - day.huy);
+    day.chuaCoMvdNote = toText(noteMap[day.ngay]);
+  });
+
   const rows = buildDashboardRowsWithTotals(dailyStats);
   const totals = dailyStats.reduce((acc, day) => addDashboardMetrics(acc, day), makeDashboardRow('Tong Cong'));
 
   return {
-    dailyStats: rows,
-    totals,
+    dailyStats: rows.map(toDashboardApiRow),
+    totals: toDashboardApiRow(totals),
     source: 'data-purchase-orders'
   };
 }
@@ -903,5 +1004,7 @@ module.exports = {
   getPurchaseOrderDashboard,
   getPurchaseOrders,
   importPurchaseOrderStatusesFromCsvText,
+  updatePurchaseOrderDashboardCancellation,
+  updatePurchaseOrderDashboardNote,
   updatePurchaseOrder
 };

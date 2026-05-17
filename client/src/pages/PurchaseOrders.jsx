@@ -211,6 +211,14 @@ export default function PurchaseOrders() {
     }
   };
 
+  const handleSearchChange = (event) => {
+    const nextSearch = event.target.value;
+    setSearch(nextSearch);
+    if (!nextSearch.trim() && activeSearch) {
+      setActiveSearch('');
+    }
+  };
+
   useEffect(() => {
     loadRows({ nextPage: page });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -313,7 +321,7 @@ export default function PurchaseOrders() {
             <label>Tìm đơn</label>
             <input
               value={search}
-              onChange={event => setSearch(event.target.value)}
+              onChange={handleSearchChange}
               onKeyDown={event => {
                 if (event.key === 'Enter') setActiveSearch(search.trim());
               }}

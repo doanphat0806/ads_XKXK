@@ -32,6 +32,8 @@ const ConfigSchema = new mongoose.Schema({
   autoPauseCpoLimit: { type: Number, default: 100000 },
   autoPauseZeroOrderSpendLimit: { type: Number, default: 60000 },
   dataPurchaseOrderMeta: { type: mongoose.Schema.Types.Mixed, default: {} },
+  purchaseOrderDashboardCancellations: { type: mongoose.Schema.Types.Mixed, default: {} },
+  purchaseOrderDashboardNotes: { type: mongoose.Schema.Types.Mixed, default: {} },
 
   updatedAt: { type: Date, default: Date.now }
 });

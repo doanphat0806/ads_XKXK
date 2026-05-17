@@ -181,6 +181,8 @@ const {
   getPurchaseOrderDashboard,
   getPurchaseOrders,
   importPurchaseOrderStatusesFromCsvText,
+  updatePurchaseOrderDashboardCancellation,
+  updatePurchaseOrderDashboardNote,
   updatePurchaseOrder
 } = require('./services/purchaseOrderService');
 const {
@@ -7269,6 +7271,30 @@ app.get('/api/oder/dashboard', async (req, res) => {
     return res.json({ ok: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/oder/dashboard/cancellations/:dateKey', async (req, res) => {
+  try {
+    const result = await updatePurchaseOrderDashboardCancellation(
+      req.params.dateKey,
+      req.body?.huy ?? req.body?.canceledCount ?? 0
+    );
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.put('/api/oder/dashboard/notes/:dateKey', async (req, res) => {
+  try {
+    const result = await updatePurchaseOrderDashboardNote(
+      req.params.dateKey,
+      req.body?.note ?? ''
+    );
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
   }
 });
 
