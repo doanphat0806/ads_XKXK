@@ -91,6 +91,7 @@ function AppContent() {
             ) : (
               <>
                 <Route path="/" element={<Dashboard />} />
+                <Route path="/oder-dashboard" element={<OderDashboard />} />
                 <Route path="/accounts" element={<Accounts />} />
                 <Route path="/campaigns" element={<Campaigns />} />
                 <Route path="/clone-campaigns" element={<CloneCampaigns />} />

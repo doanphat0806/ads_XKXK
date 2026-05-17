@@ -78,9 +78,14 @@ export default function Sidebar() {
       )}
 
       {showOrders && (
-        <NavLink to="/purchase-orders" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="icon"><ShoppingCart size={16} strokeWidth={2} /></span><span>Đặt Hàng</span>
-        </NavLink>
+        <>
+          <NavLink to="/purchase-orders" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <span className="icon"><ShoppingCart size={16} strokeWidth={2} /></span><span>Đặt Hàng</span>
+          </NavLink>
+          <NavLink to="/oder-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <span className="icon"><BarChart3 size={16} strokeWidth={2} /></span><span>Dashboard Đặt Hàng</span>
+          </NavLink>
+        </>
       )}
 
       {showInventory && provider !== 'oder' && (
