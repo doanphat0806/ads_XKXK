@@ -317,6 +317,13 @@ export default function PurchaseOrders() {
               onKeyDown={event => {
                 if (event.key === 'Enter') setActiveSearch(search.trim());
               }}
+              onPaste={event => {
+                setTimeout(() => {
+                  const pastedValue = event.target.value;
+                  setSearch(pastedValue);
+                  setActiveSearch(pastedValue.trim());
+                }, 0);
+              }}
               placeholder="Mã đơn, MVD, mã SP, thuộc tính, tài khoản..."
             />
           </div>

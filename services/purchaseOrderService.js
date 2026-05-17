@@ -253,6 +253,13 @@ function detectStatusImportColumns(rows = []) {
         'soluonghangve',
         'received quantity',
         'receivedquantity'
+      ]),
+      skuManualIndex: findImportColumnIndex(headerRow, [
+        'ma sp',
+        'masp',
+        'sku',
+        'product code',
+        'productcode'
       ])
     };
   }
@@ -264,7 +271,8 @@ function detectStatusImportColumns(rows = []) {
     orderIndex: width >= 4 ? 1 : 0,
     trackingIndex: width >= 4 ? 2 : -1,
     statusIndex: width >= 4 ? 3 : 1,
-    receivedQuantityIndex: -1
+    receivedQuantityIndex: -1,
+    skuManualIndex: -1
   };
 }
 
@@ -303,6 +311,9 @@ function buildStatusImportRows(csvText = '') {
     const receivedQuantity = columns.receivedQuantityIndex >= 0
       ? toText(row[columns.receivedQuantityIndex]).slice(0, 200)
       : '';
+    const skuManual = columns.skuManualIndex >= 0
+      ? toText(row[columns.skuManualIndex]).slice(0, 2000)
+      : '';
 
     if (!orderId && !trackingCode) {
       skippedNoOrder += 1;
@@ -323,7 +334,8 @@ function buildStatusImportRows(csvText = '') {
       orderId,
       trackingCode,
       status,
-      receivedQuantity
+      receivedQuantity,
+      skuManual
     });
   }
 
@@ -627,6 +639,7 @@ async function importPurchaseOrderStatusesFromCsvText(csvText = '') {
       updatedAt: now
     };
     if (item.receivedQuantity) update.receivedQuantity = item.receivedQuantity;
+    if (item.skuManual) update.skuManual = item.skuManual;
 
     return {
       updateOne: {

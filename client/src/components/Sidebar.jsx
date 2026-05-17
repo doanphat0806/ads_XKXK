@@ -40,6 +40,12 @@ export default function Sidebar() {
 
       <div className="nav-section">Menu</div>
 
+      {provider === 'oder' && (
+        <NavLink to="/oder-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <span className="icon"><LayoutDashboard size={16} strokeWidth={2} /></span><span>Dashboard</span>
+        </NavLink>
+      )}
+
       {provider !== 'oder' && (
         <>
           <NavLink to="/" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} end>

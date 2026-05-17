@@ -236,10 +236,14 @@ const SHOPEE_DEFAULT_CALL_TO_ACTION_TYPE = 'NO_BUTTON';
 const SHOPEE_CALL_TO_ACTION_TYPES = new Set(['SHOP_NOW', 'NO_BUTTON']);
 const AUTO_PAUSE_CPO_LIMIT = 100000;
 const AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT = 60000;
+const AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT = 15;
 const SCHEDULED_DUPLICATE_SCOPE_COOLDOWN_MS = 2 * 60 * 1000;
 
 function normalizeProvider(value) {
-  return String(value || 'facebook').trim().toLowerCase() === 'shopee' ? 'shopee' : 'facebook';
+  const normalized = String(value || 'facebook').trim().toLowerCase();
+  if (normalized === 'shopee') return 'shopee';
+  if (normalized === 'oder') return 'oder';
+  return 'facebook';
 }
 
 function buildAccountProviderFilter(provider) {
@@ -675,7 +679,8 @@ function mergeAutoConfig(globalConfig = {}, userConfig = {}) {
     lifetimeClickLimit: pickDefinedValue(userConfig.lifetimeClickLimit, globalConfig.lifetimeClickLimit, 0),
     lifetimeCpcLimit: pickDefinedValue(userConfig.lifetimeCpcLimit, globalConfig.lifetimeCpcLimit, 600),
     autoPauseCpoLimit: pickDefinedValue(userConfig.autoPauseCpoLimit, globalConfig.autoPauseCpoLimit, AUTO_PAUSE_CPO_LIMIT),
-    autoPauseZeroOrderSpendLimit: pickDefinedValue(userConfig.autoPauseZeroOrderSpendLimit, globalConfig.autoPauseZeroOrderSpendLimit, AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT)
+    autoPauseZeroOrderSpendLimit: pickDefinedValue(userConfig.autoPauseZeroOrderSpendLimit, globalConfig.autoPauseZeroOrderSpendLimit, AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
+    autoPauseShopeeHhAdsPercent: pickDefinedValue(userConfig.autoPauseShopeeHhAdsPercent, globalConfig.autoPauseShopeeHhAdsPercent, AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT)
   };
 }
 
@@ -686,7 +691,7 @@ async function getUserAutoConfig(userId) {
       'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
       'dailyZeroMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
       'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
-      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseZeroOrderSpendLimit'
+      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseZeroOrderSpendLimit autoPauseShopeeHhAdsPercent'
     ).lean() : null
   ]);
   return mergeAutoConfig(globalConfig || {}, userConfig || {});
@@ -1833,9 +1838,10 @@ function getAutoPauseDecision({ provider, campaignName, spend, messages, costPer
     if (spend >= zeroOrderSpendLimit) {
       const commission = shopeeCommission || 0;
       const doanhThu = commission - spend;
-      const roi = spend > 0 ? (doanhThu / spend) * 100 : 0;
-      if (roi < 10) {
-        return { pauseReason: `Loi nhuan ${roi.toFixed(1)}% < 10% (Tieu ${Math.round(spend).toLocaleString()}d, HH ${Math.round(commission).toLocaleString()}d)`, orderCount: 0, costPerOrder: 0 };
+      const hhAdsPercent = commission > 0 ? (doanhThu / commission) * 100 : 0;
+      const hhAdsThreshold = Number(limits?.autoPauseShopeeHhAdsPercent ?? AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT);
+      if (hhAdsPercent < hhAdsThreshold) {
+        return { pauseReason: `%HH/ADS ${hhAdsPercent.toFixed(2)}% < ${hhAdsThreshold}% (Tieu ${Math.round(spend).toLocaleString()}d, HH ${Math.round(commission).toLocaleString()}d)`, orderCount: 0, costPerOrder: 0 };
       }
     }
     return { pauseReason: basePauseReason, orderCount: 0, costPerOrder: 0 };
@@ -3965,7 +3971,7 @@ app.get('/api/config', async (req, res) => {
       'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
       'dailyZeroMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
       'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
-      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseZeroOrderSpendLimit'
+      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseZeroOrderSpendLimit autoPauseShopeeHhAdsPercent'
     ).lean();
     const autoConfig = mergeAutoConfig(config || {}, user || {});
     res.json({
@@ -3998,7 +4004,8 @@ app.get('/api/config', async (req, res) => {
       lifetimeClickLimit: autoConfig.lifetimeClickLimit,
       lifetimeCpcLimit: autoConfig.lifetimeCpcLimit,
       autoPauseCpoLimit: autoConfig.autoPauseCpoLimit,
-      autoPauseZeroOrderSpendLimit: autoConfig.autoPauseZeroOrderSpendLimit
+      autoPauseZeroOrderSpendLimit: autoConfig.autoPauseZeroOrderSpendLimit,
+      autoPauseShopeeHhAdsPercent: autoConfig.autoPauseShopeeHhAdsPercent
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -4172,6 +4179,7 @@ app.put('/api/auto-limits', async (req, res) => {
       lifetimeCpcLimit: Number(req.body.lifetimeCpcLimit || 0),
       autoPauseCpoLimit: Number(req.body.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT),
       autoPauseZeroOrderSpendLimit: Number(req.body.autoPauseZeroOrderSpendLimit ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
+      autoPauseShopeeHhAdsPercent: Number(req.body.autoPauseShopeeHhAdsPercent ?? AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT),
       updatedAt: new Date()
     };
 
@@ -7124,6 +7132,136 @@ app.patch('/api/purchase-orders/:orderId', async (req, res) => {
   try {
     const result = await updatePurchaseOrder(req.params.orderId, req.body || {});
     res.json({ ok: true, order: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/oder/dashboard', async (req, res) => {
+  try {
+    const fromDate = String(req.query.fromDate || '').trim();
+    const toDate = String(req.query.toDate || '').trim();
+
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ error: 'fromDate va toDate la bat buoc' });
+    }
+
+    const match = {
+      createdAt: {
+        $gte: new Date(fromDate),
+        $lte: new Date(new Date(toDate).setHours(23, 59, 59, 999))
+      }
+    };
+
+    const orders = await PurchaseOrder.find(match).lean();
+
+    const dailyMap = new Map();
+
+    for (const order of orders) {
+      const dateStr = order.createdAt.toISOString().split('T')[0];
+      if (!dailyMap.has(dateStr)) {
+        dailyMap.set(dateStr, {
+          ngay: dateStr,
+          maDonHang: 0,
+          slHang: 0,
+          maVanDon: 0,
+          mvdVe: 0,
+          chuaCoMvd: 0,
+          thieuHang: 0,
+          saiHang: 0,
+          veThua: 0,
+          thatLac: 0
+        });
+      }
+
+      const day = dailyMap.get(dateStr);
+      day.maDonHang++;
+
+      const qty = parseInt(order.receivedQuantity || '0', 10);
+      day.slHang += qty;
+
+      const status = String(order.status || '').toLowerCase();
+      if (status.includes('mvd') || status.includes('vận đơn')) {
+        day.maVanDon++;
+      }
+      if (status.includes('về') || status.includes('delivered')) {
+        day.mvdVe++;
+      }
+      if (!status || status === 'pending') {
+        day.chuaCoMvd++;
+      }
+      if (status.includes('thiếu')) {
+        day.thieuHang++;
+      }
+      if (status.includes('sai')) {
+        day.saiHang++;
+      }
+      if (status.includes('thừa')) {
+        day.veThua++;
+      }
+      if (status.includes('thất lạc') || status.includes('lost')) {
+        day.thatLac++;
+      }
+    }
+
+    const dailyStats = Array.from(dailyMap.values()).sort((a, b) => a.ngay.localeCompare(b.ngay));
+
+    const result = [];
+    let weekTotal = null;
+    let monthTotal = null;
+    let currentWeek = null;
+    let currentMonth = null;
+
+    for (let i = 0; i < dailyStats.length; i++) {
+      const day = dailyStats[i];
+      const date = new Date(day.ngay);
+      const weekKey = `${date.getFullYear()}-W${Math.ceil((date.getDate() + new Date(date.getFullYear(), date.getMonth(), 1).getDay()) / 7)}`;
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+      if (currentWeek && currentWeek !== weekKey && weekTotal) {
+        weekTotal.isWeekTotal = true;
+        result.push(weekTotal);
+        weekTotal = null;
+      }
+
+      if (currentMonth && currentMonth !== monthKey && monthTotal) {
+        monthTotal.isMonthTotal = true;
+        result.push(monthTotal);
+        monthTotal = null;
+      }
+
+      if (!weekTotal) {
+        weekTotal = { ...day, ngay: day.ngay };
+        currentWeek = weekKey;
+      } else {
+        Object.keys(day).forEach(key => {
+          if (key !== 'ngay') weekTotal[key] += day[key];
+        });
+      }
+
+      if (!monthTotal) {
+        monthTotal = { ...day, ngay: `Tổng Kết Tháng ${date.getMonth() + 1}` };
+        currentMonth = monthKey;
+      } else {
+        Object.keys(day).forEach(key => {
+          if (key !== 'ngay') monthTotal[key] += day[key];
+        });
+      }
+
+      result.push(day);
+    }
+
+    if (weekTotal) {
+      weekTotal.isWeekTotal = true;
+      result.push(weekTotal);
+    }
+
+    if (monthTotal) {
+      monthTotal.isMonthTotal = true;
+      result.push(monthTotal);
+    }
+
+    res.json({ dailyStats: result });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -21,6 +21,7 @@ import GoogleSheets from './pages/GoogleSheets';
 import CreaterPage from './pages/CreaterPage';
 import CreateCampaign from './pages/Pages';
 import ShopeeCommission from './pages/ShopeeCommission';
+import OderDashboard from './pages/OderDashboard';
 import ModalContainer from './components/ModalContainer';
 
 function AppContent() {
@@ -36,6 +37,8 @@ function AppContent() {
     switch (location.pathname) {
       case '/':
         return 'Dashboard';
+      case '/oder-dashboard':
+        return 'Dashboard Đơn Hàng';
       case '/accounts':
         return 'Tai khoan';
       case '/campaigns':
@@ -80,9 +83,10 @@ function AppContent() {
           <Routes>
             {isOder ? (
               <>
+                <Route path="/oder-dashboard" element={<OderDashboard />} />
                 <Route path="/purchase-orders" element={<PurchaseOrders />} />
                 <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
-                <Route path="*" element={<Navigate to="/purchase-orders" replace />} />
+                <Route path="*" element={<Navigate to="/oder-dashboard" replace />} />
               </>
             ) : (
               <>
