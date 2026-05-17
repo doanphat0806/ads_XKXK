@@ -5848,9 +5848,82 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
 
 let finalSpendSyncRunning = false;
 const syncHistoryJobs = new Map();
+const dataPurchaseOrderSyncJobs = new Map();
+let activeDataPurchaseOrderSyncJobId = '';
 
 function createSyncHistoryJobId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createDataPurchaseOrderSyncJobId() {
+  return `data-po-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
+}
+
+function setDataPurchaseOrderSyncJob(jobId, updates) {
+  const current = dataPurchaseOrderSyncJobs.get(jobId);
+  if (!current) return null;
+  const next = { ...current, ...updates, updatedAt: new Date().toISOString() };
+  dataPurchaseOrderSyncJobs.set(jobId, next);
+  return next;
+}
+
+function toDataPurchaseOrderSyncJobPayload(job = {}) {
+  return {
+    id: job.id || '',
+    state: job.state || 'unknown',
+    percent: Number(job.percent || 0),
+    imported: Number(job.imported || 0),
+    matched: Number(job.matched || 0),
+    modified: Number(job.modified || 0),
+    upserted: Number(job.upserted || 0),
+    deleted: Number(job.deleted || 0),
+    sourceType: job.sourceType || '',
+    message: job.message || '',
+    error: job.error || '',
+    createdAt: job.createdAt || '',
+    updatedAt: job.updatedAt || '',
+    finishedAt: job.finishedAt || ''
+  };
+}
+
+async function runDataPurchaseOrderSyncJob(jobId, { accessToken = '' } = {}) {
+  try {
+    const job = dataPurchaseOrderSyncJobs.get(jobId);
+    if (!job) return;
+
+    setDataPurchaseOrderSyncJob(jobId, {
+      state: 'active',
+      percent: 10,
+      message: 'Dang dong bo DATA dat hang'
+    });
+
+    const result = await syncDataPurchaseOrdersFromSheet({ accessToken });
+    setDataPurchaseOrderSyncJob(jobId, {
+      state: 'completed',
+      percent: 100,
+      imported: result.imported || 0,
+      matched: result.matched || 0,
+      modified: result.modified || 0,
+      upserted: result.upserted || 0,
+      deleted: result.deleted || 0,
+      sourceType: result.sourceType || '',
+      finishedAt: new Date().toISOString(),
+      message: 'Da dong bo DATA dat hang'
+    });
+  } catch (error) {
+    setDataPurchaseOrderSyncJob(jobId, {
+      state: 'failed',
+      percent: 100,
+      error: error.message,
+      finishedAt: new Date().toISOString(),
+      message: error.message
+    });
+  } finally {
+    if (activeDataPurchaseOrderSyncJobId === jobId) {
+      activeDataPurchaseOrderSyncJobId = '';
+    }
+    setTimeout(() => dataPurchaseOrderSyncJobs.delete(jobId), 60 * 60 * 1000);
+  }
 }
 
 function getDateKeysInRange(fromDate, toDate) {
@@ -7154,6 +7227,21 @@ app.get('/api/data-purchase-orders', async (req, res) => {
 
 app.post('/api/data-purchase-orders/sync', async (req, res) => {
   try {
+    if (activeDataPurchaseOrderSyncJobId) {
+      const activeJob = dataPurchaseOrderSyncJobs.get(activeDataPurchaseOrderSyncJobId);
+      if (activeJob && ['pending', 'active'].includes(activeJob.state)) {
+        return res.status(202).json({
+          ok: true,
+          queued: true,
+          jobId: activeJob.id,
+          job: toDataPurchaseOrderSyncJobPayload(activeJob),
+          statusUrl: `/api/data-purchase-orders/sync/${activeJob.id}`,
+          message: 'DATA dat hang dang duoc dong bo trong nen'
+        });
+      }
+      activeDataPurchaseOrderSyncJobId = '';
+    }
+
     let accessToken = '';
 
     try {
@@ -7162,10 +7250,44 @@ app.post('/api/data-purchase-orders/sync', async (req, res) => {
       accessToken = '';
     }
 
-    const result = await syncDataPurchaseOrdersFromSheet({ accessToken });
-    res.json(result);
+    const jobId = createDataPurchaseOrderSyncJobId();
+    const now = new Date().toISOString();
+    const job = {
+      id: jobId,
+      state: 'pending',
+      percent: 0,
+      imported: 0,
+      message: 'Dang cho dong bo DATA dat hang',
+      createdAt: now,
+      updatedAt: now
+    };
+    dataPurchaseOrderSyncJobs.set(jobId, job);
+    activeDataPurchaseOrderSyncJobId = jobId;
+
+    setImmediate(() => {
+      runDataPurchaseOrderSyncJob(jobId, { accessToken });
+    });
+
+    res.status(202).json({
+      ok: true,
+      queued: true,
+      jobId,
+      job: toDataPurchaseOrderSyncJobPayload(job),
+      statusUrl: `/api/data-purchase-orders/sync/${jobId}`,
+      message: 'Da bat dau dong bo DATA dat hang trong nen'
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/data-purchase-orders/sync/:jobId', async (req, res) => {
+  try {
+    const job = dataPurchaseOrderSyncJobs.get(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Khong tim thay job dong bo DATA' });
+    res.json({ ok: true, job: toDataPurchaseOrderSyncJobPayload(job) });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
   }
 });
 

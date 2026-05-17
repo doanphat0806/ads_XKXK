@@ -769,9 +769,111 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
   };
 }
 
+function getPurchaseOrderGroupStage() {
+  return {
+    $group: {
+      _id: '$col3',
+      rowNumber: { $first: '$rowNumber' },
+      accountName: { $first: '$col1' },
+      imageUrl: { $first: '$col2' },
+      orderId: { $first: '$col3' },
+      orderDateTime: { $first: '$orderDateTime' },
+      totalAmount: { $first: '$totalAmount' },
+      orderDateRawCol4: { $first: '$col4' },
+      orderDateRawCol5: { $first: '$col5' },
+      productLink: { $first: '$col11' },
+      productLinkRawCol6: { $first: '$col6' },
+      productAttribute: { $first: '$spec' },
+      quantity: { $first: '$productQuantity' },
+      trackingCandidates: { $push: '$logisticsTrackingCode' },
+      fallbackTrackingCandidates: { $push: '$col25' },
+      productAttributeFallback: { $first: '$col7' },
+      quantityFallback: { $first: '$col15' },
+      accountNameFallback: { $first: '$col24' },
+      orderDateFallback: { $first: '$col25' },
+      productLinkFallback: { $first: '$col27' },
+      orderDateKey: { $first: '$orderDateKey' }
+    }
+  };
+}
+
+function getPurchaseOrderGroupedPipeline(sourceFilter) {
+  return [
+    { $match: sourceFilter },
+    { $sort: { rowNumber: 1 } },
+    getPurchaseOrderGroupStage()
+  ];
+}
+
+function mapPurchaseOrderApiRow(row = {}, manualByOrderId = new Map()) {
+  const manual = manualByOrderId.get(row.orderId) || {};
+  const status = normalizeStatus(manual.status);
+  const statusMeta = STATUS_BY_VALUE[status] || null;
+  const orderDate = getOrderDateTime(
+    row.orderDateTime,
+    row.orderDateRawCol4,
+    row.orderDateFallback
+  );
+  const totalAmount = getFirstAmount(row.totalAmount, row.orderDateRawCol5);
+
+  return {
+    rowNumber: row.rowNumber,
+    orderId: row.orderId,
+    trackingCode: getLastValidTracking(row.trackingCandidates) || getLastValidTracking(row.fallbackTrackingCandidates),
+    status,
+    statusLabel: statusMeta?.label || '',
+    statusClass: statusMeta?.className || '',
+    receivedQuantity: toText(manual.receivedQuantity),
+    skuManual: toText(manual.skuManual),
+    productAttribute: getFirstNonUrl(row.productAttribute, row.productAttributeFallback),
+    quantity: getFirstText(row.quantity, row.quantityFallback),
+    imageUrl: toText(row.imageUrl),
+    accountName: getFirstText(row.accountName, row.accountNameFallback),
+    totalAmount,
+    orderDate,
+    orderDateKey: row.orderDateKey || normalizeDateKey(orderDate),
+    productLink: getFirstUrl(row.productLink, row.productLinkRawCol6, row.productLinkFallback)
+  };
+}
+
+function buildPurchaseOrderSummaryFromGroups(groupedRows = [], statusByOrderId = new Map()) {
+  const statusCounts = {
+    ve_du: 0,
+    ve_thieu: 0,
+    sai_hang: 0,
+    ve_thua: 0,
+    that_lac: 0
+  };
+  let totalProductQuantity = 0;
+  let trackingCount = 0;
+
+  groupedRows.forEach(row => {
+    totalProductQuantity += parseNumber(getFirstText(row.quantity, row.quantityFallback));
+    if (getLastValidTracking(row.trackingCandidates) || getLastValidTracking(row.fallbackTrackingCandidates)) {
+      trackingCount += 1;
+    }
+    const status = normalizeStatus(statusByOrderId.get(row.orderId)?.status);
+    if (statusCounts[status] !== undefined) statusCounts[status] += 1;
+  });
+
+  return {
+    orderCount: groupedRows.length,
+    totalProductQuantity,
+    trackingCount,
+    receivedFull: statusCounts.ve_du,
+    missing: statusCounts.ve_thieu,
+    wrong: statusCounts.sai_hang,
+    extra: statusCounts.ve_thua,
+    lost: statusCounts.that_lac,
+    mvdRatio: groupedRows.length ? trackingCount / groupedRows.length : 0,
+    statusCounts
+  };
+}
+
 async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page = 1, limit = 100 } = {}) {
   const safePage = Math.max(1, Number(page) || 1);
   const safeLimit = Math.max(1, Math.min(1000, Number(limit) || 100));
+  const searchTerm = toText(search);
   const dateFilter = buildDateFilter(fromDate, toDate);
   const sourceFilter = {
     sourceId: SHEET_ID,
@@ -786,34 +888,57 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
     ];
   }
 
-  const groupedRows = await DataPurchaseOrder.aggregate([
-    { $match: sourceFilter },
-    { $sort: { rowNumber: 1 } },
-    {
-      $group: {
-        _id: '$col3',
-        rowNumber: { $first: '$rowNumber' },
-        accountName: { $first: '$col1' },
-        imageUrl: { $first: '$col2' },
-        orderId: { $first: '$col3' },
-        orderDateTime: { $first: '$orderDateTime' },
-        totalAmount: { $first: '$totalAmount' },
-        orderDateRawCol4: { $first: '$col4' },
-        orderDateRawCol5: { $first: '$col5' },
-        productLink: { $first: '$col11' },
-        productLinkRawCol6: { $first: '$col6' },
-        productAttribute: { $first: '$spec' },
-        quantity: { $first: '$productQuantity' },
-        trackingCandidates: { $push: '$logisticsTrackingCode' },
-        fallbackTrackingCandidates: { $push: '$col25' },
-        productAttributeFallback: { $first: '$col7' },
-        quantityFallback: { $first: '$col15' },
-        accountNameFallback: { $first: '$col24' },
-        orderDateFallback: { $first: '$col25' },
-        productLinkFallback: { $first: '$col27' },
-        orderDateKey: { $first: '$orderDateKey' }
+  if (!searchTerm && !dateFilter.orderDateKey) {
+    const start = (safePage - 1) * safeLimit;
+    const [result = {}] = await DataPurchaseOrder.aggregate([
+      ...getPurchaseOrderGroupedPipeline(sourceFilter),
+      {
+        $facet: {
+          pageRows: [
+            { $sort: { orderDateKey: -1, rowNumber: 1 } },
+            { $skip: start },
+            { $limit: safeLimit }
+          ],
+          summaryRows: [
+            {
+              $project: {
+                _id: 0,
+                orderId: 1,
+                quantity: 1,
+                quantityFallback: 1,
+                trackingCandidates: 1,
+                fallbackTrackingCandidates: 1
+              }
+            }
+          ],
+          totalRows: [
+            { $count: 'count' }
+          ]
+        }
       }
-    },
+    ]).allowDiskUse(true);
+
+    const pageRows = result.pageRows || [];
+    const summaryRows = result.summaryRows || [];
+    const total = Number(result.totalRows?.[0]?.count || summaryRows.length);
+    const pageManualRows = await findManualPurchaseOrderRows(pageRows.map(row => row.orderId), 'orderId status receivedQuantity skuManual');
+    const summaryManualRows = await findManualPurchaseOrderRows(summaryRows.map(row => row.orderId), 'orderId status');
+    const pageManualByOrderId = new Map(pageManualRows.map(row => [row.orderId, row]));
+    const summaryManualByOrderId = new Map(summaryManualRows.map(row => [row.orderId, row]));
+
+    return {
+      rows: pageRows.map(row => mapPurchaseOrderApiRow(row, pageManualByOrderId)),
+      summary: buildPurchaseOrderSummaryFromGroups(summaryRows, summaryManualByOrderId),
+      statusOptions: STATUS_OPTIONS,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      totalPages: Math.ceil(total / safeLimit) || 1
+    };
+  }
+
+  const groupedRows = await DataPurchaseOrder.aggregate([
+    ...getPurchaseOrderGroupedPipeline(sourceFilter),
     { $sort: { orderDateKey: -1, rowNumber: 1 } }
   ]).allowDiskUse(true);
 
@@ -821,38 +946,11 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
   const manualRows = await findManualPurchaseOrderRows(orderIds);
   const manualByOrderId = new Map(manualRows.map(row => [row.orderId, row]));
 
-  const rows = groupedRows.map(row => {
-    const manual = manualByOrderId.get(row.orderId) || {};
-    const status = normalizeStatus(manual.status);
-    const statusMeta = STATUS_BY_VALUE[status] || null;
-    const orderDate = getOrderDateTime(
-      row.orderDateTime,
-      row.orderDateRawCol4,
-      row.orderDateFallback
-    );
-    const totalAmount = getFirstAmount(row.totalAmount, row.orderDateRawCol5);
+  const rows = groupedRows
+    .map(row => mapPurchaseOrderApiRow(row, manualByOrderId))
+    .filter(row => isDateInRange(row.orderDateKey || row.orderDate, fromDate, toDate));
 
-    return {
-      rowNumber: row.rowNumber,
-      orderId: row.orderId,
-      trackingCode: getLastValidTracking(row.trackingCandidates) || getLastValidTracking(row.fallbackTrackingCandidates),
-      status,
-      statusLabel: statusMeta?.label || '',
-      statusClass: statusMeta?.className || '',
-      receivedQuantity: toText(manual.receivedQuantity),
-      skuManual: toText(manual.skuManual),
-      productAttribute: getFirstNonUrl(row.productAttribute, row.productAttributeFallback),
-      quantity: getFirstText(row.quantity, row.quantityFallback),
-      imageUrl: toText(row.imageUrl),
-      accountName: getFirstText(row.accountName, row.accountNameFallback),
-      totalAmount,
-      orderDate,
-      orderDateKey: row.orderDateKey || normalizeDateKey(orderDate),
-      productLink: getFirstUrl(row.productLink, row.productLinkRawCol6, row.productLinkFallback)
-    };
-  }).filter(row => isDateInRange(row.orderDateKey || row.orderDate, fromDate, toDate));
-
-  const filteredRows = search ? rows.filter(row => rowMatchesSearch(row, search)) : rows;
+  const filteredRows = searchTerm ? rows.filter(row => rowMatchesSearch(row, searchTerm)) : rows;
   const summary = buildSummary(filteredRows);
   const start = (safePage - 1) * safeLimit;
 

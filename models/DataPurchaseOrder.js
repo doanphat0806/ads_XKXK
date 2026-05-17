@@ -44,6 +44,7 @@ DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, updatedAt: -1 }, { n
 DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, batchId: 1 }, { name: 'data_purchase_order_source_batch' });
 DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, orderDateTime: 1 }, { name: 'data_purchase_order_source_orderDateTime' });
 DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, orderDateKey: 1, col3: 1 }, { name: 'data_purchase_order_source_date_order' });
+DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, orderDateKey: 1, rowNumber: 1 }, { name: 'data_purchase_order_source_date_row' });
 DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, searchText: 1 }, { name: 'data_purchase_order_source_searchText' });
 DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, searchText: 'text' }, {
   name: 'data_purchase_order_search_text',
@@ -55,5 +56,6 @@ DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, col3: 1 }, { name: '
 DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, col4: 1 }, { name: 'data_purchase_order_source_col4' });
 DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, col10: 1 }, { name: 'data_purchase_order_source_col10' });
 DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, col25: 1 }, { name: 'data_purchase_order_source_col25' });
+DataPurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, logisticsTrackingCode: 1, col3: 1 }, { name: 'data_purchase_order_source_tracking_order' });
 
 module.exports = mongoose.model('DataPurchaseOrder', DataPurchaseOrderSchema);

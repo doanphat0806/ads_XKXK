@@ -5,6 +5,8 @@ import DateRangePicker from '../components/DateRangePicker';
 import { api, formatNumber, todayString, uploadForm } from '../lib/api';
 
 const DEFAULT_LIMIT = 100;
+const DATA_SYNC_DONE_STATES = new Set(['completed', 'failed']);
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 function formatPercent(value) {
   return `${(Number(value || 0) * 100).toLocaleString('vi-VN', {
@@ -94,8 +96,29 @@ export default function PurchaseOrders() {
     setError('');
 
     try {
-      const result = await api('POST', '/data-purchase-orders/sync', null, { timeoutMs: 10 * 60 * 1000 });
-      toast.success(`Đã đồng bộ ${formatNumber(result.imported || 0)} dòng DATA vào database`);
+      const result = await api('POST', '/data-purchase-orders/sync', null, { timeoutMs: 60000 });
+      let imported = Number(result.imported || 0);
+
+      if (result.queued && result.jobId) {
+        toast.info(result.message || 'Đã bắt đầu đồng bộ DATA trong nền');
+        let done = false;
+        let finalJob = result.job || {};
+
+        while (!done) {
+          await wait(1500);
+          const status = await api('GET', `/data-purchase-orders/sync/${result.jobId}`, null, { timeoutMs: 30000 });
+          finalJob = status.job || {};
+          done = DATA_SYNC_DONE_STATES.has(finalJob.state);
+
+          if (finalJob.state === 'failed') {
+            throw new Error(finalJob.error || finalJob.message || 'Đồng bộ DATA lỗi');
+          }
+        }
+
+        imported = Number(finalJob.imported || 0);
+      }
+
+      toast.success(`Đã đồng bộ ${formatNumber(imported)} dòng DATA vào database`);
       await loadRows({ nextPage: 1 });
     } catch (err) {
       setError(err.message);
