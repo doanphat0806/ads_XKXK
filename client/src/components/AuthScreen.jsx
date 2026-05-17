@@ -23,6 +23,7 @@ export default function AuthScreen() {
               <select value={provider} onChange={(e) => setProvider(e.target.value)}>
                 <option value="facebook">Facebook</option>
                 <option value="shopee">Shopee</option>
+                <option value="oder">Oder</option>
               </select>
             </div>
             <div className="form-group full">
