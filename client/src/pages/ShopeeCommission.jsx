@@ -133,15 +133,18 @@ export default function ShopeeCommission() {
                 </tr>
               </thead>
               <tbody>
-                {commissionBySubId.map(row => (
-                  <tr key={row.subId2}>
-                    <td>{row.subId2}</td>
-                    <td className="text-right mono-sm">{formatVND(row.spend || 0)}</td>
-                    <td className="text-right mono-sm">{formatVND(row.commission || 0)}</td>
-                    <td className="text-right mono-sm">{formatVND(row.doanhThu || 0)}</td>
-                    <td className="text-right mono-sm">{formatNumber(row.roi || 0)}%</td>
-                  </tr>
-                ))}
+                {commissionBySubId.map(row => {
+                  const hhAdsPercent = row.commission > 0 ? (row.doanhThu / row.commission) * 100 : 0;
+                  return (
+                    <tr key={row.subId2}>
+                      <td>{row.subId2}</td>
+                      <td className="text-right mono-sm">{formatVND(row.spend || 0)}</td>
+                      <td className="text-right mono-sm">{formatVND(row.commission || 0)}</td>
+                      <td className="text-right mono-sm">{formatVND(row.doanhThu || 0)}</td>
+                      <td className="text-right mono-sm">{formatNumber(hhAdsPercent)}%</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
