@@ -4,7 +4,7 @@ const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, trim: true, lowercase: true },
   displayName: { type: String, default: '' },
   passwordHash: { type: String, required: true },
-  provider: { type: String, enum: ['facebook', 'shopee'], default: 'facebook' },
+  provider: { type: String, enum: ['facebook', 'shopee', 'oder'], default: 'facebook' },
   fbToken: { type: String, default: '' },
   fbTokenExpiresAt: { type: Date },
   fbTokenLastRefreshTime: { type: Date },

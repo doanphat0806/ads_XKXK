@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
@@ -24,7 +24,8 @@ import ShopeeCommission from './pages/ShopeeCommission';
 import ModalContainer from './components/ModalContainer';
 
 function AppContent() {
-  const { isAuthenticated } = useAppContext();
+  const { isAuthenticated, provider } = useAppContext();
+  const isOder = provider === 'oder';
   const location = useLocation();
 
   React.useEffect(() => {
@@ -77,20 +78,31 @@ function AppContent() {
         <Topbar title={getPageTitle()} />
         <div className="content">
           <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/accounts" element={<Accounts />} />
-            <Route path="/campaigns" element={<Campaigns />} />
-            <Route path="/clone-campaigns" element={<CloneCampaigns />} />
-            <Route path="/orders" element={<Orders />} />
-            <Route path="/purchase-orders" element={<PurchaseOrders />} />
-            <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
-            <Route path="/inventory" element={<Inventory />} />
-            <Route path="/inventory-summary" element={<InventorySummary />} />
-            <Route path="/shopee-commission" element={<ShopeeCommission />} />
-            <Route path="/google-sheets" element={<GoogleSheets />} />
-            <Route path="/creater-page" element={<CreaterPage />} />
-            <Route path="/logs" element={<Logs />} />
-            <Route path="/create-campaign" element={<CreateCampaign />} />
+            {isOder ? (
+              <>
+                <Route path="/purchase-orders" element={<PurchaseOrders />} />
+                <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
+                <Route path="*" element={<Navigate to="/purchase-orders" replace />} />
+              </>
+            ) : (
+              <>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/accounts" element={<Accounts />} />
+                <Route path="/campaigns" element={<Campaigns />} />
+                <Route path="/clone-campaigns" element={<CloneCampaigns />} />
+                <Route path="/orders" element={<Orders />} />
+                <Route path="/purchase-orders" element={<PurchaseOrders />} />
+                <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
+                <Route path="/inventory" element={<Inventory />} />
+                <Route path="/inventory-summary" element={<InventorySummary />} />
+                <Route path="/shopee-commission" element={<ShopeeCommission />} />
+                <Route path="/google-sheets" element={<GoogleSheets />} />
+                <Route path="/creater-page" element={<CreaterPage />} />
+                <Route path="/logs" element={<Logs />} />
+                <Route path="/create-campaign" element={<CreateCampaign />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </>
+            )}
           </Routes>
         </div>
       </div>

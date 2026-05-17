@@ -16,7 +16,8 @@ const publicDir = path.join(__dirname, 'client', 'dist');
 app.set('trust proxy', 1);
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(publicDir));
 
 // ================= FACEBOOK LOGIN =================
@@ -294,7 +295,8 @@ const DEFAULT_LOGIN_USERS = [
   { username: 'phat', password: process.env.USER_PHAT_PASSWORD || 'phat', displayName: 'Phat', provider: 'shopee' },
   { username: 'user2', password: process.env.USER2_PASSWORD || 'admin', displayName: 'User 2', provider: 'facebook' },
   { username: 'user3', password: process.env.USER3_PASSWORD || 'admin', displayName: 'User 3', provider: 'facebook' },
-  { username: 'user4', password: process.env.USER4_PASSWORD || 'admin', displayName: 'User 4', provider: 'facebook' }
+  { username: 'user4', password: process.env.USER4_PASSWORD || 'admin', displayName: 'User 4', provider: 'facebook' },
+  { username: 'oder', password: 'oder', displayName: 'Order Staff', provider: 'oder' }
 ];
 
 function getReadCache(key) {
@@ -1833,7 +1835,7 @@ function getAutoPauseDecision({ provider, campaignName, spend, messages, costPer
       const doanhThu = commission - spend;
       const roi = spend > 0 ? (doanhThu / spend) * 100 : 0;
       if (roi < 10) {
-        return { pauseReason: `ROI ${roi.toFixed(1)}% < 10% (Tieu ${Math.round(spend).toLocaleString()}d, HH ${Math.round(commission).toLocaleString()}d)`, orderCount: 0, costPerOrder: 0 };
+        return { pauseReason: `Loi nhuan ${roi.toFixed(1)}% < 10% (Tieu ${Math.round(spend).toLocaleString()}d, HH ${Math.round(commission).toLocaleString()}d)`, orderCount: 0, costPerOrder: 0 };
       }
     }
     return { pauseReason: basePauseReason, orderCount: 0, costPerOrder: 0 };
@@ -3640,6 +3642,7 @@ app.post('/api/auth/login', async (req, res) => {
             displayName: defaultUser.displayName || username,
             passwordHash: hashPassword(defaultUser.password),
             provider: defaultUser.provider || 'facebook',
+
             active: true,
             updatedAt: new Date()
           },
@@ -3652,6 +3655,12 @@ app.post('/api/auth/login', async (req, res) => {
     if (user && !passwordOk && defaultUser && password === defaultUser.password) {
       user.passwordHash = hashPassword(defaultUser.password);
       user.provider = defaultUser.provider || user.provider || 'facebook';
+    }
+    if (user && defaultUser && defaultUser.provider && user.provider !== defaultUser.provider) {
+      user.provider = defaultUser.provider;
+      user.active = true;
+      user.updatedAt = new Date();
+      await user.save();
       user.active = true;
       user.updatedAt = new Date();
       await user.save();

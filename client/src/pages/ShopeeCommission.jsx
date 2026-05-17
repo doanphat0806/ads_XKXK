@@ -129,7 +129,7 @@ export default function ShopeeCommission() {
                   <th className="text-right">Chi tieu</th>
                   <th className="text-right">Hoa hong</th>
                   <th className="text-right">Doanh thu</th>
-                  <th className="text-right">%</th>
+                  <th className="text-right">%HH/ADS</th>
                 </tr>
               </thead>
               <tbody>
