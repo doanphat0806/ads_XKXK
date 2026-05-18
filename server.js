@@ -292,6 +292,8 @@ async function addLog(accountId, accountName, level, message) {
 
 const READ_CACHE_TTL_MS = 30 * 1000;
 const readCache = new Map();
+const PURCHASE_ORDER_READ_CACHE_TTL_MS = parseBoundedInt(process.env.PURCHASE_ORDER_READ_CACHE_TTL_MS, 60 * 1000, 5000, 10 * 60 * 1000);
+const purchaseOrderReadCache = new Map();
 const ACCOUNT_RATE_LIMIT_COOLDOWN_MS = parseBoundedInt(process.env.ACCOUNT_RATE_LIMIT_COOLDOWN_MS, 10 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
 const AUTO_CHECK_MIN_INTERVAL_SECONDS = parseBoundedInt(process.env.AUTO_CHECK_MIN_INTERVAL_SECONDS, 180, 60, 60 * 60);
 const accountRateLimitUntil = new Map();
@@ -677,6 +679,29 @@ function withUserFilter(req, filter = {}) {
 
 function userScopedCacheKey(req, key) {
   return `${req.currentUser?._id || 'public'}:${key}`;
+}
+
+function getPurchaseOrderReadCache(key) {
+  const cached = purchaseOrderReadCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.createdAt > PURCHASE_ORDER_READ_CACHE_TTL_MS) {
+    purchaseOrderReadCache.delete(key);
+    return null;
+  }
+  return cached.data;
+}
+
+function setPurchaseOrderReadCache(key, data) {
+  purchaseOrderReadCache.set(key, { data, createdAt: Date.now() });
+  if (purchaseOrderReadCache.size > 100) {
+    const oldestKey = purchaseOrderReadCache.keys().next().value;
+    purchaseOrderReadCache.delete(oldestKey);
+  }
+  return data;
+}
+
+function clearPurchaseOrderReadCache() {
+  purchaseOrderReadCache.clear();
 }
 
 async function authenticateApiRequest(req, res, next) {
@@ -5937,6 +5962,7 @@ async function runDataPurchaseOrderSyncJob(jobId, { accessToken = '', userId = '
     });
 
     const result = await syncDataPurchaseOrdersFromSheet({ accessToken: token });
+    clearPurchaseOrderReadCache();
     setDataPurchaseOrderSyncJob(jobId, {
       state: 'completed',
       percent: 100,
@@ -7317,10 +7343,15 @@ app.get('/api/data-purchase-orders', async (req, res) => {
         accessToken = '';
       }
       await syncDataPurchaseOrdersFromSheet({ accessToken });
+      clearPurchaseOrderReadCache();
     }
 
+    const cacheKey = `data-purchase-orders:${page}:${limit}:${search}`;
+    const cached = !refresh ? getPurchaseOrderReadCache(cacheKey) : null;
+    if (cached) return res.json(cached);
+
     const data = await getDataPurchaseOrders({ page, limit, search });
-    res.json({ ok: true, ...data });
+    res.json(setPurchaseOrderReadCache(cacheKey, { ok: true, ...data }));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -7427,8 +7458,12 @@ app.get('/api/purchase-orders', async (req, res) => {
     const fromDate = String(req.query.fromDate || '').trim();
     const toDate = String(req.query.toDate || '').trim();
     const search = String(req.query.search || '').trim();
+    const cacheKey = `purchase-orders:${page}:${limit}:${fromDate}:${toDate}:${search}`;
+    const cached = getPurchaseOrderReadCache(cacheKey);
+    if (cached) return res.json(cached);
+
     const data = await getPurchaseOrders({ fromDate, toDate, search, page, limit });
-    res.json({ ok: true, ...data });
+    res.json(setPurchaseOrderReadCache(cacheKey, { ok: true, ...data }));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -7461,6 +7496,7 @@ app.post('/api/purchase-orders/import-status-csv', async (req, res) => {
     }
 
     const result = await importPurchaseOrderStatusesFromCsvText(csvText);
+    clearPurchaseOrderReadCache();
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -7470,6 +7506,7 @@ app.post('/api/purchase-orders/import-status-csv', async (req, res) => {
 app.patch('/api/purchase-orders/:orderId', async (req, res) => {
   try {
     const result = await updatePurchaseOrder(req.params.orderId, req.body || {});
+    clearPurchaseOrderReadCache();
     res.json({ ok: true, order: result });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -7485,8 +7522,12 @@ app.get('/api/oder/dashboard', async (req, res) => {
       return res.status(400).json({ error: 'fromDate va toDate la bat buoc' });
     }
 
+    const cacheKey = `oder-dashboard:${fromDate}:${toDate}`;
+    const cached = getPurchaseOrderReadCache(cacheKey);
+    if (cached) return res.json(cached);
+
     const result = await getPurchaseOrderDashboard({ fromDate, toDate });
-    return res.json({ ok: true, ...result });
+    return res.json(setPurchaseOrderReadCache(cacheKey, { ok: true, ...result }));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -7498,6 +7539,7 @@ app.put('/api/oder/dashboard/cancellations/:dateKey', async (req, res) => {
       req.params.dateKey,
       req.body?.huy ?? req.body?.canceledCount ?? 0
     );
+    clearPurchaseOrderReadCache();
     res.json({ ok: true, ...result });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -7510,6 +7552,7 @@ app.put('/api/oder/dashboard/notes/:dateKey', async (req, res) => {
       req.params.dateKey,
       req.body?.note ?? ''
     );
+    clearPurchaseOrderReadCache();
     res.json({ ok: true, ...result });
   } catch (error) {
     res.status(400).json({ error: error.message });
