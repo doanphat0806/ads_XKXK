@@ -331,21 +331,38 @@ async function getDataPurchaseOrderMeta() {
   };
 }
 
-async function persistDataPurchaseOrderRows({ headers, rows, sourceType }) {
+async function getNextDataPurchaseOrderRowNumber() {
+  const lastRow = await DataPurchaseOrder.findOne({
+    sourceId: SHEET_ID,
+    sourceName: SHEET_NAME
+  })
+    .sort({ rowNumber: -1 })
+    .select('rowNumber')
+    .lean();
+
+  return Number(lastRow?.rowNumber || 0) + 1;
+}
+
+async function persistDataPurchaseOrderRows({ headers, rows, sourceType, mode = 'replace' }) {
   if (!rows.length) {
     throw new Error('Không có dòng dữ liệu hợp lệ để lưu vào database');
   }
 
   const batchAt = new Date();
   const batchId = makeBatchId();
+  const appendMode = mode === 'append';
+  const firstRowNumber = appendMode ? await getNextDataPurchaseOrderRowNumber() : null;
+  const rowsToPersist = appendMode
+    ? rows.map((row, index) => ({ ...row, rowNumber: firstRowNumber + index }))
+    : rows;
   const totals = {
     matched: 0,
     modified: 0,
     upserted: 0
   };
 
-  for (let start = 0; start < rows.length; start += BULK_WRITE_SIZE) {
-    const chunk = rows.slice(start, start + BULK_WRITE_SIZE);
+  for (let start = 0; start < rowsToPersist.length; start += BULK_WRITE_SIZE) {
+    const chunk = rowsToPersist.slice(start, start + BULK_WRITE_SIZE);
     const operations = chunk.map(row => {
       const document = rowToDocument(row, { sourceType, batchAt, batchId });
       return {
@@ -370,17 +387,23 @@ async function persistDataPurchaseOrderRows({ headers, rows, sourceType }) {
     totals.upserted += result.upsertedCount || 0;
   }
 
-  const deleteResult = await DataPurchaseOrder.deleteMany({
-    sourceId: SHEET_ID,
-    sourceName: SHEET_NAME,
-    batchId: { $ne: batchId }
-  });
+  const deleteResult = appendMode
+    ? { deletedCount: 0 }
+    : await DataPurchaseOrder.deleteMany({
+      sourceId: SHEET_ID,
+      sourceName: SHEET_NAME,
+      batchId: { $ne: batchId }
+    });
+
+  const totalCount = appendMode
+    ? await DataPurchaseOrder.countDocuments({ sourceId: SHEET_ID, sourceName: SHEET_NAME })
+    : rows.length;
 
   await saveDataPurchaseOrderMeta({
     headers,
     lastSyncAt: batchAt.toISOString(),
     lastSyncSourceType: sourceType,
-    lastSyncCount: rows.length,
+    lastSyncCount: totalCount,
     lastSyncDeleted: deleteResult.deletedCount || 0,
     lastSyncError: ''
   });
@@ -398,7 +421,11 @@ async function persistDataPurchaseOrderRows({ headers, rows, sourceType }) {
     range: SHEET_RANGE,
     query: SHEET_QUERY,
     syncedAt: batchAt.toISOString(),
-    sourceType
+    sourceType,
+    mode: appendMode ? 'append' : 'replace',
+    startRowNumber: appendMode ? firstRowNumber : 0,
+    endRowNumber: appendMode ? firstRowNumber + rows.length - 1 : 0,
+    total: totalCount
   };
 }
 
@@ -470,7 +497,8 @@ async function importDataPurchaseOrdersFromCsvText(csvText = '') {
   return persistDataPurchaseOrderRows({
     headers: result.headers,
     rows: result.rows,
-    sourceType: shape === 'raw' ? 'csv_raw' : 'csv_selected'
+    sourceType: shape === 'raw' ? 'csv_raw' : 'csv_selected',
+    mode: 'append'
   });
 }
 
