@@ -152,14 +152,14 @@ export default function Orders() {
 
       if (shouldSync) {
         toast.info('Đang tải dữ liệu từ Google Sheet...');
-        const result = await api('POST', '/orders/sync', { fromDate, toDate, queue: true });
+        const result = await api('POST', '/orders/sync', { fromDate, toDate, queue: true }, { timeoutMs: 60000 });
         let synced = result.synced ?? 0;
 
         if (result.queued && result.jobId) {
           let done = false;
           while (!done) {
             await wait(1200);
-            const status = await api('GET', `/orders/sync/${result.jobId}`);
+            const status = await api('GET', `/orders/sync/${result.jobId}`, null, { timeoutMs: 60000 });
             const job = status.job || {};
             done = ORDER_SYNC_DONE_STATES.has(job.state);
             synced = job.synced ?? synced;
@@ -179,7 +179,7 @@ export default function Orders() {
       params.set('page', String(page));
       params.set('limit', String(ordersPerPage));
 
-      const data = await api('GET', `/orders?${params.toString()}`);
+      const data = await api('GET', `/orders?${params.toString()}`, null, { timeoutMs: 180000 });
       const orders = Array.isArray(data) ? data : data.orders || [];
       const rows = orders.map((order, index) => mapSheetOrder(order, index));
 

@@ -10,7 +10,7 @@ const ORDERS_SHEET_NAME = process.env.ORDERS_SHEET_NAME || DEFAULT_ORDERS_SHEET_
 const ORDERS_SHEET_RANGE = process.env.ORDERS_SHEET_RANGE || 'A1:M200000';
 const ORDERS_SHEET_QUERY = process.env.ORDERS_SHEET_QUERY || 'select L,B,D,G,H,K,M where B is not null';
 const ORDERS_SOURCE = String(process.env.ORDERS_SOURCE || 'sheet').trim().toLowerCase();
-const ORDERS_SHEET_CACHE_TTL_MS = parseBoundedInt(process.env.ORDERS_SHEET_CACHE_TTL_MS, 5 * 60 * 1000, 5000, 600000);
+const ORDERS_SHEET_CACHE_TTL_MS = parseBoundedInt(process.env.ORDERS_SHEET_CACHE_TTL_MS, 30 * 60 * 1000, 5000, 60 * 60 * 1000);
 const ORDERS_SHEET_TIMEOUT_MS = parseBoundedInt(process.env.ORDERS_SHEET_TIMEOUT_MS, 90000, 10000, 300000);
 const ORDERS_SHEET_RETRIES = parseBoundedInt(process.env.ORDERS_SHEET_RETRIES, 3, 1, 5);
 const ORDERS_SHEET_RATE_LIMIT_BACKOFF_MS = parseBoundedInt(process.env.ORDERS_SHEET_RATE_LIMIT_BACKOFF_MS, 30 * 60 * 1000, 60 * 1000, 6 * 60 * 60 * 1000);
@@ -23,6 +23,7 @@ const ordersSheetCache = {
   lastErrorAt: 0
 };
 const orderStatsCache = new Map();
+const orderSheetPageCache = new Map();
 
 function buildOrderQuery({ fromDate, toDate } = {}) {
   const query = {
@@ -340,6 +341,15 @@ function getOrderStatsCacheKey({ fromDate, toDate } = {}) {
   return `${fromDate || ''}:${toDate || ''}:${ordersSheetCache.fetchedAt || 0}`;
 }
 
+function getOrderSheetPageCacheKey({ fromDate, toDate, search } = {}) {
+  return [
+    fromDate || '',
+    toDate || '',
+    normalizeSearchText(search),
+    ordersSheetCache.fetchedAt || 0
+  ].join(':');
+}
+
 function buildOrderSkuStats(orders = []) {
   const EXCLUDE_ST = ['mới', 'moi', 'new'];
   const rows = orders.filter(o => {
@@ -412,6 +422,9 @@ async function fetchOrderSheetRows({ refresh = false } = {}) {
     ordersSheetCache.rows &&
     now - ordersSheetCache.fetchedAt < ORDERS_SHEET_CACHE_TTL_MS
   ) {
+    return ordersSheetCache.rows;
+  }
+  if (!refresh && ordersSheetCache.rows?.length) {
     return ordersSheetCache.rows;
   }
 
@@ -487,7 +500,50 @@ async function fetchOrderSheetRows({ refresh = false } = {}) {
   ordersSheetCache.lastError = '';
   ordersSheetCache.lastErrorAt = 0;
   orderStatsCache.clear();
+  orderSheetPageCache.clear();
   return rows;
+}
+
+async function getOrderSheetPage({ fromDate, toDate, search = '', page = 1, limit = 100, refresh = false } = {}) {
+  const rows = await fetchOrderSheetRows({ refresh });
+  const safePage = Math.max(1, Number(page) || 1);
+  const safeLimit = Math.max(1, Math.min(1000, Number(limit) || 100));
+  const cacheKey = getOrderSheetPageCacheKey({ fromDate, toDate, search });
+
+  let cached = !refresh ? orderSheetPageCache.get(cacheKey) : null;
+  if (!cached) {
+    const filteredRows = rows
+      .filter(row => {
+        if (fromDate && row.dateKey < fromDate) return false;
+        if (toDate && row.dateKey > toDate) return false;
+        if (!orderMatchesSearch(row, search)) return false;
+        return true;
+      })
+      .sort((a, b) => String(b.dateKey).localeCompare(String(a.dateKey)));
+
+    cached = {
+      rows: filteredRows,
+      stats: buildOrderTableStats(filteredRows),
+      total: filteredRows.length
+    };
+    orderSheetPageCache.set(cacheKey, cached);
+    if (orderSheetPageCache.size > 50) {
+      const oldestKey = orderSheetPageCache.keys().next().value;
+      orderSheetPageCache.delete(oldestKey);
+    }
+  }
+
+  const start = (safePage - 1) * safeLimit;
+  return {
+    orders: cached.rows.slice(start, start + safeLimit).map(({ dateKey, ...order }) => order),
+    total: cached.total,
+    page: safePage,
+    limit: safeLimit,
+    totalPages: Math.ceil(cached.total / safeLimit) || 1,
+    stats: cached.stats,
+    cachedAt: ordersSheetCache.fetchedAt ? new Date(ordersSheetCache.fetchedAt).toISOString() : '',
+    lastError: ordersSheetCache.lastError || ''
+  };
 }
 
 async function getOrderSheetOrders({ fromDate, toDate, limit, refresh = false, search = '' } = {}) {
@@ -523,6 +579,7 @@ module.exports = {
   buildOrderSkuStats,
   buildOrderTableStats,
   fetchOrderSheetRows,
+  getOrderSheetPage,
   getOrderSheetOrders,
   getOrderStatsCacheKey,
   ordersSheetCache,

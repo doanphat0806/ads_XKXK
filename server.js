@@ -153,6 +153,7 @@ const {
   buildOrderSkuStats,
   buildOrderTableStats,
   fetchOrderSheetRows,
+  getOrderSheetPage,
   getOrderSheetOrders,
   getOrderStatsCacheKey,
   ordersSheetCache,
@@ -5863,7 +5864,9 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
 let finalSpendSyncRunning = false;
 const syncHistoryJobs = new Map();
 const dataPurchaseOrderSyncJobs = new Map();
+const orderSheetSyncJobs = new Map();
 let activeDataPurchaseOrderSyncJobId = '';
+let activeOrderSheetSyncJobId = '';
 
 function createSyncHistoryJobId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -5871,6 +5874,10 @@ function createSyncHistoryJobId() {
 
 function createDataPurchaseOrderSyncJobId() {
   return `data-po-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
+}
+
+function createOrderSheetSyncJobId() {
+  return `orders-sheet-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
 }
 
 function setDataPurchaseOrderSyncJob(jobId, updates) {
@@ -5955,6 +5962,76 @@ async function runDataPurchaseOrderSyncJob(jobId, { accessToken = '', userId = '
       activeDataPurchaseOrderSyncJobId = '';
     }
     setTimeout(() => dataPurchaseOrderSyncJobs.delete(jobId), 60 * 60 * 1000);
+  }
+}
+
+function setOrderSheetSyncJob(jobId, updates) {
+  const current = orderSheetSyncJobs.get(jobId);
+  if (!current) return null;
+  const next = { ...current, ...updates, updatedAt: new Date().toISOString() };
+  orderSheetSyncJobs.set(jobId, next);
+  return next;
+}
+
+function toOrderSheetSyncJobPayload(job = {}) {
+  return {
+    id: job.id || '',
+    state: job.state || 'unknown',
+    source: job.source || 'google_sheet',
+    fromDate: job.fromDate || '',
+    toDate: job.toDate || '',
+    totalRows: Number(job.totalRows || 0),
+    synced: Number(job.synced || 0),
+    percent: Number(job.percent || 0),
+    message: job.message || '',
+    error: job.error || '',
+    createdAt: job.createdAt || '',
+    updatedAt: job.updatedAt || '',
+    finishedAt: job.finishedAt || ''
+  };
+}
+
+async function runOrderSheetSyncJob(jobId, { fromDate = '', toDate = '' } = {}) {
+  try {
+    const job = orderSheetSyncJobs.get(jobId);
+    if (!job) return;
+
+    setOrderSheetSyncJob(jobId, {
+      state: 'active',
+      percent: 10,
+      message: 'Dang tai Google Sheet'
+    });
+
+    const result = await processOrderSheetSyncJob({ fromDate, toDate }, progress => {
+      setOrderSheetSyncJob(jobId, {
+        state: progress.state || 'active',
+        percent: progress.percent || 0,
+        message: progress.message || '',
+        totalRows: progress.totalRows || 0,
+        synced: progress.synced || 0,
+        fromDate: progress.fromDate || fromDate,
+        toDate: progress.toDate || toDate
+      });
+    });
+
+    setOrderSheetSyncJob(jobId, {
+      ...result,
+      state: result.state || 'completed',
+      finishedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    setOrderSheetSyncJob(jobId, {
+      state: 'failed',
+      percent: 100,
+      error: error.message,
+      message: error.message,
+      finishedAt: new Date().toISOString()
+    });
+  } finally {
+    if (activeOrderSheetSyncJobId === jobId) {
+      activeOrderSheetSyncJobId = '';
+    }
+    setTimeout(() => orderSheetSyncJobs.delete(jobId), 60 * 60 * 1000);
   }
 }
 
@@ -7130,24 +7207,16 @@ app.get('/api/orders', async (req, res) => {
     const wantsPaged = req.query.page !== undefined || req.query.limit !== undefined;
 
     if (useSheetOrders()) {
-      const orders = await getOrderSheetOrders({ fromDate, toDate, search });
       if (wantsPaged) {
-        const total = orders.length;
-        const start = (page - 1) * limit;
+        const data = await getOrderSheetPage({ fromDate, toDate, search, page, limit });
         res.json({
           ok: true,
           source: 'google_sheet',
-          orders: orders.slice(start, start + limit),
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit) || 1,
-          stats: buildOrderTableStats(orders),
-          cachedAt: ordersSheetCache.fetchedAt ? new Date(ordersSheetCache.fetchedAt).toISOString() : '',
-          lastError: ordersSheetCache.lastError || ''
+          ...data
         });
         return;
       }
+      const orders = await getOrderSheetOrders({ fromDate, toDate, search });
       res.json(orders);
       return;
     }
@@ -7891,6 +7960,54 @@ app.post('/api/orders/sync', async (req, res) => {
       });
     }
 
+    if (req.body?.queue === true) {
+      if (activeOrderSheetSyncJobId) {
+        const activeJob = orderSheetSyncJobs.get(activeOrderSheetSyncJobId);
+        if (activeJob && ['pending', 'active'].includes(activeJob.state)) {
+          return res.status(202).json({
+            ok: true,
+            queued: true,
+            jobId: activeJob.id,
+            job: toOrderSheetSyncJobPayload(activeJob),
+            statusUrl: `/api/orders/sync/${activeJob.id}`,
+            message: 'Dang tai don hang trong nen'
+          });
+        }
+        activeOrderSheetSyncJobId = '';
+      }
+
+      const jobId = createOrderSheetSyncJobId();
+      const now = new Date().toISOString();
+      const job = {
+        id: jobId,
+        state: 'pending',
+        source: 'google_sheet',
+        fromDate: fromDate || '',
+        toDate: toDate || '',
+        totalRows: 0,
+        synced: 0,
+        percent: 0,
+        message: 'Dang cho tai Google Sheet',
+        createdAt: now,
+        updatedAt: now
+      };
+      orderSheetSyncJobs.set(jobId, job);
+      activeOrderSheetSyncJobId = jobId;
+
+      setImmediate(() => {
+        runOrderSheetSyncJob(jobId, { fromDate, toDate });
+      });
+
+      return res.status(202).json({
+        ok: true,
+        queued: true,
+        jobId,
+        job: toOrderSheetSyncJobPayload(job),
+        statusUrl: `/api/orders/sync/${jobId}`,
+        message: 'Dang tai don hang trong nen'
+      });
+    }
+
     const rows = await fetchOrderSheetRows({ refresh: true });
     const orders = rows
       .filter(row => {
@@ -7908,6 +8025,11 @@ app.post('/api/orders/sync', async (req, res) => {
 
 app.get('/api/orders/sync/:jobId', async (req, res) => {
   try {
+    const memoryJob = orderSheetSyncJobs.get(req.params.jobId);
+    if (memoryJob) {
+      return res.json({ ok: true, job: toOrderSheetSyncJobPayload(memoryJob) });
+    }
+
     if (!orderSheetSyncQueue) {
       return res.status(404).json({ error: 'Order sheet sync queue is not enabled' });
     }
