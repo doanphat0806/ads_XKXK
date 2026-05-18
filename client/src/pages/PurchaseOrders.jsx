@@ -149,18 +149,28 @@ export default function PurchaseOrders() {
       const formData = new FormData();
       formData.set('file', file);
       const result = await uploadForm('/purchase-orders/import-status-csv', formData, { timeoutMs: 10 * 60 * 1000 });
-      const skipped = Number(result.skippedNoOrder || 0)
-        + Number(result.skippedNoStatus || 0)
-        + Number(result.skippedInvalidStatus || 0)
+      const skippedRows = Number(result.skippedNoOrder || 0)
+        + Number(result.skippedNoUpdate || 0)
         + Number(result.skippedUnmatchedTracking || 0);
+      const skippedStatusFields = Number(result.skippedNoStatus || 0)
+        + Number(result.skippedInvalidStatus || 0);
+      const statusImported = Number(result.statusImported ?? result.imported ?? 0);
+      const skuImported = Number(result.skuImported || 0);
+      const receivedQuantityImported = Number(result.receivedQuantityImported || 0);
+      const importedParts = [];
+      if (statusImported) importedParts.push(`${formatNumber(statusImported)} trạng thái`);
+      if (skuImported) importedParts.push(`${formatNumber(skuImported)} mã SP`);
+      if (receivedQuantityImported) importedParts.push(`${formatNumber(receivedQuantityImported)} SL hàng về`);
+      if (!importedParts.length) importedParts.push(`${formatNumber(result.imported || 0)} dòng`);
       const notes = [];
       if (Number(result.unmatchedInData || 0)) notes.push(`${formatNumber(result.unmatchedInData)} mã chưa có DATA`);
-      if (skipped) notes.push(`${formatNumber(skipped)} dòng bỏ qua`);
-      toast.success(`Đã nhập ${formatNumber(result.imported || 0)} trạng thái${notes.length ? ` (${notes.join(', ')})` : ''}`);
+      if (skippedRows) notes.push(`${formatNumber(skippedRows)} dòng bỏ qua`);
+      if (skippedStatusFields) notes.push(`${formatNumber(skippedStatusFields)} trạng thái bỏ qua`);
+      toast.success(`Đã nhập ${importedParts.join(', ')}${notes.length ? ` (${notes.join(', ')})` : ''}`);
       await loadRows({ nextPage: 1 });
     } catch (err) {
       setError(err.message);
-      toast.error(`Lỗi import trạng thái: ${err.message}`);
+      toast.error(`Lỗi import trạng thái/Mã SP: ${err.message}`);
     } finally {
       setImportingStatusCsv(false);
     }
@@ -309,10 +319,10 @@ export default function PurchaseOrders() {
               className="btn btn-ghost btn-sm"
               onClick={() => statusCsvInputRef.current?.click()}
               disabled={loading || importingStatusCsv}
-              title="Import CSV trạng thái"
+              title="Import CSV trạng thái và mã SP"
             >
               <Upload size={14} />
-              {importingStatusCsv ? 'Đang nhập' : 'Nhập trạng thái'}
+              {importingStatusCsv ? 'Đang nhập' : 'Nhập TT + Mã SP'}
             </button>
             <input
               ref={statusCsvInputRef}

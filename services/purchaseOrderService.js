@@ -234,7 +234,16 @@ function hasImportHeader(row = []) {
     'trangthai',
     'status'
   ]);
-  return orderIndex >= 0 && statusIndex >= 0;
+  const skuManualIndex = findImportColumnIndex(row, [
+    'ma sp',
+    'masp',
+    'ma san pham',
+    'masanpham',
+    'sku',
+    'product code',
+    'productcode'
+  ]);
+  return orderIndex >= 0 && (statusIndex >= 0 || skuManualIndex >= 0);
 }
 
 function detectStatusImportColumns(rows = []) {
@@ -275,6 +284,8 @@ function detectStatusImportColumns(rows = []) {
       skuManualIndex: findImportColumnIndex(headerRow, [
         'ma sp',
         'masp',
+        'ma san pham',
+        'masanpham',
         'sku',
         'product code',
         'productcode'
@@ -308,8 +319,8 @@ function buildStatusImportRows(csvText = '') {
   if (columns.orderIndex < 0 && columns.trackingIndex < 0) {
     throw new Error('CSV can co cot Ma Don Hang hoac Ma Van Don');
   }
-  if (columns.statusIndex < 0) {
-    throw new Error('CSV can co cot Trang Thai');
+  if (columns.statusIndex < 0 && columns.skuManualIndex < 0) {
+    throw new Error('CSV can co cot Trang Thai hoac Ma SP');
   }
 
   const items = [];
@@ -317,6 +328,7 @@ function buildStatusImportRows(csvText = '') {
   let skippedNoOrder = 0;
   let skippedNoStatus = 0;
   let skippedInvalidStatus = 0;
+  let skippedNoUpdate = 0;
 
   for (let index = columns.startIndex; index < rows.length; index += 1) {
     const row = rows[index];
@@ -324,26 +336,31 @@ function buildStatusImportRows(csvText = '') {
 
     const orderId = columns.orderIndex >= 0 ? normalizeImportOrderId(row[columns.orderIndex]) : '';
     const trackingCode = columns.trackingIndex >= 0 ? toText(row[columns.trackingIndex]) : '';
-    const rawStatus = toText(row[columns.statusIndex]);
-    const status = normalizeImportedStatus(rawStatus);
+    const rawStatus = columns.statusIndex >= 0 ? toText(row[columns.statusIndex]) : '';
+    const status = rawStatus ? normalizeImportedStatus(rawStatus) : '';
     const receivedQuantity = columns.receivedQuantityIndex >= 0
       ? toText(row[columns.receivedQuantityIndex]).slice(0, 200)
       : '';
     const skuManual = columns.skuManualIndex >= 0
       ? toText(row[columns.skuManualIndex]).slice(0, 2000)
       : '';
+    const hasStatusUpdate = Boolean(status);
+    const hasReceivedQuantityUpdate = Boolean(receivedQuantity);
+    const hasSkuManualUpdate = Boolean(skuManual);
 
     if (!orderId && !trackingCode) {
       skippedNoOrder += 1;
       continue;
     }
-    if (!rawStatus) {
+    if (columns.statusIndex >= 0 && !rawStatus) {
       skippedNoStatus += 1;
-      continue;
     }
-    if (!status) {
+    if (rawStatus && !status) {
       skippedInvalidStatus += 1;
       if (invalidStatuses.length < 5) invalidStatuses.push(rawStatus);
+    }
+    if (!hasStatusUpdate && !hasReceivedQuantityUpdate && !hasSkuManualUpdate) {
+      skippedNoUpdate += 1;
       continue;
     }
 
@@ -352,8 +369,11 @@ function buildStatusImportRows(csvText = '') {
       orderId,
       trackingCode,
       status,
+      hasStatusUpdate,
       receivedQuantity,
-      skuManual
+      hasReceivedQuantityUpdate,
+      skuManual,
+      hasSkuManualUpdate
     });
   }
 
@@ -362,6 +382,7 @@ function buildStatusImportRows(csvText = '') {
     skippedNoOrder,
     skippedNoStatus,
     skippedInvalidStatus,
+    skippedNoUpdate,
     invalidStatuses
   };
 }
@@ -1165,7 +1186,7 @@ async function updatePurchaseOrder(orderId, patch = {}) {
 async function importPurchaseOrderStatusesFromCsvText(csvText = '') {
   const parsed = buildStatusImportRows(csvText);
   if (!parsed.items.length) {
-    throw new Error('Khong co dong trang thai hop le de import');
+    throw new Error('Khong co dong trang thai hoac Ma SP hop le de import');
   }
 
   const trackingCodeMap = await getOrderIdsByTrackingCodes(
@@ -1182,12 +1203,29 @@ async function importPurchaseOrderStatusesFromCsvText(csvText = '') {
       skippedUnmatchedTracking += 1;
       return;
     }
-    itemByOrderId.set(orderId, { ...item, orderId });
+    const existing = itemByOrderId.get(orderId);
+    if (!existing) {
+      itemByOrderId.set(orderId, { ...item, orderId });
+      return;
+    }
+
+    itemByOrderId.set(orderId, {
+      ...existing,
+      rowNumber: item.rowNumber,
+      trackingCode: item.trackingCode || existing.trackingCode,
+      orderId,
+      status: item.hasStatusUpdate ? item.status : existing.status,
+      hasStatusUpdate: existing.hasStatusUpdate || item.hasStatusUpdate,
+      receivedQuantity: item.hasReceivedQuantityUpdate ? item.receivedQuantity : existing.receivedQuantity,
+      hasReceivedQuantityUpdate: existing.hasReceivedQuantityUpdate || item.hasReceivedQuantityUpdate,
+      skuManual: item.hasSkuManualUpdate ? item.skuManual : existing.skuManual,
+      hasSkuManualUpdate: existing.hasSkuManualUpdate || item.hasSkuManualUpdate
+    });
   });
 
   const orderIds = [...itemByOrderId.keys()];
   if (!orderIds.length) {
-    throw new Error('Khong tim thay ma don hop le de import trang thai');
+    throw new Error('Khong tim thay ma don hop le de import trang thai hoac Ma SP');
   }
 
   const existingOrderIds = new Set(await DataPurchaseOrder.distinct('col3', {
@@ -1196,14 +1234,16 @@ async function importPurchaseOrderStatusesFromCsvText(csvText = '') {
     col3: { $in: orderIds }
   }));
   const now = new Date();
+  const importItems = orderIds.map(orderId => itemByOrderId.get(orderId)).filter(Boolean);
+  const statusImported = importItems.filter(item => item.hasStatusUpdate).length;
+  const receivedQuantityImported = importItems.filter(item => item.hasReceivedQuantityUpdate).length;
+  const skuImported = importItems.filter(item => item.hasSkuManualUpdate).length;
   const operations = orderIds.map(orderId => {
     const item = itemByOrderId.get(orderId);
-    const update = {
-      status: item.status,
-      updatedAt: now
-    };
-    if (item.receivedQuantity) update.receivedQuantity = item.receivedQuantity;
-    if (item.skuManual) update.skuManual = item.skuManual;
+    const update = { updatedAt: now };
+    if (item.hasStatusUpdate) update.status = item.status;
+    if (item.hasReceivedQuantityUpdate) update.receivedQuantity = item.receivedQuantity;
+    if (item.hasSkuManualUpdate) update.skuManual = item.skuManual;
 
     return {
       updateOne: {
@@ -1247,7 +1287,11 @@ async function importPurchaseOrderStatusesFromCsvText(csvText = '') {
     skippedNoOrder: parsed.skippedNoOrder,
     skippedNoStatus: parsed.skippedNoStatus,
     skippedInvalidStatus: parsed.skippedInvalidStatus,
+    skippedNoUpdate: parsed.skippedNoUpdate,
     skippedUnmatchedTracking,
+    statusImported,
+    receivedQuantityImported,
+    skuImported,
     invalidStatuses: parsed.invalidStatuses,
     importedAt: now.toISOString()
   };
