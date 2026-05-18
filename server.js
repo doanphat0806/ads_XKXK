@@ -8320,7 +8320,7 @@ mongoose.connect(MONGO_URI).then(() => {
       console.log('Sheet Cache: Đang refresh đơn hàng từ Google Sheet...');
       if (orderSheetSyncQueue) {
         await orderSheetSyncQueue.add('sync-sheet', {}, {
-          jobId: `order-sheet-sync-${Math.floor(Date.now() / (5 * 60 * 1000))}`
+          jobId: `order-sheet-sync-${Math.floor(Date.now() / (60 * 1000))}`
         });
       } else {
         await fetchOrderSheetRows({ refresh: true });
@@ -8331,7 +8331,7 @@ mongoose.connect(MONGO_URI).then(() => {
     } finally {
       sheetRefreshRunning = false;
     }
-  }, 5 * 60 * 1000);
+  }, 60 * 1000);
 
 }).catch(error => {
   console.error('MongoDB error:', error.message);
