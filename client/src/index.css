@@ -2622,6 +2622,18 @@
       border-color: rgba(239, 71, 111, 0.22);
     }
 
+    .badge.warning {
+      background: rgba(245, 158, 11, 0.1);
+      color: #9a5b04;
+      border: 1px solid rgba(245, 158, 11, 0.24);
+    }
+
+    .badge.neutral {
+      background: rgba(85, 112, 137, 0.1);
+      color: var(--muted2);
+      border: 1px solid rgba(85, 112, 137, 0.22);
+    }
+
     .acc-status.warning {
       background: rgba(245, 158, 11, 0.1);
       color: #9a5b04;

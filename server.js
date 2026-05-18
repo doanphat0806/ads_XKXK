@@ -241,6 +241,14 @@ const SHOPEE_CALL_TO_ACTION_TYPES = new Set(['SHOP_NOW', 'NO_BUTTON']);
 const AUTO_PAUSE_CPO_LIMIT = 100000;
 const AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT = 60000;
 const AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT = 15;
+const SHOPEE_ZERO_COMMISSION_PAUSE_SPEND = 500000;
+const SHOPEE_LOSS_PAUSE_SPEND = 500000;
+const SHOPEE_OPTIMIZE_MIN_SPEND = 1000000;
+const SHOPEE_PAUSE_ROI_PERCENT = 10;
+const SHOPEE_WARN_ROI_PERCENT = 15;
+const SHOPEE_SCALE_ROI_PERCENT = 40;
+const SHOPEE_STRONG_SCALE_ROI_PERCENT = 80;
+const SHOPEE_PERFORMANCE_TOTAL_FROM_DATE = '2026-04-27';
 const SCHEDULED_DUPLICATE_SCOPE_COOLDOWN_MS = 2 * 60 * 1000;
 
 function normalizeProvider(value) {
@@ -1881,38 +1889,204 @@ async function getTodayOrderSkuCountsForAuto(account) {
   }
 }
 
-async function getTodayShopeeCommissionsForAuto(account, dateStr) {
+function normalizeShopeeSubIdKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+async function getShopeePerformanceTotalsForAuto(account, campaigns = []) {
+  const campaignKeys = new Set(
+    campaigns
+      .map(campaign => normalizeShopeeSubIdKey(campaign.name))
+      .filter(Boolean)
+  );
+  if (!campaignKeys.size) return {};
+
   try {
-    const records = await ShopeeCommission.find({
-      ownerUserId: account.ownerUserId || account._id,
-      date: dateStr
-    }).lean();
-    
-    const map = {};
-    for (const r of records) {
-      const key = String(r.subId2 || '').trim().toLowerCase();
-      map[key] = (map[key] || 0) + (r.commission || 0);
+    const ownerUserId = account.ownerUserId || account._id;
+    const accountFilter = account.ownerUserId
+      ? { ...buildAccountProviderFilter('shopee'), ownerUserId: account.ownerUserId }
+      : { _id: account._id };
+    const shopeeAccounts = await Account.find(accountFilter).select('_id').lean();
+    const accountIds = shopeeAccounts.length
+      ? shopeeAccounts.map(item => item._id)
+      : [account._id];
+
+    const [spendRows, commissionRows] = await Promise.all([
+      Campaign.aggregate([
+        {
+          $match: {
+            accountId: { $in: accountIds },
+            date: { $gte: SHOPEE_PERFORMANCE_TOTAL_FROM_DATE, $lte: todayStr() }
+          }
+        },
+        {
+          $group: {
+            _id: { $toLower: { $ifNull: ['$name', ''] } },
+            spend: { $sum: '$spend' }
+          }
+        }
+      ]),
+      ShopeeCommission.aggregate([
+        {
+          $match: {
+            ownerUserId,
+            date: { $gte: SHOPEE_PERFORMANCE_TOTAL_FROM_DATE, $lte: todayStr() }
+          }
+        },
+        {
+          $group: {
+            _id: { $toLower: { $ifNull: ['$subId2', ''] } },
+            commission: { $sum: '$commission' }
+          }
+        }
+      ])
+    ]);
+
+    const totals = {};
+    for (const row of spendRows) {
+      const key = normalizeShopeeSubIdKey(row._id);
+      if (!campaignKeys.has(key)) continue;
+      totals[key] = totals[key] || { spend: 0, commission: 0 };
+      totals[key].spend += Number(row.spend || 0);
     }
-    return map;
+
+    for (const row of commissionRows) {
+      const key = normalizeShopeeSubIdKey(row._id);
+      if (!campaignKeys.has(key)) continue;
+      totals[key] = totals[key] || { spend: 0, commission: 0 };
+      totals[key].commission += Number(row.commission || 0);
+    }
+
+    return totals;
   } catch (err) {
-    console.error('Loi getTodayShopeeCommissionsForAuto:', err);
+    console.error('Loi getShopeePerformanceTotalsForAuto:', err);
     return {};
   }
+}
+
+function getShopeeOptimizationDecision({ spend = 0, commission = 0 } = {}) {
+  const numericSpend = Number(spend || 0);
+  const numericCommission = Number(commission || 0);
+  const profit = numericCommission - numericSpend;
+  const roi = numericSpend > 0
+    ? (profit / numericSpend) * 100
+    : (profit > 0 ? 100 : 0);
+  const roas = numericSpend > 0 ? numericCommission / numericSpend : 0;
+  const hhAdsPercent = numericCommission > 0 ? (profit / numericCommission) * 100 : 0;
+  const hasEnoughSpend = numericSpend >= SHOPEE_OPTIMIZE_MIN_SPEND;
+
+  const baseDecisionMetrics = {
+    profit,
+    roi,
+    roas,
+    hhAdsPercent,
+    minSpend: SHOPEE_OPTIMIZE_MIN_SPEND,
+    zeroCommissionPauseSpend: SHOPEE_ZERO_COMMISSION_PAUSE_SPEND,
+    lossPauseSpend: SHOPEE_LOSS_PAUSE_SPEND,
+    pauseRoiPercent: SHOPEE_PAUSE_ROI_PERCENT
+  };
+
+  if (numericSpend >= SHOPEE_ZERO_COMMISSION_PAUSE_SPEND && numericCommission <= 0) {
+    return {
+      action: 'pause',
+      label: 'TAT',
+      shouldPause: true,
+      reason: `Tieu ${Math.round(numericSpend).toLocaleString()}d nhung chua co hoa hong`,
+      ...baseDecisionMetrics
+    };
+  }
+
+  if (numericSpend >= SHOPEE_LOSS_PAUSE_SPEND && profit < 0) {
+    return {
+      action: 'pause',
+      label: 'TAT',
+      shouldPause: true,
+      reason: `Doanh thu am ${Math.round(Math.abs(profit)).toLocaleString()}d sau khi tieu ${Math.round(numericSpend).toLocaleString()}d`,
+      ...baseDecisionMetrics
+    };
+  }
+
+  if (hasEnoughSpend && profit <= 0) {
+    return {
+      action: 'pause',
+      label: 'TAT',
+      shouldPause: true,
+      reason: `Lo ${Math.round(Math.abs(profit)).toLocaleString()}d sau khi tieu ${Math.round(numericSpend).toLocaleString()}d`,
+      ...baseDecisionMetrics
+    };
+  }
+
+  if (numericSpend > 0 && roi < SHOPEE_PAUSE_ROI_PERCENT) {
+    return {
+      action: 'pause',
+      label: 'TAT',
+      shouldPause: true,
+      reason: `ROI ${roi.toFixed(2)}% < ${SHOPEE_PAUSE_ROI_PERCENT}%`,
+      ...baseDecisionMetrics
+    };
+  }
+
+  if (profit < 0) {
+    return {
+      action: 'warning',
+      label: 'AM DT',
+      shouldPause: false,
+      reason: `Dang am ${Math.round(Math.abs(profit)).toLocaleString()}d nhung chi tieu chua den nguong tat ${SHOPEE_LOSS_PAUSE_SPEND.toLocaleString()}d`,
+      ...baseDecisionMetrics
+    };
+  }
+
+  if (hasEnoughSpend && roi < SHOPEE_WARN_ROI_PERCENT) {
+    return {
+      action: 'warning',
+      label: 'CANH BAO',
+      shouldPause: false,
+      reason: `ROI ${roi.toFixed(2)}% < ${SHOPEE_WARN_ROI_PERCENT}% sau khi tieu du nguong`,
+      ...baseDecisionMetrics
+    };
+  }
+
+  if (hasEnoughSpend && roi >= SHOPEE_STRONG_SCALE_ROI_PERCENT) {
+    return {
+      action: 'scale_strong',
+      label: 'SCALE MANH',
+      shouldPause: false,
+      reason: `ROI ${roi.toFixed(2)}% >= ${SHOPEE_STRONG_SCALE_ROI_PERCENT}%`,
+      ...baseDecisionMetrics
+    };
+  }
+
+  if (hasEnoughSpend && roi >= SHOPEE_SCALE_ROI_PERCENT) {
+    return {
+      action: 'scale',
+      label: 'SCALE NHE',
+      shouldPause: false,
+      reason: `ROI ${roi.toFixed(2)}% >= ${SHOPEE_SCALE_ROI_PERCENT}%`,
+      ...baseDecisionMetrics
+    };
+  }
+
+  return {
+    action: hasEnoughSpend ? 'keep' : 'testing',
+    label: hasEnoughSpend ? 'GIU' : 'TEST THEM',
+    shouldPause: false,
+    reason: hasEnoughSpend
+      ? `ROI ${roi.toFixed(2)}% dang co loi`
+      : `Chua du nguong chi tieu ${SHOPEE_OPTIMIZE_MIN_SPEND.toLocaleString()}d`,
+    ...baseDecisionMetrics
+  };
 }
 
 function getAutoPauseDecision({ provider, campaignName, spend, messages, costPerMessage, clicks, costPerClick, limits, budgetType, skuCounts, shopeeCommission }) {
   const normalizedProvider = normalizeProvider(provider);
   const basePauseReason = getPauseReason(provider, spend, messages, costPerMessage, clicks, costPerClick, limits, budgetType);
   if (normalizedProvider === 'shopee') {
-    const zeroOrderSpendLimit = Number(limits?.autoPauseZeroOrderSpendLimit ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT);
-    if (spend >= zeroOrderSpendLimit) {
-      const commission = shopeeCommission || 0;
-      const doanhThu = commission - spend;
-      const hhAdsPercent = commission > 0 ? (doanhThu / commission) * 100 : 0;
-      const hhAdsThreshold = Number(limits?.autoPauseShopeeHhAdsPercent ?? AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT);
-      if (hhAdsPercent < hhAdsThreshold) {
-        return { pauseReason: `%HH/ADS ${hhAdsPercent.toFixed(2)}% < ${hhAdsThreshold}% (Tieu ${Math.round(spend).toLocaleString()}d, HH ${Math.round(commission).toLocaleString()}d)`, orderCount: 0, costPerOrder: 0 };
-      }
+    const decision = getShopeeOptimizationDecision({
+      spend,
+      commission: shopeeCommission || 0
+    });
+    if (decision.shouldPause) {
+      return { pauseReason: decision.reason, orderCount: 0, costPerOrder: 0 };
     }
     return { pauseReason: basePauseReason, orderCount: 0, costPerOrder: 0 };
   }
@@ -3171,17 +3345,21 @@ async function runAutoControl(account) {
     let campaignsToPause = [];
     if (isWithinAutoRuleTimeWindow(ruleStart, ruleEnd)) {
       const skuCounts = await getTodayOrderSkuCountsForAuto(account);
-      const shopeeCommissionsMap = isShopee ? await getTodayShopeeCommissionsForAuto(account, today) : {};
+      const shopeePerformanceTotals = isShopee ? await getShopeePerformanceTotalsForAuto(account, campaigns) : {};
       campaignsToPause = campaigns
         .filter(campaign => campaign.status === 'ACTIVE')
         .map(campaign => {
           const { spend, messages, costPerMessage, clicks, costPerClick } = getCampaignRuleStats(campaign);
+          const shopeeKey = normalizeShopeeSubIdKey(campaign.name);
+          const shopeeTotals = isShopee ? (shopeePerformanceTotals[shopeeKey] || {}) : {};
+          const ruleSpend = isShopee ? Number(shopeeTotals.spend || spend || 0) : spend;
+          const ruleCommission = isShopee ? Number(shopeeTotals.commission || 0) : 0;
           const isLifetime = !!campaign.lifetimeBudget || !!campaign.lifetime_budget && parseFloat(campaign.lifetime_budget) > 0;
           const budgetType = isLifetime ? 'LIFETIME' : 'DAILY';
           const { pauseReason, orderCount, costPerOrder } = getAutoPauseDecision({
             provider: account.provider,
             campaignName: campaign.name,
-            spend,
+            spend: ruleSpend,
             messages,
             costPerMessage,
             clicks,
@@ -3189,9 +3367,21 @@ async function runAutoControl(account) {
             limits: config,
             budgetType,
             skuCounts,
-            shopeeCommission: isShopee ? (shopeeCommissionsMap[String(campaign.name || '').trim().toLowerCase()] || 0) : 0
+            shopeeCommission: ruleCommission
           });
-          return pauseReason ? { campaign, spend, messages, costPerMessage, clicks, costPerClick, orderCount, costPerOrder, pauseReason } : null;
+          return pauseReason ? {
+            campaign,
+            spend,
+            ruleSpend,
+            ruleCommission,
+            messages,
+            costPerMessage,
+            clicks,
+            costPerClick,
+            orderCount,
+            costPerOrder,
+            pauseReason
+          } : null;
         })
         .filter(Boolean);
     } else {
@@ -3251,7 +3441,7 @@ async function runAutoControl(account) {
             account._id,
             account.name,
             'warn',
-            `Shopee campaign cần tạm dừng: ${item.campaign.name} · ${item.pauseReason} · tieu ${item.spend.toLocaleString()}d`
+            `Shopee campaign can tam dung: ${item.campaign.name} · ${item.pauseReason} · tong tieu ${Math.round(item.ruleSpend || item.spend || 0).toLocaleString()}d · tong HH ${Math.round(item.ruleCommission || 0).toLocaleString()}d`
           );
           continue;
         }
@@ -7083,10 +7273,17 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
     let unifiedList = Array.from(unifiedMap.values()).map(item => {
       const doanhThu = item.commission - item.spend;
       const roi = item.spend > 0 ? (doanhThu / item.spend) * 100 : (doanhThu > 0 ? 100 : 0);
+      const optimization = getShopeeOptimizationDecision({
+        spend: item.spend,
+        commission: item.commission
+      });
       return {
         ...item,
         doanhThu,
-        roi
+        roi,
+        roas: optimization.roas,
+        hhAdsPercent: optimization.hhAdsPercent,
+        optimization
       };
     });
 

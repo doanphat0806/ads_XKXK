@@ -4,6 +4,45 @@ import { api, formatNumber, formatVND, todayString, uploadForm } from '../lib/ap
 
 const DEFAULT_FROM_DATE = '2026-04-27';
 const EMPTY_ARRAY = [];
+const OPTIMIZATION_BADGE_CLASS = {
+  pause: 'paused',
+  warning: 'warning',
+  testing: 'neutral',
+  keep: 'active',
+  scale: 'active',
+  scale_strong: 'active'
+};
+
+function getOptimization(row = {}) {
+  if (row.optimization) return row.optimization;
+
+  const spend = Number(row.spend || 0);
+  const commission = Number(row.commission || 0);
+  const profit = commission - spend;
+  const roi = spend > 0 ? (profit / spend) * 100 : (profit > 0 ? 100 : 0);
+
+  if (spend >= 500000 && commission <= 0) {
+    return { action: 'pause', label: 'TAT', reason: 'Tieu tu 500.000d nhung chua co hoa hong', roi };
+  }
+  if (spend >= 500000 && profit < 0) {
+    return { action: 'pause', label: 'TAT', reason: 'Doanh thu am sau khi tieu tu 500.000d', roi };
+  }
+  if (spend >= 1000000 && profit <= 0) {
+    return { action: 'pause', label: 'TAT', reason: 'Du nguong chi tieu va dang lo', roi };
+  }
+  if (spend > 0 && roi < 10) {
+    return { action: 'pause', label: 'TAT', reason: 'ROI duoi 10%', roi };
+  }
+  if (profit < 0) {
+    return { action: 'warning', label: 'AM DT', reason: 'Doanh thu dang am nhung chi tieu chua den nguong tat', roi };
+  }
+  if (spend >= 1000000 && roi < 15) {
+    return { action: 'warning', label: 'CANH BAO', reason: 'ROI duoi 15%', roi };
+  }
+  if (spend >= 1000000 && roi >= 80) return { action: 'scale_strong', label: 'SCALE MANH', reason: 'ROI tu 80%', roi };
+  if (spend >= 1000000 && roi >= 40) return { action: 'scale', label: 'SCALE NHE', reason: 'ROI tu 40%', roi };
+  return { action: spend >= 1000000 ? 'keep' : 'testing', label: spend >= 1000000 ? 'GIU' : 'TEST THEM', reason: '', roi };
+}
 
 export default function ShopeeCommission() {
   const [fromDate, setFromDate] = useState(DEFAULT_FROM_DATE);
@@ -57,7 +96,6 @@ export default function ShopeeCommission() {
     <div id="page-shopee-commission">
       <div className="stats-grid inventory-stats">
         <div className="stat g">
-          <div className="stat-label">Chi tieu tu 27/04</div>
           <div className="stat-value stat-value-compact">{formatVND(summary?.totalSpend || 0)}</div>
         </div>
         <div className="stat b">
@@ -130,11 +168,16 @@ export default function ShopeeCommission() {
                   <th className="text-right">Hoa hong</th>
                   <th className="text-right">Doanh thu</th>
                   <th className="text-right">%HH/ADS</th>
+                  <th className="text-right">ROI</th>
+                  <th>De xuat</th>
                 </tr>
               </thead>
               <tbody>
                 {commissionBySubId.map(row => {
-                  const hhAdsPercent = row.commission > 0 ? (row.doanhThu / row.commission) * 100 : 0;
+                  const optimization = getOptimization(row);
+                  const hhAdsPercent = Number(row.hhAdsPercent ?? (row.commission > 0 ? (row.doanhThu / row.commission) * 100 : 0));
+                  const roi = Number(row.roi ?? (row.spend > 0 ? (row.doanhThu / row.spend) * 100 : 0));
+                  const badgeClass = OPTIMIZATION_BADGE_CLASS[optimization.action] || 'neutral';
                   return (
                     <tr key={row.subId2}>
                       <td>{row.subId2}</td>
@@ -142,6 +185,12 @@ export default function ShopeeCommission() {
                       <td className="text-right mono-sm">{formatVND(row.commission || 0)}</td>
                       <td className="text-right mono-sm">{formatVND(row.doanhThu || 0)}</td>
                       <td className="text-right mono-sm">{formatNumber(hhAdsPercent)}%</td>
+                      <td className="text-right mono-sm">{formatNumber(roi)}%</td>
+                      <td>
+                        <span className={`badge ${badgeClass}`} title={optimization.reason || ''}>
+                          {optimization.label}
+                        </span>
+                      </td>
                     </tr>
                   );
                 })}
