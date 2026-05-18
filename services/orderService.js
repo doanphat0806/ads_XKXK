@@ -10,9 +10,9 @@ const ORDERS_SHEET_NAME = process.env.ORDERS_SHEET_NAME || DEFAULT_ORDERS_SHEET_
 const ORDERS_SHEET_RANGE = process.env.ORDERS_SHEET_RANGE || 'A1:M200000';
 const ORDERS_SHEET_QUERY = process.env.ORDERS_SHEET_QUERY || 'select L,B,D,G,H,K,M where B is not null';
 const ORDERS_SOURCE = String(process.env.ORDERS_SOURCE || 'sheet').trim().toLowerCase();
-const ORDERS_SHEET_CACHE_TTL_MS = parseBoundedInt(process.env.ORDERS_SHEET_CACHE_TTL_MS, 15 * 1000, 5000, 60 * 60 * 1000);
+const ORDERS_SHEET_CACHE_TTL_MS = parseBoundedInt(process.env.ORDERS_SHEET_CACHE_TTL_MS, 30 * 60 * 1000, 5000, 60 * 60 * 1000);
 const ORDERS_SHEET_TIMEOUT_MS = parseBoundedInt(process.env.ORDERS_SHEET_TIMEOUT_MS, 90000, 10000, 300000);
-const ORDERS_SHEET_RETRIES = parseBoundedInt(process.env.ORDERS_SHEET_RETRIES, 1, 1, 5);
+const ORDERS_SHEET_RETRIES = parseBoundedInt(process.env.ORDERS_SHEET_RETRIES, 3, 1, 5);
 const ORDERS_SHEET_RATE_LIMIT_BACKOFF_MS = parseBoundedInt(process.env.ORDERS_SHEET_RATE_LIMIT_BACKOFF_MS, 30 * 60 * 1000, 60 * 1000, 6 * 60 * 60 * 1000);
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 const ordersSheetCache = {
@@ -24,46 +24,6 @@ const ordersSheetCache = {
 };
 const orderStatsCache = new Map();
 const orderSheetPageCache = new Map();
-
-function getOrderSheetRangeBounds() {
-  const match = String(ORDERS_SHEET_RANGE || '').trim().match(/^([A-Z]+)(\d*):([A-Z]+)(\d*)$/i);
-  if (!match) {
-    return {
-      startColumn: 'A',
-      startRow: 1,
-      endColumn: 'M',
-      endRow: 200000
-    };
-  }
-
-  return {
-    startColumn: match[1].toUpperCase(),
-    startRow: Number(match[2] || 1) || 1,
-    endColumn: match[3].toUpperCase(),
-    endRow: Number(match[4] || 200000) || 200000
-  };
-}
-
-function getOrderSheetIncrementalRange(nextRowNumber) {
-  const bounds = getOrderSheetRangeBounds();
-  const startRow = Math.max(bounds.startRow + 1, Number(nextRowNumber || 0));
-  return `${bounds.startColumn}${startRow}:${bounds.endColumn}${bounds.endRow}`;
-}
-
-function getCachedMaxOrderSheetRowNumber() {
-  return (ordersSheetCache.rows || []).reduce((max, row) => {
-    const rowNumber = Number(row?.rawData?.rowNumber || 0);
-    return rowNumber > max ? rowNumber : max;
-  }, 0);
-}
-
-function mapOrderSheetCsvRows(csvRows = [], { firstSheetRowNumber = 2, skipFirstRow = false } = {}) {
-  const rows = skipFirstRow ? csvRows.slice(1) : csvRows;
-
-  return rows
-    .map((row, index) => mapOrderSheetRow(row, firstSheetRowNumber + index - 1))
-    .filter(Boolean);
-}
 
 function buildOrderQuery({ fromDate, toDate } = {}) {
   const query = {
@@ -468,18 +428,11 @@ async function fetchOrderSheetRows({ refresh = false } = {}) {
     return ordersSheetCache.rows;
   }
 
-  const cachedMaxRowNumber = getCachedMaxOrderSheetRowNumber();
-  const incremental = refresh && ordersSheetCache.rows?.length && cachedMaxRowNumber >= 2;
-  const requestRange = incremental
-    ? getOrderSheetIncrementalRange(cachedMaxRowNumber + 1)
-    : ORDERS_SHEET_RANGE;
-
   const params = new URLSearchParams({
     tqx: 'out:csv',
     sheet: ORDERS_SHEET_NAME,
-    range: requestRange,
-    tq: ORDERS_SHEET_QUERY,
-    headers: incremental ? '0' : '1'
+    range: ORDERS_SHEET_RANGE,
+    tq: ORDERS_SHEET_QUERY
   });
   const url = `https://docs.google.com/spreadsheets/d/${ORDERS_SHEET_ID}/gviz/tq?${params.toString()}`;
   let response;
@@ -536,27 +489,12 @@ async function fetchOrderSheetRows({ refresh = false } = {}) {
   }
 
   const csvRows = parseCsvRows(csv);
-  const rows = mapOrderSheetCsvRows(csvRows, {
-    firstSheetRowNumber: incremental ? cachedMaxRowNumber + 1 : 2,
-    skipFirstRow: !incremental
-  });
+  const rows = csvRows
+    .slice(1)
+    .map((row, index) => mapOrderSheetRow(row, index + 1))
+    .filter(Boolean);
 
-  if (incremental) {
-    const existingKeys = new Set((ordersSheetCache.rows || []).map(row => {
-      const sheet = row.rawData?.sheetColumns || {};
-      return `${row.rawData?.rowNumber || ''}\u0000${row.orderId || sheet.col12 || ''}\u0000${sheet.col4 || ''}`;
-    }));
-    const appendedRows = rows.filter(row => {
-      const sheet = row.rawData?.sheetColumns || {};
-      const key = `${row.rawData?.rowNumber || ''}\u0000${row.orderId || sheet.col12 || ''}\u0000${sheet.col4 || ''}`;
-      if (existingKeys.has(key)) return false;
-      existingKeys.add(key);
-      return true;
-    });
-    ordersSheetCache.rows = [...(ordersSheetCache.rows || []), ...appendedRows];
-  } else {
-    ordersSheetCache.rows = rows;
-  }
+  ordersSheetCache.rows = rows;
   ordersSheetCache.fetchedAt = now;
   ordersSheetCache.rateLimitedUntil = 0;
   ordersSheetCache.lastError = '';

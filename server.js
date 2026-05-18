@@ -294,7 +294,6 @@ const READ_CACHE_TTL_MS = 30 * 1000;
 const readCache = new Map();
 const ACCOUNT_RATE_LIMIT_COOLDOWN_MS = parseBoundedInt(process.env.ACCOUNT_RATE_LIMIT_COOLDOWN_MS, 10 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
 const AUTO_CHECK_MIN_INTERVAL_SECONDS = parseBoundedInt(process.env.AUTO_CHECK_MIN_INTERVAL_SECONDS, 180, 60, 60 * 60);
-const ORDERS_SHEET_REFRESH_INTERVAL_MS = parseBoundedInt(process.env.ORDERS_SHEET_REFRESH_INTERVAL_MS, 15 * 1000, 15 * 1000, 60 * 60 * 1000);
 const accountRateLimitUntil = new Map();
 const AUTH_TOKEN_TTL_MS = parseBoundedInt(process.env.AUTH_TOKEN_TTL_MS, 7 * 24 * 60 * 60 * 1000, 60 * 1000, 30 * 24 * 60 * 60 * 1000);
 const AUTH_SECRET = String(process.env.AUTH_SECRET || process.env.SESSION_SECRET || process.env.FB_APP_SECRET || 'adsctrl-local-auth-secret');
@@ -8321,7 +8320,7 @@ mongoose.connect(MONGO_URI).then(() => {
       console.log('Sheet Cache: Đang refresh đơn hàng từ Google Sheet...');
       if (orderSheetSyncQueue) {
         await orderSheetSyncQueue.add('sync-sheet', {}, {
-          jobId: `order-sheet-sync-${Math.floor(Date.now() / ORDERS_SHEET_REFRESH_INTERVAL_MS)}`
+          jobId: `order-sheet-sync-${Math.floor(Date.now() / (5 * 60 * 1000))}`
         });
       } else {
         await fetchOrderSheetRows({ refresh: true });
@@ -8332,7 +8331,7 @@ mongoose.connect(MONGO_URI).then(() => {
     } finally {
       sheetRefreshRunning = false;
     }
-  }, ORDERS_SHEET_REFRESH_INTERVAL_MS);
+  }, 5 * 60 * 1000);
 
 }).catch(error => {
   console.error('MongoDB error:', error.message);
