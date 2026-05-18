@@ -878,6 +878,162 @@ function buildPurchaseOrderSummaryFromGroups(groupedRows = [], statusByOrderId =
   };
 }
 
+async function buildPurchaseOrderSummaryFromDatabase(sourceFilter) {
+  const invalidTrackingValues = Array.from(INVALID_TRACKING_VALUES).map(value => String(value).toLowerCase());
+  const [summary = {}] = await DataPurchaseOrder.aggregate([
+    { $match: sourceFilter },
+    {
+      $addFields: {
+        rowTrackingText: {
+          $toLower: {
+            $trim: { input: { $ifNull: ['$logisticsTrackingCode', ''] } }
+          }
+        },
+        rowFallbackTrackingText: {
+          $toLower: {
+            $trim: { input: { $ifNull: ['$col25', ''] } }
+          }
+        }
+      }
+    },
+    {
+      $addFields: {
+        rowHasTracking: {
+          $or: [
+            { $not: [{ $in: ['$rowTrackingText', invalidTrackingValues] }] },
+            { $not: [{ $in: ['$rowFallbackTrackingText', invalidTrackingValues] }] }
+          ]
+        }
+      }
+    },
+    { $sort: { rowNumber: 1 } },
+    {
+      $group: {
+        _id: '$col3',
+        orderId: { $first: '$col3' },
+        quantity: { $first: '$productQuantity' },
+        quantityFallback: { $first: '$col15' },
+        hasSourceTracking: { $max: { $cond: ['$rowHasTracking', 1, 0] } }
+      }
+    },
+    {
+      $lookup: {
+        from: 'purchaseorders',
+        let: { orderId: '$orderId' },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ['$sourceId', SHEET_ID] },
+                  { $eq: ['$sourceName', SHEET_NAME] },
+                  { $eq: ['$orderId', '$$orderId'] }
+                ]
+              }
+            }
+          },
+          { $project: { _id: 0, status: 1, supplementalTrackingCode: 1 } },
+          { $limit: 1 }
+        ],
+        as: 'manual'
+      }
+    },
+    { $unwind: { path: '$manual', preserveNullAndEmptyArrays: true } },
+    {
+      $addFields: {
+        quantityText: {
+          $cond: [
+            { $ne: [{ $trim: { input: { $ifNull: ['$quantity', ''] } } }, ''] },
+            { $trim: { input: { $ifNull: ['$quantity', ''] } } },
+            { $trim: { input: { $ifNull: ['$quantityFallback', ''] } } }
+          ]
+        },
+        manualTrackingText: {
+          $trim: { input: { $ifNull: ['$manual.supplementalTrackingCode', ''] } }
+        },
+        status: { $ifNull: ['$manual.status', ''] }
+      }
+    },
+    {
+      $addFields: {
+        quantityNumber: {
+          $convert: {
+            input: { $replaceOne: { input: '$quantityText', find: ',', replacement: '.' } },
+            to: 'double',
+            onError: 0,
+            onNull: 0
+          }
+        },
+        hasTracking: {
+          $or: [
+            { $gt: ['$hasSourceTracking', 0] },
+            { $ne: ['$manualTrackingText', ''] }
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        orderCount: { $sum: 1 },
+        totalProductQuantity: { $sum: '$quantityNumber' },
+        trackingCount: { $sum: { $cond: ['$hasTracking', 1, 0] } },
+        receivedFull: { $sum: { $cond: [{ $eq: ['$status', 've_du'] }, 1, 0] } },
+        missing: { $sum: { $cond: [{ $eq: ['$status', 've_thieu'] }, 1, 0] } },
+        wrong: { $sum: { $cond: [{ $eq: ['$status', 'sai_hang'] }, 1, 0] } },
+        extra: { $sum: { $cond: [{ $eq: ['$status', 've_thua'] }, 1, 0] } },
+        lost: { $sum: { $cond: [{ $eq: ['$status', 'that_lac'] }, 1, 0] } }
+      }
+    },
+    {
+      $project: {
+        _id: 0,
+        orderCount: 1,
+        totalProductQuantity: 1,
+        trackingCount: 1,
+        receivedFull: 1,
+        missing: 1,
+        wrong: 1,
+        extra: 1,
+        lost: 1,
+        mvdRatio: {
+          $cond: [
+            { $gt: ['$orderCount', 0] },
+            { $divide: ['$trackingCount', '$orderCount'] },
+            0
+          ]
+        },
+        statusCounts: {
+          ve_du: '$receivedFull',
+          ve_thieu: '$missing',
+          sai_hang: '$wrong',
+          ve_thua: '$extra',
+          that_lac: '$lost'
+        }
+      }
+    }
+  ]).allowDiskUse(true);
+
+  return {
+    orderCount: Number(summary.orderCount || 0),
+    totalProductQuantity: Number(summary.totalProductQuantity || 0),
+    trackingCount: Number(summary.trackingCount || 0),
+    receivedFull: Number(summary.receivedFull || 0),
+    missing: Number(summary.missing || 0),
+    wrong: Number(summary.wrong || 0),
+    extra: Number(summary.extra || 0),
+    lost: Number(summary.lost || 0),
+    mvdRatio: Number(summary.mvdRatio || 0),
+    statusCounts: summary.statusCounts || {
+      ve_du: 0,
+      ve_thieu: 0,
+      sai_hang: 0,
+      ve_thua: 0,
+      that_lac: 0
+    }
+  };
+}
+
 async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page = 1, limit = 100 } = {}) {
   const safePage = Math.max(1, Number(page) || 1);
   const safeLimit = Math.max(1, Math.min(1000, Number(limit) || 100));
@@ -898,45 +1054,33 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
 
   if (!searchTerm && !dateFilter.orderDateKey) {
     const start = (safePage - 1) * safeLimit;
-    const [result = {}] = await DataPurchaseOrder.aggregate([
-      ...getPurchaseOrderGroupedPipeline(sourceFilter),
-      {
-        $facet: {
-          pageRows: [
-            { $sort: { orderDateKey: -1, rowNumber: 1 } },
-            { $skip: start },
-            { $limit: safeLimit }
-          ],
-          summaryRows: [
-            {
-              $project: {
-                _id: 0,
-                orderId: 1,
-                quantity: 1,
-                quantityFallback: 1,
-                trackingCandidates: 1,
-                fallbackTrackingCandidates: 1
-              }
-            }
-          ],
-          totalRows: [
-            { $count: 'count' }
-          ]
+    const [result = {}, summary] = await Promise.all([
+      DataPurchaseOrder.aggregate([
+        ...getPurchaseOrderGroupedPipeline(sourceFilter),
+        {
+          $facet: {
+            pageRows: [
+              { $sort: { orderDateKey: -1, rowNumber: 1 } },
+              { $skip: start },
+              { $limit: safeLimit }
+            ],
+            totalRows: [
+              { $count: 'count' }
+            ]
+          }
         }
-      }
-    ]).allowDiskUse(true);
+      ]).allowDiskUse(true).then(results => results[0] || {}),
+      buildPurchaseOrderSummaryFromDatabase(sourceFilter)
+    ]);
 
     const pageRows = result.pageRows || [];
-    const summaryRows = result.summaryRows || [];
-    const total = Number(result.totalRows?.[0]?.count || summaryRows.length);
+    const total = Number(result.totalRows?.[0]?.count || summary.orderCount || 0);
     const pageManualRows = await findManualPurchaseOrderRows(pageRows.map(row => row.orderId), 'orderId status receivedQuantity supplementalTrackingCode skuManual');
-    const summaryManualRows = await findManualPurchaseOrderRows(summaryRows.map(row => row.orderId), 'orderId status supplementalTrackingCode');
     const pageManualByOrderId = new Map(pageManualRows.map(row => [row.orderId, row]));
-    const summaryManualByOrderId = new Map(summaryManualRows.map(row => [row.orderId, row]));
 
     return {
       rows: pageRows.map(row => mapPurchaseOrderApiRow(row, pageManualByOrderId)),
-      summary: buildPurchaseOrderSummaryFromGroups(summaryRows, summaryManualByOrderId),
+      summary,
       statusOptions: STATUS_OPTIONS,
       total,
       page: safePage,

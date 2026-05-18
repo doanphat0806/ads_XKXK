@@ -100,7 +100,15 @@ export default function DataPurchaseOrders() {
 
         while (!done) {
           await wait(1500);
-          const status = await api('GET', `/data-purchase-orders/sync/${result.jobId}`, null, { timeoutMs: 30000 });
+          let status;
+          try {
+            status = await api('GET', `/data-purchase-orders/sync/${result.jobId}`, null, { timeoutMs: 30000 });
+          } catch (pollError) {
+            if ([502, 503, 504].includes(Number(pollError.status)) || /request qua lau|may chu xu ly qua lau/i.test(pollError.message || '')) {
+              continue;
+            }
+            throw pollError;
+          }
           finalJob = status.job || {};
           done = DATA_SYNC_DONE_STATES.has(finalJob.state);
 

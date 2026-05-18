@@ -106,7 +106,15 @@ export default function PurchaseOrders() {
 
         while (!done) {
           await wait(1500);
-          const status = await api('GET', `/data-purchase-orders/sync/${result.jobId}`, null, { timeoutMs: 30000 });
+          let status;
+          try {
+            status = await api('GET', `/data-purchase-orders/sync/${result.jobId}`, null, { timeoutMs: 30000 });
+          } catch (pollError) {
+            if ([502, 503, 504].includes(Number(pollError.status)) || /request qua lau|may chu xu ly qua lau/i.test(pollError.message || '')) {
+              continue;
+            }
+            throw pollError;
+          }
           finalJob = status.job || {};
           done = DATA_SYNC_DONE_STATES.has(finalJob.state);
 
@@ -119,7 +127,11 @@ export default function PurchaseOrders() {
       }
 
       toast.success(`Đã đồng bộ ${formatNumber(imported)} dòng DATA vào database`);
-      await loadRows({ nextPage: 1 });
+      try {
+        await loadRows({ nextPage: 1 });
+      } catch (refreshError) {
+        toast.warning(`Da dong bo xong, nhung tai lai bang cham: ${refreshError.message}`);
+      }
     } catch (err) {
       setError(err.message);
       toast.error(`Lỗi đồng bộ DATA: ${err.message}`);
