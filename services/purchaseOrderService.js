@@ -309,6 +309,22 @@ function normalizeImportOrderId(value = '') {
   return toText(value).replace(/\s+/g, '');
 }
 
+function mergeSkuManualValues(current = '', next = '') {
+  const values = [];
+  const seen = new Set();
+  for (const value of [current, next]) {
+    for (const line of toText(value).split(/\r?\n/)) {
+      const text = toText(line);
+      if (!text) continue;
+      const key = normalizeText(text);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      values.push(text);
+    }
+  }
+  return values.join('\n');
+}
+
 function buildStatusImportRows(csvText = '') {
   const rows = parseCsvRows(String(csvText || '').replace(/^\uFEFF/, ''));
   if (!rows.length) {
@@ -329,12 +345,13 @@ function buildStatusImportRows(csvText = '') {
   let skippedNoStatus = 0;
   let skippedInvalidStatus = 0;
   let skippedNoUpdate = 0;
+  let carryOrderId = '';
 
   for (let index = columns.startIndex; index < rows.length; index += 1) {
     const row = rows[index];
     if (!row || !row.some(cell => toText(cell))) continue;
 
-    const orderId = columns.orderIndex >= 0 ? normalizeImportOrderId(row[columns.orderIndex]) : '';
+    const explicitOrderId = columns.orderIndex >= 0 ? normalizeImportOrderId(row[columns.orderIndex]) : '';
     const trackingCode = columns.trackingIndex >= 0 ? toText(row[columns.trackingIndex]) : '';
     const rawStatus = columns.statusIndex >= 0 ? toText(row[columns.statusIndex]) : '';
     const status = rawStatus ? normalizeImportedStatus(rawStatus) : '';
@@ -347,6 +364,9 @@ function buildStatusImportRows(csvText = '') {
     const hasStatusUpdate = Boolean(status);
     const hasReceivedQuantityUpdate = Boolean(receivedQuantity);
     const hasSkuManualUpdate = Boolean(skuManual);
+    const orderId = explicitOrderId || (hasSkuManualUpdate && carryOrderId ? carryOrderId : '');
+
+    if (explicitOrderId) carryOrderId = explicitOrderId;
 
     if (!orderId && !trackingCode) {
       skippedNoOrder += 1;
@@ -1218,7 +1238,7 @@ async function importPurchaseOrderStatusesFromCsvText(csvText = '') {
       hasStatusUpdate: existing.hasStatusUpdate || item.hasStatusUpdate,
       receivedQuantity: item.hasReceivedQuantityUpdate ? item.receivedQuantity : existing.receivedQuantity,
       hasReceivedQuantityUpdate: existing.hasReceivedQuantityUpdate || item.hasReceivedQuantityUpdate,
-      skuManual: item.hasSkuManualUpdate ? item.skuManual : existing.skuManual,
+      skuManual: item.hasSkuManualUpdate ? mergeSkuManualValues(existing.skuManual, item.skuManual) : existing.skuManual,
       hasSkuManualUpdate: existing.hasSkuManualUpdate || item.hasSkuManualUpdate
     });
   });

@@ -4,6 +4,7 @@ import { api, formatNumber, formatVND, todayString, uploadForm } from '../lib/ap
 
 const DEFAULT_FROM_DATE = '2026-04-27';
 const EMPTY_ARRAY = [];
+const DEFAULT_SHOPEE_MIN_SPEND = 50000;
 const OPTIMIZATION_BADGE_CLASS = {
   pause: 'paused',
   warning: 'warning',
@@ -13,35 +14,34 @@ const OPTIMIZATION_BADGE_CLASS = {
   scale_strong: 'active'
 };
 
-function getOptimization(row = {}) {
+function getOptimization(row = {}, minSpendLimit = DEFAULT_SHOPEE_MIN_SPEND) {
   if (row.optimization) return row.optimization;
 
   const spend = Number(row.spend || 0);
   const commission = Number(row.commission || 0);
+  const minSpend = Math.max(1, Number(minSpendLimit || DEFAULT_SHOPEE_MIN_SPEND));
   const profit = commission - spend;
   const roi = spend > 0 ? (profit / spend) * 100 : (profit > 0 ? 100 : 0);
+  const hasEnoughSpend = spend >= minSpend;
 
-  if (spend >= 500000 && commission <= 0) {
-    return { action: 'pause', label: 'TAT', reason: 'Tieu tu 500.000d nhung chua co hoa hong', roi };
+  if (!hasEnoughSpend) {
+    return { action: 'testing', label: 'TEST THEM', reason: `Chua du nguong chi tieu ${formatVND(minSpend)}`, roi };
   }
-  if (spend >= 500000 && profit < 0) {
-    return { action: 'pause', label: 'TAT', reason: 'Doanh thu am sau khi tieu tu 500.000d', roi };
+  if (commission <= 0) {
+    return { action: 'pause', label: 'TAT', reason: 'Da du nguong chi tieu nhung chua co hoa hong', roi };
   }
-  if (spend >= 1000000 && profit <= 0) {
+  if (profit <= 0) {
     return { action: 'pause', label: 'TAT', reason: 'Du nguong chi tieu va dang lo', roi };
   }
-  if (spend > 0 && roi < 10) {
+  if (roi < 10) {
     return { action: 'pause', label: 'TAT', reason: 'ROI duoi 10%', roi };
   }
-  if (profit < 0) {
-    return { action: 'warning', label: 'AM DT', reason: 'Doanh thu dang am nhung chi tieu chua den nguong tat', roi };
-  }
-  if (spend >= 1000000 && roi < 15) {
+  if (roi < 15) {
     return { action: 'warning', label: 'CANH BAO', reason: 'ROI duoi 15%', roi };
   }
-  if (spend >= 1000000 && roi >= 80) return { action: 'scale_strong', label: 'SCALE MANH', reason: 'ROI tu 80%', roi };
-  if (spend >= 1000000 && roi >= 40) return { action: 'scale', label: 'SCALE NHE', reason: 'ROI tu 40%', roi };
-  return { action: spend >= 1000000 ? 'keep' : 'testing', label: spend >= 1000000 ? 'GIU' : 'TEST THEM', reason: '', roi };
+  if (roi >= 80) return { action: 'scale_strong', label: 'SCALE MANH', reason: 'ROI tu 80%', roi };
+  if (roi >= 40) return { action: 'scale', label: 'SCALE NHE', reason: 'ROI tu 40%', roi };
+  return { action: 'keep', label: 'GIU', reason: '', roi };
 }
 
 export default function ShopeeCommission() {
@@ -70,6 +70,7 @@ export default function ShopeeCommission() {
   }, []);
 
   const commissionBySubId = summary?.commissionBySubId || EMPTY_ARRAY;
+  const shopeeMinSpend = Number(summary?.autoPauseShopeeMinSpendLimit || DEFAULT_SHOPEE_MIN_SPEND);
   const avgDailySpend = useMemo(() => {
     const dayCount = Number(summary?.activeDayCount || 0);
     return dayCount > 0 ? Number(summary?.totalSpend || 0) / dayCount : 0;
@@ -174,7 +175,7 @@ export default function ShopeeCommission() {
               </thead>
               <tbody>
                 {commissionBySubId.map(row => {
-                  const optimization = getOptimization(row);
+                  const optimization = getOptimization(row, shopeeMinSpend);
                   const hhAdsPercent = Number(row.hhAdsPercent ?? (row.commission > 0 ? (row.doanhThu / row.commission) * 100 : 0));
                   const roi = Number(row.roi ?? (row.spend > 0 ? (row.doanhThu / row.spend) * 100 : 0));
                   const badgeClass = OPTIMIZATION_BADGE_CLASS[optimization.action] || 'neutral';

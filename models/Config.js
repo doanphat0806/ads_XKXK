@@ -31,6 +31,8 @@ const ConfigSchema = new mongoose.Schema({
   lifetimeCpcLimit: { type: Number, default: 500 },
   autoPauseCpoLimit: { type: Number, default: 100000 },
   autoPauseZeroOrderSpendLimit: { type: Number, default: 60000 },
+  autoPauseShopeeMinSpendLimit: { type: Number, default: 50000 },
+  autoPauseShopeeHhAdsPercent: { type: Number, default: 15 },
   dataPurchaseOrderMeta: { type: mongoose.Schema.Types.Mixed, default: {} },
   purchaseOrderDashboardCancellations: { type: mongoose.Schema.Types.Mixed, default: {} },
   purchaseOrderDashboardNotes: { type: mongoose.Schema.Types.Mixed, default: {} },

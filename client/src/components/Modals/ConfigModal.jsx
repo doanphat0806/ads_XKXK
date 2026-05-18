@@ -20,7 +20,8 @@ export default function ConfigModal() {
     dailyClickLimit: 0, lifetimeClickLimit: 0,
     dailyCpcLimit: 600, lifetimeCpcLimit: 600,
     autoPauseCpoLimit: 100000,
-    autoPauseZeroOrderSpendLimit: 60000
+    autoPauseZeroOrderSpendLimit: 60000,
+    autoPauseShopeeMinSpendLimit: 50000
   });
 
   useEffect(() => {
@@ -45,7 +46,8 @@ export default function ConfigModal() {
         dailyCpcLimit: appConfig.dailyCpcLimit || 600,
         lifetimeCpcLimit: appConfig.lifetimeCpcLimit || 600,
         autoPauseCpoLimit: appConfig.autoPauseCpoLimit ?? 100000,
-        autoPauseZeroOrderSpendLimit: appConfig.autoPauseZeroOrderSpendLimit ?? 60000
+        autoPauseZeroOrderSpendLimit: appConfig.autoPauseZeroOrderSpendLimit ?? 60000,
+        autoPauseShopeeMinSpendLimit: appConfig.autoPauseShopeeMinSpendLimit ?? 50000
       });
     }
   }, [appConfig, isShopee]);
@@ -245,6 +247,7 @@ export default function ConfigModal() {
               <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>THEO NGÀY</div>
               {isShopee ? (
                 <>
+                  <div className="form-group"><label>Chi tieu toi thieu de xet tat</label><input type="number" min="1" placeholder="50000" value={autoLimits.autoPauseShopeeMinSpendLimit} onChange={e => setAutoLimits({ ...autoLimits, autoPauseShopeeMinSpendLimit: e.target.value })} /></div>
                   <div className="form-group"><label>Chi phí tối đa/ click (ngày)</label><input type="number" min="0" placeholder="600" value={autoLimits.dailyCpcLimit} onChange={e => setAutoLimits({ ...autoLimits, dailyCpcLimit: e.target.value })} /></div>
                   <div className="form-group"><label>Số click tối đa/ngày</label><input type="number" min="0" placeholder="0" value={autoLimits.dailyClickLimit} onChange={e => setAutoLimits({ ...autoLimits, dailyClickLimit: e.target.value })} /></div>
                 </>
@@ -287,7 +290,8 @@ export default function ConfigModal() {
               lifetimeClickLimit: Number(autoLimits.lifetimeClickLimit || 0),
               lifetimeCpcLimit: Number(autoLimits.lifetimeCpcLimit || 0),
               autoPauseCpoLimit: Number(autoLimits.autoPauseCpoLimit || 0),
-              autoPauseZeroOrderSpendLimit: Number(autoLimits.autoPauseZeroOrderSpendLimit || 0)
+              autoPauseZeroOrderSpendLimit: Number(autoLimits.autoPauseZeroOrderSpendLimit || 0),
+              autoPauseShopeeMinSpendLimit: Number(autoLimits.autoPauseShopeeMinSpendLimit || 0)
             }, 'Đã lưu giới hạn tự động')}>Lưu giới hạn</button>
           </div>
         </section>
