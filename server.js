@@ -112,11 +112,18 @@ app.get('/auth/facebook/callback', async (req, res) => {
   }
 });
 // Auto-pause rules time window check (Vietnam time, UTC+7)
-function isWithinAutoRuleTimeWindow(startTime, endTime) {
-  const now = new Date();
+function getVietnamDayMinute(date = new Date()) {
   const vnOffset = 7 * 60; // minutes
-  const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const vnMinutes = (utcMinutes + vnOffset) % (24 * 60);
+  const utcMinutes = date.getUTCHours() * 60 + date.getUTCMinutes();
+  return (utcMinutes + vnOffset) % (24 * 60);
+}
+
+function isVietnamTimeMinute(hour = 0, minute = 0, date = new Date()) {
+  return getVietnamDayMinute(date) === (hour * 60 + minute);
+}
+
+function isWithinAutoRuleTimeWindow(startTime, endTime) {
+  const vnMinutes = getVietnamDayMinute();
 
   const [sh, sm] = (startTime || '00:00').split(':').map(Number);
   const [eh, em] = (endTime || '09:00').split(':').map(Number);
@@ -244,9 +251,11 @@ const AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT = 15;
 const AUTO_PAUSE_SHOPEE_MIN_SPEND_LIMIT = 50000;
 const SHOPEE_PAUSE_ROI_PERCENT = 10;
 const SHOPEE_WARN_ROI_PERCENT = 15;
+const SHOPEE_REACTIVATE_ROI_PERCENT = 15;
 const SHOPEE_SCALE_ROI_PERCENT = 40;
 const SHOPEE_STRONG_SCALE_ROI_PERCENT = 80;
 const SHOPEE_PERFORMANCE_TOTAL_FROM_DATE = '2026-04-27';
+const SHOPEE_REACTIVATE_CRON = '0 0 * * *';
 const SCHEDULED_DUPLICATE_SCOPE_COOLDOWN_MS = 2 * 60 * 1000;
 
 function normalizeProvider(value) {
@@ -1995,6 +2004,7 @@ function getShopeeOptimizationDecision({ spend = 0, commission = 0, minSpendLimi
     roas,
     hhAdsPercent,
     minSpend,
+    hasEnoughSpend,
     zeroCommissionPauseSpend: minSpend,
     lossPauseSpend: minSpend,
     pauseRoiMinSpend: minSpend,
@@ -2332,6 +2342,33 @@ async function fetchCampaignMetaMap(fbToken, campaignIds = []) {
       });
     }
   }
+  return campaignMetaById;
+}
+
+async function fetchCampaignMetaMapBestEffort(fbToken, campaignIds = []) {
+  const campaignMetaById = new Map();
+  const normalizedIds = [...new Set((campaignIds || []).map(id => String(id || '').trim()).filter(Boolean))];
+
+  for (const chunk of chunkArray(normalizedIds, 50)) {
+    try {
+      const chunkMeta = await fetchCampaignMetaMap(fbToken, chunk);
+      for (const [campaignId, meta] of chunkMeta.entries()) {
+        campaignMetaById.set(campaignId, meta);
+      }
+    } catch (chunkError) {
+      console.warn(`[campaigns:meta] chunk metadata failed: ${chunkError.message}`);
+      for (const campaignId of chunk) {
+        try {
+          const singleMeta = await fetchCampaignMetaMap(fbToken, [campaignId]);
+          const meta = singleMeta.get(campaignId);
+          if (meta) campaignMetaById.set(campaignId, meta);
+        } catch (singleError) {
+          console.warn(`[campaigns:meta] skip campaign ${campaignId}: ${singleError.message}`);
+        }
+      }
+    }
+  }
+
   return campaignMetaById;
 }
 
@@ -3134,6 +3171,68 @@ async function runScheduledDuplicatePauseForScope(account, config, dailyDate = t
   }
 }
 
+async function getShopeeHistoricalCampaignCandidatesForAuto(account, fbToken, currentCampaigns = [], dailyDate = todayStr()) {
+  if (!account?._id || !fbToken) return [];
+
+  const currentCampaignIds = new Set(
+    (currentCampaigns || [])
+      .map(campaign => getCampaignStableId(campaign))
+      .filter(Boolean)
+  );
+  const match = {
+    accountId: account._id,
+    date: { $gte: SHOPEE_PERFORMANCE_TOTAL_FROM_DATE, $lt: normalizeCampaignDate(dailyDate) }
+  };
+  if (currentCampaignIds.size) {
+    match.campaignId = { $nin: [...currentCampaignIds] };
+  }
+
+  const historicalRows = await Campaign.aggregate([
+    { $match: match },
+    { $sort: { date: -1, updatedAt: -1 } },
+    { $group: { _id: '$campaignId', campaign: { $first: '$$ROOT' } } },
+    { $replaceRoot: { newRoot: '$campaign' } }
+  ]);
+
+  if (!historicalRows.length) return [];
+
+  const campaignIds = historicalRows.map(row => getCampaignStableId(row)).filter(Boolean);
+  const campaignMetaById = await fetchCampaignMetaMapBestEffort(fbToken, campaignIds);
+
+  return historicalRows
+    .map(row => {
+      const campaignId = getCampaignStableId(row);
+      const meta = campaignMetaById.get(campaignId);
+      if (!campaignId || normalizeCampaignStatus(meta?.status) !== 'PAUSED') return null;
+
+      const dailyBudget = Number(meta.dailyBudget ?? row.dailyBudget ?? 0);
+      const lifetimeBudget = Number(meta.lifetimeBudget ?? row.lifetimeBudget ?? 0);
+      const createdTime = meta.createdTime || row.createdTime;
+
+      return {
+        ...row,
+        id: campaignId,
+        campaignId,
+        name: meta.name || row.name || '',
+        status: meta.status,
+        dailyBudget,
+        daily_budget: dailyBudget,
+        lifetimeBudget,
+        lifetime_budget: lifetimeBudget,
+        budgetType: meta.budgetType || row.budgetType || (lifetimeBudget > 0 ? 'LIFETIME' : 'DAILY'),
+        createdTime,
+        created_time: createdTime,
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        messages: 0,
+        costPerMessage: 0,
+        isHistoricalAutoCandidate: true
+      };
+    })
+    .filter(Boolean);
+}
+
 async function fetchShopeeAccountData(account) {
   const today = todayStr();
   let campaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
@@ -3317,7 +3416,7 @@ async function fetchAccountData(account) {
   };
 }
 
-async function runAutoControl(account) {
+async function runAutoControl(account, options = {}) {
   if (!isMongoReady()) return;
 
   try {
@@ -3349,11 +3448,18 @@ async function runAutoControl(account) {
       : (config?.autoRuleEndTime || '09:00');
 
     let campaignsToPause = [];
-    if (isWithinAutoRuleTimeWindow(ruleStart, ruleEnd)) {
-      const skuCounts = await getTodayOrderSkuCountsForAuto(account);
-      const shopeePerformanceTotals = isShopee ? await getShopeePerformanceTotalsForAuto(account, campaigns) : {};
-      campaignsToPause = campaigns
-        .filter(campaign => campaign.status === 'ACTIVE')
+    let campaignsToActivate = [];
+    const isAutoRuleTime = isWithinAutoRuleTimeWindow(ruleStart, ruleEnd);
+    const canReactivateShopeeAtMidnight = isShopee
+      && (options.allowShopeeReactivateAtMidnight || isVietnamTimeMinute(0, 0));
+    if (isAutoRuleTime || canReactivateShopeeAtMidnight) {
+      const skuCounts = isAutoRuleTime ? await getTodayOrderSkuCountsForAuto(account) : {};
+      const historicalShopeeCampaigns = canReactivateShopeeAtMidnight
+        ? await getShopeeHistoricalCampaignCandidatesForAuto(account, fbToken, campaigns, today)
+        : [];
+      const ruleCampaigns = isShopee ? [...campaigns, ...historicalShopeeCampaigns] : campaigns;
+      const shopeePerformanceTotals = isShopee ? await getShopeePerformanceTotalsForAuto(account, ruleCampaigns) : {};
+      const ruleCandidates = ruleCampaigns
         .map(campaign => {
           const { spend, messages, costPerMessage, clicks, costPerClick } = getCampaignRuleStats(campaign);
           const shopeeKey = normalizeShopeeSubIdKey(campaign.name);
@@ -3375,7 +3481,14 @@ async function runAutoControl(account) {
             skuCounts,
             shopeeCommission: ruleCommission
           });
-          return pauseReason ? {
+          const optimizationDecision = isShopee
+            ? getShopeeOptimizationDecision({
+              spend: ruleSpend,
+              commission: ruleCommission,
+              minSpendLimit: config?.autoPauseShopeeMinSpendLimit
+            })
+            : null;
+          return {
             campaign,
             spend,
             ruleSpend,
@@ -3386,16 +3499,32 @@ async function runAutoControl(account) {
             costPerClick,
             orderCount,
             costPerOrder,
-            pauseReason
-          } : null;
+            pauseReason,
+            optimizationDecision
+          };
         })
         .filter(Boolean);
+
+      campaignsToPause = isAutoRuleTime
+        ? ruleCandidates.filter(item =>
+          normalizeCampaignStatus(item.campaign.status) === 'ACTIVE' && item.pauseReason
+        )
+        : [];
+
+      campaignsToActivate = canReactivateShopeeAtMidnight
+        ? ruleCandidates.filter(item =>
+          normalizeCampaignStatus(item.campaign.status) === 'PAUSED'
+          && !item.pauseReason
+          && item.optimizationDecision?.hasEnoughSpend
+          && item.optimizationDecision.roi > SHOPEE_REACTIVATE_ROI_PERCENT
+        )
+        : [];
     } else {
       await addLog(
         account._id,
         account.name,
         'info',
-        `Ngoai khung gio auto-rule (${ruleStart}-${ruleEnd}), chi theo doi khong tat camp`
+        `Ngoai khung gio auto-rule (${ruleStart}-${ruleEnd}), chi theo doi khong tat/bat camp`
       );
     }
 
@@ -3490,6 +3619,42 @@ async function runAutoControl(account) {
       );
     }
 
+    if (campaignsToActivate.length > 0) {
+      for (const item of campaignsToActivate) {
+        const campaignGraphId = item.campaign.id || item.campaign.campaignId;
+        const roiText = Number(item.optimizationDecision?.roi || 0).toFixed(2);
+        await fbPost(fbToken, campaignGraphId, { status: 'ACTIVE' });
+        await upsertDailyCampaign(account._id, campaignGraphId, today, {
+          name: item.campaign.name || '',
+          status: 'ACTIVE',
+          dailyBudget: Number(item.campaign.dailyBudget ?? item.campaign.daily_budget ?? 0),
+          lifetimeBudget: Number(item.campaign.lifetimeBudget ?? item.campaign.lifetime_budget ?? 0),
+          budgetType: item.campaign.budgetType || (Number(item.campaign.lifetimeBudget ?? item.campaign.lifetime_budget ?? 0) > 0 ? 'LIFETIME' : 'DAILY'),
+          createdTime: item.campaign.createdTime || item.campaign.created_time,
+          spend: Number(item.campaign.isHistoricalAutoCandidate ? 0 : item.spend || 0),
+          impressions: Number(item.campaign.isHistoricalAutoCandidate ? 0 : item.campaign.impressions || 0),
+          clicks: Number(item.campaign.isHistoricalAutoCandidate ? 0 : item.clicks || 0),
+          messages: Number(item.campaign.isHistoricalAutoCandidate ? 0 : item.messages || 0),
+          costPerMessage: Number(item.campaign.isHistoricalAutoCandidate ? 0 : item.costPerMessage || 0),
+          metaOrders: Number(item.campaign.isHistoricalAutoCandidate ? 0 : item.campaign.metaOrders || 0),
+          isScheduled: Boolean(item.campaign.isScheduled)
+        });
+        await addLog(
+          account._id,
+          account.name,
+          'success',
+          `Shopee campaign tu bat lai: ${item.campaign.name} · ROI ${roiText}% > ${SHOPEE_REACTIVATE_ROI_PERCENT}% · tong tieu ${Math.round(item.ruleSpend || item.spend || 0).toLocaleString()}d · tong HH ${Math.round(item.ruleCommission || 0).toLocaleString()}d`
+        );
+      }
+
+      await addLog(
+        account._id,
+        account.name,
+        'success',
+        `Da bat lai ${campaignsToActivate.length} Shopee campaign co ROI > ${SHOPEE_REACTIVATE_ROI_PERCENT}%`
+      );
+    }
+
   } catch (error) {
     if (!isMongoReady()) return;
 
@@ -3517,6 +3682,7 @@ const scheduledDuplicateScopeRuns = {};
 const scheduledDuplicateScopeLastRunAt = {};
 let facebookTokenCronTask = null;
 let finalSpendCronTask = null;
+let shopeeReactivateCronTask = null;
 let todayCampaignSpendSyncTimer = null;
 let todayCampaignSpendSyncRunning = false;
 let backgroundOrderSyncRunning = false;
@@ -3752,7 +3918,7 @@ function isMongoReady() {
   return !isShuttingDown && mongoose.connection.readyState === 1;
 }
 
-async function runAutoControlSafely(account, source = 'auto') {
+async function runAutoControlSafely(account, source = 'auto', options = {}) {
   const accountId = String(account._id);
   if (!isMongoReady()) return;
   if (accountRuns[accountId]) return;
@@ -3760,7 +3926,7 @@ async function runAutoControlSafely(account, source = 'auto') {
 
   accountRuns[accountId] = true;
   try {
-    await runAutoControl(account);
+    await runAutoControl(account, options);
   } catch (error) {
     if (!isShuttingDown) {
       console.error(`${source} auto run failed for ${account.name}: ${error.message}`);
@@ -6532,6 +6698,30 @@ function startFinalSpendCron() {
   console.log(`Final spend cron scheduled: ${FINAL_SPEND_CRON} (${FINAL_SPEND_TIMEZONE})`);
   return task;
 }
+
+function startShopeeReactivateCron() {
+  if (!cron.validate(SHOPEE_REACTIVATE_CRON)) {
+    console.warn(`Invalid SHOPEE_REACTIVATE_CRON "${SHOPEE_REACTIVATE_CRON}", Shopee reactivate cron disabled`);
+    return null;
+  }
+
+  const task = cron.schedule(SHOPEE_REACTIVATE_CRON, async () => {
+    try {
+      if (!isMongoReady()) return;
+      const accounts = await Account.find({ autoEnabled: true, ...buildAccountProviderFilter('shopee') });
+      for (const account of accounts) {
+        await runAutoControlSafely(account, 'Shopee midnight reactivate', {
+          allowShopeeReactivateAtMidnight: true
+        });
+      }
+    } catch (error) {
+      console.error(`Shopee reactivate cron failed: ${error.message}`);
+    }
+  }, { timezone: FINAL_SPEND_TIMEZONE });
+
+  console.log(`Shopee reactivate cron scheduled: ${SHOPEE_REACTIVATE_CRON} (${FINAL_SPEND_TIMEZONE})`);
+  return task;
+}
 app.post('/api/campaigns/sync-history', async (req, res) => {
   try {
     const { fromDate, toDate, provider, accountId } = req.body;
@@ -8523,6 +8713,7 @@ mongoose.connect(MONGO_URI).then(() => {
 
     facebookTokenCronTask = startFacebookTokenCron();
     finalSpendCronTask = startFinalSpendCron();
+    shopeeReactivateCronTask = startShopeeReactivateCron();
     startTodayCampaignSpendSync();
     redisQueueAvailable = await checkRedisAvailable();
     initCampaignDuplicateQueue();
@@ -8597,6 +8788,9 @@ async function gracefulShutdown(signal) {
   }
   if (finalSpendCronTask) {
     finalSpendCronTask.stop();
+  }
+  if (shopeeReactivateCronTask) {
+    shopeeReactivateCronTask.stop();
   }
   if (todayCampaignSpendSyncTimer) {
     clearInterval(todayCampaignSpendSyncTimer);
