@@ -605,19 +605,25 @@ function requireGoogleOAuthConfig(req) {
   return config;
 }
 
-async function refreshGoogleAccessToken(user, req) {
+async function refreshGoogleAccessTokenWithConfig(user, config = {}) {
   if (!user?.googleRefreshToken) {
     throw new Error('Chua dang nhap Google hoac thieu refresh token');
   }
 
-  const { clientId, clientSecret } = requireGoogleOAuthConfig(req);
+  const clientId = String(config.clientId || '').trim();
+  const clientSecret = String(config.clientSecret || '').trim();
+  if (!clientId || !clientSecret) {
+    throw new Error('Chua cau hinh GOOGLE_CLIENT_ID va GOOGLE_CLIENT_SECRET trong .env');
+  }
+
   const response = await axios.post('https://oauth2.googleapis.com/token', new URLSearchParams({
     client_id: clientId,
     client_secret: clientSecret,
     refresh_token: user.googleRefreshToken,
     grant_type: 'refresh_token'
   }).toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: 30000
   });
 
   const tokenData = response.data || {};
@@ -632,8 +638,12 @@ async function refreshGoogleAccessToken(user, req) {
   return tokenData.access_token;
 }
 
-async function getGoogleAccessToken(req) {
-  const user = await User.findById(req.currentUser._id)
+async function refreshGoogleAccessToken(user, req) {
+  return refreshGoogleAccessTokenWithConfig(user, requireGoogleOAuthConfig(req));
+}
+
+async function getGoogleAccessTokenForUser(userId, config = {}) {
+  const user = await User.findById(userId)
     .select('googleAccessToken googleRefreshToken googleTokenExpiresAt googleTokenScope')
     .lean();
   if (!user) throw new Error('Tai khoan khong hop le');
@@ -643,7 +653,11 @@ async function getGoogleAccessToken(req) {
     return user.googleAccessToken;
   }
 
-  return refreshGoogleAccessToken(user, req);
+  return refreshGoogleAccessTokenWithConfig(user, config);
+}
+
+async function getGoogleAccessToken(req) {
+  return getGoogleAccessTokenForUser(req.currentUser._id, requireGoogleOAuthConfig(req));
 }
 
 function getBearerToken(req) {
@@ -5886,7 +5900,7 @@ function toDataPurchaseOrderSyncJobPayload(job = {}) {
   };
 }
 
-async function runDataPurchaseOrderSyncJob(jobId, { accessToken = '' } = {}) {
+async function runDataPurchaseOrderSyncJob(jobId, { accessToken = '', userId = '', googleConfig = null } = {}) {
   try {
     const job = dataPurchaseOrderSyncJobs.get(jobId);
     if (!job) return;
@@ -5897,7 +5911,25 @@ async function runDataPurchaseOrderSyncJob(jobId, { accessToken = '' } = {}) {
       message: 'Dang dong bo DATA dat hang'
     });
 
-    const result = await syncDataPurchaseOrdersFromSheet({ accessToken });
+    let token = accessToken;
+    if (!token && userId && googleConfig) {
+      setDataPurchaseOrderSyncJob(jobId, {
+        percent: 5,
+        message: 'Dang lay quyen Google Sheet'
+      });
+      try {
+        token = await getGoogleAccessTokenForUser(userId, googleConfig);
+      } catch {
+        token = '';
+      }
+    }
+
+    setDataPurchaseOrderSyncJob(jobId, {
+      percent: 10,
+      message: 'Dang dong bo DATA dat hang'
+    });
+
+    const result = await syncDataPurchaseOrdersFromSheet({ accessToken: token });
     setDataPurchaseOrderSyncJob(jobId, {
       state: 'completed',
       percent: 100,
@@ -7242,13 +7274,8 @@ app.post('/api/data-purchase-orders/sync', async (req, res) => {
       activeDataPurchaseOrderSyncJobId = '';
     }
 
-    let accessToken = '';
-
-    try {
-      accessToken = await getGoogleAccessToken(req);
-    } catch {
-      accessToken = '';
-    }
+    const userId = String(req.currentUser?._id || '');
+    const googleConfig = getGoogleOAuthConfig(req);
 
     const jobId = createDataPurchaseOrderSyncJobId();
     const now = new Date().toISOString();
@@ -7265,7 +7292,7 @@ app.post('/api/data-purchase-orders/sync', async (req, res) => {
     activeDataPurchaseOrderSyncJobId = jobId;
 
     setImmediate(() => {
-      runDataPurchaseOrderSyncJob(jobId, { accessToken });
+      runDataPurchaseOrderSyncJob(jobId, { userId, googleConfig });
     });
 
     res.status(202).json({

@@ -427,6 +427,7 @@ function rowMatchesSearch(row, search) {
   return normalizeText([
     row.orderId,
     row.trackingCode,
+    row.supplementalTrackingCode,
     row.statusLabel,
     row.receivedQuantity,
     row.skuManual,
@@ -453,7 +454,7 @@ function buildSummary(rows) {
 
   rows.forEach(row => {
     totalProductQuantity += parseNumber(row.quantity);
-    if (row.trackingCode) trackingCount += 1;
+    if (row.trackingCode || row.supplementalTrackingCode) trackingCount += 1;
     if (statusCounts[row.status] !== undefined) statusCounts[row.status] += 1;
   });
 
@@ -809,6 +810,7 @@ function mapPurchaseOrderApiRow(row = {}, manualByOrderId = new Map()) {
   const manual = manualByOrderId.get(row.orderId) || {};
   const status = normalizeStatus(manual.status);
   const statusMeta = STATUS_BY_VALUE[status] || null;
+  const supplementalTrackingCode = toText(manual.supplementalTrackingCode);
   const orderDate = getOrderDateTime(
     row.orderDateTime,
     row.orderDateRawCol4,
@@ -824,6 +826,7 @@ function mapPurchaseOrderApiRow(row = {}, manualByOrderId = new Map()) {
     statusLabel: statusMeta?.label || '',
     statusClass: statusMeta?.className || '',
     receivedQuantity: toText(manual.receivedQuantity),
+    supplementalTrackingCode,
     skuManual: toText(manual.skuManual),
     productAttribute: getFirstNonUrl(row.productAttribute, row.productAttributeFallback),
     quantity: getFirstText(row.quantity, row.quantityFallback),
@@ -849,10 +852,15 @@ function buildPurchaseOrderSummaryFromGroups(groupedRows = [], statusByOrderId =
 
   groupedRows.forEach(row => {
     totalProductQuantity += parseNumber(getFirstText(row.quantity, row.quantityFallback));
-    if (getLastValidTracking(row.trackingCandidates) || getLastValidTracking(row.fallbackTrackingCandidates)) {
+    const manual = statusByOrderId.get(row.orderId);
+    if (
+      getLastValidTracking(row.trackingCandidates)
+      || getLastValidTracking(row.fallbackTrackingCandidates)
+      || toText(manual?.supplementalTrackingCode)
+    ) {
       trackingCount += 1;
     }
-    const status = normalizeStatus(statusByOrderId.get(row.orderId)?.status);
+    const status = normalizeStatus(manual?.status);
     if (statusCounts[status] !== undefined) statusCounts[status] += 1;
   });
 
@@ -921,8 +929,8 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
     const pageRows = result.pageRows || [];
     const summaryRows = result.summaryRows || [];
     const total = Number(result.totalRows?.[0]?.count || summaryRows.length);
-    const pageManualRows = await findManualPurchaseOrderRows(pageRows.map(row => row.orderId), 'orderId status receivedQuantity skuManual');
-    const summaryManualRows = await findManualPurchaseOrderRows(summaryRows.map(row => row.orderId), 'orderId status');
+    const pageManualRows = await findManualPurchaseOrderRows(pageRows.map(row => row.orderId), 'orderId status receivedQuantity supplementalTrackingCode skuManual');
+    const summaryManualRows = await findManualPurchaseOrderRows(summaryRows.map(row => row.orderId), 'orderId status supplementalTrackingCode');
     const pageManualByOrderId = new Map(pageManualRows.map(row => [row.orderId, row]));
     const summaryManualByOrderId = new Map(summaryManualRows.map(row => [row.orderId, row]));
 
@@ -976,6 +984,9 @@ async function updatePurchaseOrder(orderId, patch = {}) {
   if (Object.prototype.hasOwnProperty.call(patch, 'receivedQuantity')) {
     update.receivedQuantity = toText(patch.receivedQuantity).slice(0, 200);
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'supplementalTrackingCode')) {
+    update.supplementalTrackingCode = toText(patch.supplementalTrackingCode).slice(0, 2000);
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'skuManual')) {
     update.skuManual = toText(patch.skuManual).slice(0, 2000);
   }
@@ -1001,6 +1012,7 @@ async function updatePurchaseOrder(orderId, patch = {}) {
     orderId: doc.orderId,
     status: doc.status || '',
     receivedQuantity: doc.receivedQuantity || '',
+    supplementalTrackingCode: doc.supplementalTrackingCode || '',
     skuManual: doc.skuManual || '',
     updatedAt: doc.updatedAt
   };

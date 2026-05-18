@@ -160,6 +160,18 @@ export default function PurchaseOrders() {
     )));
   };
 
+  const adjustSummaryTracking = (row, previousSupplementalValue, nextSupplementalValue) => {
+    const baseTracking = Boolean(String(row?.trackingCode || '').trim());
+    const hadTracking = baseTracking || Boolean(String(previousSupplementalValue || '').trim());
+    const hasTracking = baseTracking || Boolean(String(nextSupplementalValue || '').trim());
+    if (hadTracking === hasTracking) return;
+
+    setSummary(current => ({
+      ...current,
+      trackingCount: Math.max(0, Number(current.trackingCount || 0) + (hasTracking ? 1 : -1))
+    }));
+  };
+
   const adjustSummaryStatus = (previousStatus, nextStatus) => {
     const summaryKeyByStatus = {
       ve_du: 'receivedFull',
@@ -406,6 +418,7 @@ export default function PurchaseOrders() {
                 <tr>
                   <th>Mã Đơn Hàng</th>
                   <th>Mã vận đơn hàng về</th>
+                  <th>Mã vđ bù</th>
                   <th>Trạng Thái</th>
                   <th>Số lượng hàng về</th>
                   <th>Mã SP</th>
@@ -425,6 +438,21 @@ export default function PurchaseOrders() {
                     <tr key={row.orderId}>
                       <td className="purchase-order-id">{row.orderId}</td>
                       <td>{row.trackingCode || '-'}</td>
+                      <td>
+                        <textarea
+                          className="purchase-supplemental-tracking-input"
+                          value={row.supplementalTrackingCode || ''}
+                          onFocus={event => {
+                            event.currentTarget.dataset.previousValue = row.supplementalTrackingCode || '';
+                          }}
+                          onChange={event => updateLocalRow(row.orderId, { supplementalTrackingCode: event.target.value })}
+                          onBlur={event => {
+                            const nextValue = event.target.value;
+                            adjustSummaryTracking(row, event.currentTarget.dataset.previousValue || '', nextValue);
+                            saveRow(row.orderId, { supplementalTrackingCode: nextValue });
+                          }}
+                        />
+                      </td>
                       <td>
                         <select
                           className={`purchase-status-select ${row.statusClass || ''}`}

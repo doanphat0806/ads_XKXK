@@ -6,6 +6,7 @@ const PurchaseOrderSchema = new mongoose.Schema({
   orderId: { type: String, required: true },
   status: { type: String, default: '' },
   receivedQuantity: { type: String, default: '' },
+  supplementalTrackingCode: { type: String, default: '' },
   skuManual: { type: String, default: '' },
   note: { type: String, default: '' },
   createdAt: { type: Date, default: Date.now },
