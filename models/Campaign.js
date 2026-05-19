@@ -4,6 +4,7 @@ const CampaignSchema = new mongoose.Schema({
   accountId: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', required: true },
   campaignId: { type: String, required: true },
   name: { type: String },
+  adName: { type: String, default: '' },
   status: { type: String },
   dailyBudget: { type: Number, default: 0 },
   lifetimeBudget: { type: Number, default: 0 },

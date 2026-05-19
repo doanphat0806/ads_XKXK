@@ -438,6 +438,7 @@ export default function CloneCampaigns() {
                       </td>
                       <td>
                         <div style={{ fontWeight: 600, marginBottom: '2px' }}>{campaign.name}</div>
+                        {campaign.adName && <div style={{ fontSize: '11px', color: 'var(--muted2)' }}>Ad: {campaign.adName}</div>}
                         <div style={{ fontSize: '11px', color: 'var(--muted2)' }}>{campaign.campaignId}</div>
                       </td>
                       <td>

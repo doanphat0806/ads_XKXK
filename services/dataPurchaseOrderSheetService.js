@@ -113,7 +113,7 @@ function looksLikeDateTime(value = '') {
 }
 
 function getOrderDateTime(fields = {}) {
-  const candidates = [fields.orderDateTime, fields.col4, fields.col5, fields.col25];
+  const candidates = [fields.orderDateTime, fields.col4];
   const dateValue = candidates.find(looksLikeDateTime);
   return toText(dateValue || '');
 }
@@ -176,6 +176,16 @@ function buildHeaders(headerRow = [], shape = 'selected') {
   }));
 }
 
+function looksLikeDataRow(row = []) {
+  return row.some(cell => /^https?:\/\//i.test(toText(cell)))
+    || row.some(cell => /^\d{6}-\d+/i.test(toText(cell)))
+    || row.some(cell => looksLikeDateTime(cell));
+}
+
+function headersLookLikeData(headers = []) {
+  return looksLikeDataRow((headers || []).map(header => header?.label || ''));
+}
+
 function normalizeHeader(value = '') {
   return toText(value)
     .normalize('NFD')
@@ -204,13 +214,17 @@ function getValueByShape(row, column, selectedIndex, shape) {
 }
 
 function mapRows(rows = [], shape = 'selected') {
-  const headerRow = rows[0] || [];
+  const firstRow = rows[0] || [];
+  const firstRowIsData = looksLikeDataRow(firstRow);
+  const headerRow = firstRowIsData ? [] : firstRow;
+  const dataRows = rows.slice(firstRowIsData ? 0 : 1);
+  const rowNumberOffset = firstRowIsData ? 1 : 2;
   const headers = buildHeaders(headerRow, shape);
-  const specIndex = shape === 'raw' ? findHeaderIndex(headerRow, ['规格']) : -1;
-  const productQuantityIndex = shape === 'raw' ? findHeaderIndex(headerRow, ['数量']) : -1;
-  const logisticsTrackingCodeIndex = shape === 'raw' ? findHeaderIndex(headerRow, ['物流单号']) : -1;
-  const orderDateTimeIndex = shape === 'raw' ? findHeaderIndex(headerRow, ['下单时间']) : -1;
-  const totalAmountIndex = shape === 'raw' ? findHeaderIndex(headerRow, [
+  const specIndex = findHeaderIndex(headerRow, ['规格']);
+  const productQuantityIndex = findHeaderIndex(headerRow, ['数量']);
+  const logisticsTrackingCodeIndex = findHeaderIndex(headerRow, ['物流单号']);
+  const orderDateTimeIndex = findHeaderIndex(headerRow, ['下单时间']);
+  const totalAmountIndex = findHeaderIndex(headerRow, [
     '总金额',
     '总价',
     '订单金额',
@@ -219,10 +233,10 @@ function mapRows(rows = [], shape = 'selected') {
     '金额',
     '合计',
     '商品总价',
-    '总计'
-  ]) : -1;
-  const mappedRows = rows
-    .slice(1)
+    '总计',
+    '单价'
+  ]);
+  const mappedRows = dataRows
     .map((row, index) => {
       const values = SELECTED_COLUMNS.map((column, selectedIndex) => ({
         key: column.key,
@@ -232,7 +246,7 @@ function mapRows(rows = [], shape = 'selected') {
         acc[column.key] = getValueByShape(row, column, selectedIndex, shape);
         return acc;
       }, {});
-      fields.spec = specIndex >= 0 ? toText(row[specIndex]) : fields.col7;
+      fields.spec = specIndex >= 0 ? toText(row[specIndex]) : toText(fields.col13 || fields.col7);
       fields.productQuantity = productQuantityIndex >= 0 ? toText(row[productQuantityIndex]) : fields.col15;
       fields.logisticsTrackingCode = normalizeLogisticsTrackingCode(
         logisticsTrackingCodeIndex >= 0 ? row[logisticsTrackingCodeIndex] : fields.col25
@@ -243,7 +257,7 @@ function mapRows(rows = [], shape = 'selected') {
       if (!Object.values(fields).some(Boolean)) return null;
 
       return {
-        rowNumber: index + 2,
+        rowNumber: index + rowNumberOffset,
         values,
         fields,
         searchText: normalizeSearch(Object.values(fields).join(' ')),
@@ -261,7 +275,7 @@ function mapRows(rows = [], shape = 'selected') {
     })
     .filter(Boolean);
 
-  return { headers, rows: mappedRows };
+  return { headers, rows: mappedRows, hasHeader: !firstRowIsData };
 }
 
 function detectCsvShape(rows = []) {
@@ -494,10 +508,16 @@ async function importDataPurchaseOrdersFromCsvText(csvText = '') {
 
   const shape = detectCsvShape(rows);
   const result = mapRows(rows, shape);
+  let headers = result.headers;
+  if (!result.hasHeader) {
+    const meta = await getDataPurchaseOrderMeta();
+    headers = headersLookLikeData(meta.headers) ? DEFAULT_HEADERS : meta.headers;
+  }
+
   return persistDataPurchaseOrderRows({
-    headers: result.headers,
+    headers,
     rows: result.rows,
-    sourceType: shape === 'raw' ? 'csv_raw' : 'csv_selected',
+    sourceType: `${shape === 'raw' ? 'csv_raw' : 'csv_selected'}${result.hasHeader ? '' : '_no_header'}`,
     mode: 'append'
   });
 }

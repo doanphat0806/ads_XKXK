@@ -973,6 +973,24 @@ function buildAdName(code, prefix = DEFAULT_AD_NAME_PREFIX, status = 'Test') {
   return `${String(prefix || DEFAULT_AD_NAME_PREFIX).trim()}__${productLabel}__${normalizeAdNameStatus(status)}`;
 }
 
+function combineAdNames(values = []) {
+  const names = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const rawNames = typeof value === 'string'
+      ? value.split(/\s+\|\s+/)
+      : [value?.name || ''];
+    for (const rawName of rawNames) {
+      const name = String(rawName || '').replace(/\s+/g, ' ').trim();
+      const key = name.toLowerCase();
+      if (!name || seen.has(key)) continue;
+      seen.add(key);
+      names.push(name);
+    }
+  }
+  return names.join(' | ');
+}
+
 function normalizeBarcode(value) {
   return String(value || '').replace(/\s+/g, '').trim();
 }
@@ -2475,6 +2493,15 @@ async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toD
       if (!fbToken) return [];
 
       const insights = await fetchAccountInsightsInRange(account, fromDate, toDate);
+      let adNamesByDateCampaign = new Map();
+      let adNamesByCampaignId = new Map();
+      try {
+        const adNameMap = await fetchAccountAdNameMapInRange(account, fromDate, toDate);
+        adNamesByDateCampaign = adNameMap.byDateCampaign;
+        adNamesByCampaignId = adNameMap.byCampaign;
+      } catch (error) {
+        console.warn(`[campaigns:adnames] skip ${account?.name || account?._id} ${fromDate}..${toDate}: ${error.message}`);
+      }
       const metricsByCampaignId = new Map();
       const dailyMetricRows = [];
 
@@ -2489,6 +2516,7 @@ async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toD
           metricsByCampaignId.set(campaignId, {
             campaignId,
             name: insight.campaign_name || '',
+            adName: '',
             spend: 0,
             impressions: 0,
             clicks: 0,
@@ -2499,9 +2527,12 @@ async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toD
         }
 
         const aggregate = metricsByCampaignId.get(campaignId);
+        const insightDate = normalizeCampaignDate(insight.date_start || fromDate);
+        const adName = adNamesByDateCampaign.get(`${insightDate}:${campaignId}`) || adNamesByCampaignId.get(campaignId) || '';
         if (insight.campaign_name) aggregate.name = insight.campaign_name;
+        if (adName) aggregate.adName = combineAdNames([aggregate.adName, adName]);
         mergeMetaInsightMetrics(aggregate, metrics);
-        dailyMetricRows.push({ campaignId, insight, metrics });
+        dailyMetricRows.push({ campaignId, insight, metrics, adName });
       }
 
       if (!metricsByCampaignId.size) return [];
@@ -2517,7 +2548,7 @@ async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toD
         for (const dailyRow of dailyMetricRows) {
           const dailyDate = normalizeCampaignDate(dailyRow.insight.date_start || fromDate);
           const meta = campaignMetaById.get(dailyRow.campaignId) || {};
-          await upsertDailyCampaign(account._id, dailyRow.campaignId, dailyDate, {
+          const campaignUpdate = {
             ...meta,
             name: dailyRow.insight.campaign_name || meta.name || '',
             spend: dailyRow.metrics.spend,
@@ -2526,7 +2557,9 @@ async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toD
             messages: dailyRow.metrics.messages,
             costPerMessage: dailyRow.metrics.costPerMessage,
             metaOrders: dailyRow.metrics.metaOrders
-          });
+          };
+          if (dailyRow.adName) campaignUpdate.adName = dailyRow.adName;
+          await upsertDailyCampaign(account._id, dailyRow.campaignId, dailyDate, campaignUpdate);
         }
       }
 
@@ -2536,6 +2569,7 @@ async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toD
           campaignId: metricRow.campaignId,
           accountId: includeAccountInfo ? buildReportAccountInfo(account) : account._id,
           name: metricRow.name || meta.name || '',
+          adName: metricRow.adName || '',
           status: meta.status || '',
           dailyBudget: Number(meta.dailyBudget || 0),
           lifetimeBudget: Number(meta.lifetimeBudget || 0),
@@ -2581,6 +2615,7 @@ function applyMetaCampaignMetricRows(baseRows = [], metaRows = []) {
     if (existing) {
       Object.assign(existing, {
         name: metaRow.name || existing.name,
+        adName: metaRow.adName || existing.adName || '',
         status: metaRow.status || existing.status,
         dailyBudget: Number(metaRow.dailyBudget || 0) > 0 ? metaRow.dailyBudget : existing.dailyBudget,
         lifetimeBudget: Number(metaRow.lifetimeBudget || 0) > 0 ? metaRow.lifetimeBudget : existing.lifetimeBudget,
@@ -2700,6 +2735,7 @@ function mergeCampaignReportRows(baseRows = [], extraRows = []) {
       const updated = {
         ...existing,
         name: row.name || existing.name,
+        adName: row.adName || existing.adName || '',
         status: row.status || existing.status,
         dailyBudget: Number(row.dailyBudget || 0) > 0 ? row.dailyBudget : existing.dailyBudget,
         lifetimeBudget: Number(row.lifetimeBudget || 0) > 0 ? row.lifetimeBudget : existing.lifetimeBudget,
@@ -2745,6 +2781,7 @@ function mapLiveCampaignToReportRow(campaign, account, includeAccountInfo = fals
         }
       : account._id,
     name: campaign.name || '',
+    adName: campaign.adName || '',
     status: campaign.effective_status || campaign.status || '',
     dailyBudget: budgetType === 'DAILY' ? dailyBudget : 0,
     lifetimeBudget: budgetType === 'LIFETIME' ? lifetimeBudget : 0,
@@ -2788,7 +2825,7 @@ async function fetchScheduledCampaignRowsFromDb(accountIds = [], fromDate, toDat
     isScheduled: true,
     date: scheduledDateFilter
   })
-    .select('campaignId accountId name status dailyBudget lifetimeBudget budgetType createdTime scheduledStartTime scheduledStartTimeUtc scheduledStartTimeDisplay')
+    .select('campaignId accountId name adName status dailyBudget lifetimeBudget budgetType createdTime scheduledStartTime scheduledStartTimeUtc scheduledStartTimeDisplay')
     .sort({ date: 1, scheduledStartTimeUtc: 1, updatedAt: -1, _id: -1 })
     .lean();
 
@@ -2824,6 +2861,7 @@ async function fetchScheduledCampaignRowsFromDb(accountIds = [], fromDate, toDat
           }
         : row.accountId,
       name: row.name || '',
+      adName: row.adName || '',
       status: row.status || 'SCHEDULED',
       dailyBudget: Number(row.dailyBudget || 0),
       lifetimeBudget: Number(row.lifetimeBudget || 0),
@@ -3270,6 +3308,13 @@ async function fetchShopeeAccountData(account) {
   const { fbToken } = await getEffectiveSecrets(account);
   if (fbToken) {
     const insights = await fetchAccountInsightsInRange(account, today, today);
+    let adNamesByDateCampaign = new Map();
+    try {
+      const adNameMap = await fetchAccountAdNameMapInRange(account, today, today);
+      adNamesByDateCampaign = adNameMap.byDateCampaign;
+    } catch (error) {
+      console.warn(`[campaigns:adnames] skip ${account?.name || account?._id} ${today}: ${error.message}`);
+    }
     const metricInsights = [];
     const campaignIds = new Set();
     for (const insight of insights) {
@@ -3287,7 +3332,8 @@ async function fetchShopeeAccountData(account) {
     for (const insight of metricInsights) {
       const campaignId = String(insight.campaign_id);
       const meta = campaignMetaById.get(campaignId) || {};
-      await upsertDailyCampaign(account._id, campaignId, today, {
+      const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || '';
+      const campaignUpdate = {
         ...meta,
         name: insight.campaign_name,
         spend: insight.spend,
@@ -3295,7 +3341,10 @@ async function fetchShopeeAccountData(account) {
         clicks: insight.clicks,
         messages: 0,
         costPerMessage: 0
-      });
+      };
+      if (adName) campaignUpdate.adName = adName;
+
+      await upsertDailyCampaign(account._id, campaignId, today, campaignUpdate);
     }
     campaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
   }
@@ -3313,6 +3362,13 @@ async function fetchAccountData(account) {
 
   const existingCampaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
   const todayInsights = await fetchAccountInsightsInRange(account, today, today);
+  let adNamesByDateCampaign = new Map();
+  try {
+    const adNameMap = await fetchAccountAdNameMapInRange(account, today, today);
+    adNamesByDateCampaign = adNameMap.byDateCampaign;
+  } catch (error) {
+    console.warn(`[campaigns:adnames] skip ${account?.name || account?._id} ${today}: ${error.message}`);
+  }
   const seenCampaignIds = new Set();
   const metricInsights = [];
 
@@ -3348,8 +3404,9 @@ async function fetchAccountData(account) {
     insightTotalMessages += messages;
     const meta = campaignMetaById.get(campaignId) || {};
     const existingCampaign = existingCampaigns.find(campaign => String(campaign.campaignId || '').trim() === campaignId) || {};
+    const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || '';
 
-    await upsertDailyCampaign(account._id, campaignId, today, {
+    const campaignUpdate = {
       ...meta,
       name: insight.campaign_name,
       spend,
@@ -3365,11 +3422,15 @@ async function fetchAccountData(account) {
       scheduledEndTime: existingCampaign.scheduledEndTime || '',
       scheduledEndTimeUtc: existingCampaign.scheduledEndTimeUtc,
       scheduledEndTimeDisplay: existingCampaign.scheduledEndTimeDisplay || ''
-    });
+    };
+    if (adName) campaignUpdate.adName = adName;
+
+    await upsertDailyCampaign(account._id, campaignId, today, campaignUpdate);
 
     campaigns.push({
       id: campaignId,
       name: insight.campaign_name || meta.name,
+      adName: adName || existingCampaign.adName || '',
       status: meta.status,
       daily_budget: meta.dailyBudget,
       lifetime_budget: meta.lifetimeBudget,
@@ -3396,8 +3457,10 @@ async function fetchAccountData(account) {
     if (!campaignId || seenCampaignIds.has(campaignId)) continue;
 
     const meta = campaignMetaById.get(campaignId) || {};
+    const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || storedCampaign.adName || '';
     await upsertDailyCampaign(account._id, campaignId, today, {
       ...meta,
+      ...(adName ? { adName } : {}),
       spend: Number(storedCampaign.spend || 0),
       impressions: Number(storedCampaign.impressions || 0),
       clicks: Number(storedCampaign.clicks || 0),
@@ -3416,6 +3479,7 @@ async function fetchAccountData(account) {
     campaigns.push({
       id: campaignId,
       name: meta.name || storedCampaign.name,
+      adName,
       status: meta.status || storedCampaign.status,
       daily_budget: Number(meta.dailyBudget ?? storedCampaign.dailyBudget ?? 0),
       lifetime_budget: Number(meta.lifetimeBudget ?? storedCampaign.lifetimeBudget ?? 0),
@@ -5510,9 +5574,11 @@ async function processCampaignDuplicateExactRequest(body = {}, onProgress = null
       for (let index = 0; index < copyCount; index += 1) {
         const copyResult = await duplicateCampaignExactQueued(fbToken, campaign, copyOptions);
         const copiedCampaignId = copyResult.copiedCampaignId;
+        const copiedAdName = combineAdNames(copyResult.copiedAds) || campaign.adName || '';
 
         await upsertDailyCampaign(accountIdValue, copiedCampaignId, scheduledCampaignDate, {
           name: copyResult.copiedCampaignName || campaign.name || campaign.campaignId,
+          adName: copiedAdName,
           status: 'ACTIVE',
           dailyBudget: campaign.dailyBudget || 0,
           lifetimeBudget: campaign.lifetimeBudget || 0,
@@ -5533,6 +5599,7 @@ async function processCampaignDuplicateExactRequest(body = {}, onProgress = null
           sourceName: campaign.name || '',
           name: copyResult.copiedCampaignName || campaign.name || '',
           copiedCampaignName: copyResult.copiedCampaignName || campaign.name || '',
+          adName: copiedAdName,
           copiedCampaignStatus: 'ACTIVE',
           accountId: String(accountIdValue),
           accountName: account.name || '',
@@ -5841,6 +5908,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
 
         await upsertDailyCampaign(account._id, campaign.id, campaignDate, {
           name: baseName,
+          adName: finalAdName,
           status: 'ACTIVE',
           dailyBudget,
           budgetType: 'DAILY',
@@ -5991,6 +6059,7 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           campaignId: { $first: '$campaignId' },
           accountId: { $first: '$accountId' },
           name: { $first: '$name' },
+          adName: { $max: '$adName' },
           status: { $last: '$status' },
           dailyBudget: { $last: '$dailyBudget' },
           lifetimeBudget: { $last: '$lifetimeBudget' },
@@ -6010,6 +6079,7 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           campaignId: 1,
           accountId: 1,
           name: 1,
+          adName: 1,
           status: 1,
           dailyBudget: 1,
           lifetimeBudget: 1,
@@ -6111,6 +6181,7 @@ app.get('/api/campaigns/today', async (req, res) => {
           campaignId: { $first: '$campaignId' },
           accountId: { $first: '$accountId' },
           name: { $first: '$name' },
+          adName: { $max: '$adName' },
           status: { $last: '$status' },
           dailyBudget: { $last: '$dailyBudget' },
           lifetimeBudget: { $last: '$lifetimeBudget' },
@@ -6144,6 +6215,7 @@ app.get('/api/campaigns/today', async (req, res) => {
             provider: '$accountInfo.provider'
           },
           name: 1,
+          adName: 1,
           status: 1,
           dailyBudget: 1,
           lifetimeBudget: 1,
@@ -6230,9 +6302,48 @@ async function fetchAccountInsightsInRange(account, fromDate, toDate) {
   return items;
 }
 
+async function fetchAccountAdNameMapInRange(account, fromDate, toDate) {
+  const { fbToken } = await getEffectiveSecrets(account);
+  if (!fbToken) throw new Error('Thieu Facebook Access Token');
+
+  const acctId = account.adAccountId.startsWith('act_')
+    ? account.adAccountId
+    : `act_${account.adAccountId}`;
+
+  const { items } = await fetchAllFbEdge(fbToken, `${acctId}/insights`, {
+    fields: 'campaign_id,ad_id,ad_name',
+    time_range: JSON.stringify({ since: fromDate, until: toDate }),
+    level: 'ad',
+    limit: 500,
+    time_increment: 1
+  });
+
+  const byDateCampaign = new Map();
+  const byCampaign = new Map();
+  for (const row of items) {
+    const campaignId = String(row?.campaign_id || '').trim();
+    const date = String(row?.date_start || fromDate || '').trim();
+    const adName = String(row?.ad_name || '').replace(/\s+/g, ' ').trim();
+    if (!campaignId || !date || !adName) continue;
+
+    const dateCampaignKey = `${normalizeCampaignDate(date)}:${campaignId}`;
+    byDateCampaign.set(dateCampaignKey, combineAdNames([byDateCampaign.get(dateCampaignKey), adName]));
+    byCampaign.set(campaignId, combineAdNames([byCampaign.get(campaignId), adName]));
+  }
+
+  return { byDateCampaign, byCampaign };
+}
+
 async function syncAccountHistoricalData(account, fromDate, toDate, options = {}) {
   const insights = await fetchAccountInsightsInRange(account, fromDate, toDate);
   const isShopee = normalizeProvider(account?.provider) === 'shopee';
+  let adNamesByDateCampaign = new Map();
+  try {
+    const adNameMap = await fetchAccountAdNameMapInRange(account, fromDate, toDate);
+    adNamesByDateCampaign = adNameMap.byDateCampaign;
+  } catch (error) {
+    console.warn(`[campaigns:adnames] skip ${account?.name || account?._id} ${fromDate}..${toDate}: ${error.message}`);
+  }
   let count = 0;
   const seenByDate = new Map();
 
@@ -6249,8 +6360,9 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
     const messages = isShopee ? 0 : parseInt(msgAction?.value || 0, 10);
     const costPerMessage = isShopee ? 0 : getMetaCostPerMessageFromInsight(insight);
     const metaOrders = isShopee ? 0 : getMetaOrdersFromInsight(insight);
+    const adName = adNamesByDateCampaign.get(`${normalizeCampaignDate(date)}:${String(insight.campaign_id).trim()}`) || '';
 
-    await upsertDailyCampaign(account._id, insight.campaign_id, date, {
+    const campaignUpdate = {
       name: insight.campaign_name,
       spend,
       impressions,
@@ -6258,7 +6370,10 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
       messages,
       costPerMessage,
       metaOrders
-    });
+    };
+    if (adName) campaignUpdate.adName = adName;
+
+    await upsertDailyCampaign(account._id, insight.campaign_id, date, campaignUpdate);
     count++;
   }
 
@@ -7165,6 +7280,7 @@ async function importCampaignsFromCsvText(req, csvText = '', options = {}) {
     const date = parseCsvCampaignDate(getCsvCell(row, columnIndexes.dates) || getCsvCell(row, columnIndexes.endDates));
     const campaignName = getCsvCell(row, columnIndexes.campaignNames);
     const campaignId = getCsvCell(row, columnIndexes.campaignIds) || campaignName;
+    const adName = getCsvCell(row, columnIndexes.adNames);
     const account = resolveCsvCampaignAccount(row, columnIndexes, accountsById, accountsByAdId, accountsByName, fallbackAccount);
 
     if (!date || !campaignId || !account) {
@@ -7192,6 +7308,7 @@ async function importCampaignsFromCsvText(req, csvText = '', options = {}) {
       date,
       campaignId,
       name: campaignName || campaignId,
+      adName: adName || '',
       status: getCsvCell(row, columnIndexes.statuses),
       spend: 0,
       messages: 0,
@@ -7209,6 +7326,7 @@ async function importCampaignsFromCsvText(req, csvText = '', options = {}) {
     aggregate.impressions += impressions;
     aggregate.metaOrders += metaOrders;
     if (campaignName && !aggregate.name) aggregate.name = campaignName;
+    if (adName) aggregate.adName = combineAdNames([aggregate.adName, adName]);
     if (costPerMessage > 0 && messages > 0) {
       aggregate.costPerMessageWeightedTotal += costPerMessage * messages;
       aggregate.costPerMessageWeight += messages;
@@ -7221,7 +7339,7 @@ async function importCampaignsFromCsvText(req, csvText = '', options = {}) {
       ? aggregate.costPerMessageWeightedTotal / aggregate.costPerMessageWeight
       : (aggregate.messages > 0 ? aggregate.spend / aggregate.messages : 0);
 
-    await upsertDailyCampaign(aggregate.account._id, aggregate.campaignId, aggregate.date, {
+    const campaignUpdate = {
       name: aggregate.name || aggregate.campaignId,
       status: aggregate.status,
       spend: aggregate.spend,
@@ -7230,7 +7348,10 @@ async function importCampaignsFromCsvText(req, csvText = '', options = {}) {
       clicks: aggregate.clicks,
       impressions: aggregate.impressions,
       metaOrders: aggregate.metaOrders
-    });
+    };
+    if (aggregate.adName) campaignUpdate.adName = aggregate.adName;
+
+    await upsertDailyCampaign(aggregate.account._id, aggregate.campaignId, aggregate.date, campaignUpdate);
 
     imported += 1;
   }
@@ -7317,6 +7438,7 @@ app.get('/api/reports/export-spending', async (req, res) => {
       'Ten TKQC': c.accountId?.name || 'N/A',
       'ID Campaign': c.campaignId,
       'Ten Campaign': c.name,
+      'Ten quang cao': c.adName || '',
       'Chi tieu': c.spend,
       'Tin nhan': c.messages,
       'Gia/TN': c.costPerMessage,

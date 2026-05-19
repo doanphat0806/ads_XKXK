@@ -262,9 +262,11 @@ export default function Campaigns() {
     if (normalizedSearch) {
       result = result.filter(campaign => {
         const campaignName = String(campaign.name || '').toLowerCase();
+        const adName = String(campaign.adName || '').toLowerCase();
         const campaignId = String(campaign.campaignId || '').toLowerCase();
         const accountName = String(campaign.accountId?.name || '').toLowerCase();
         return campaignName.includes(normalizedSearch)
+          || adName.includes(normalizedSearch)
           || campaignId.includes(normalizedSearch)
           || accountName.includes(normalizedSearch);
       });
@@ -466,6 +468,7 @@ export default function Campaigns() {
                       </td>
                       <td>
                         <div style={{ fontWeight: 600, marginBottom: '2px' }}>{campaign.name}</div>
+                        {campaign.adName && <div style={{ fontSize: '11px', color: 'var(--muted2)' }}>Ad: {campaign.adName}</div>}
                         <div style={{ fontSize: '11px', color: 'var(--muted2)' }}>{campaign.campaignId}</div>
                       </td>
                       <td>

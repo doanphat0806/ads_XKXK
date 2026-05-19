@@ -76,6 +76,7 @@ Mở trình duyệt: **http://localhost:3000**
 ### Collection: campaigns
 - accountId (ref Account)
 - campaignId, name, status
+- adName (ten quang cao neu co)
 - spend, impressions, clicks
 - messages (số tin nhắn từ camp)
 - costPerMessage (chi phí/tin nhắn)

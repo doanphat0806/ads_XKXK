@@ -100,7 +100,7 @@ function getFirstUrl(...values) {
 function getFirstNonUrl(...values) {
   for (const value of values) {
     const text = toText(value);
-    if (text && !isUrl(text)) return text;
+    if (text && !isUrl(text) && !looksLikeDateTime(text)) return text;
   }
   return '';
 }
@@ -724,11 +724,7 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
   };
 
   if (dateFilter.orderDateKey) {
-    sourceFilter.$or = [
-      { orderDateKey: dateFilter.orderDateKey },
-      { orderDateKey: '' },
-      { orderDateKey: { $exists: false } }
-    ];
+    sourceFilter.col4 = { $nin: ['', null] };
   }
 
   const groupedRows = await DataPurchaseOrder.aggregate([
@@ -748,6 +744,7 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
         accountName: { $first: '$col1' },
         productAttribute: { $first: '$spec' },
         productAttributeFallback: { $first: '$col13' },
+        productAttributeRawFallback: { $first: '$col7' },
         quantity: { $first: '$productQuantity' },
         quantityFallback: { $first: '$col15' }
       }
@@ -763,10 +760,9 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
   groupedRows.forEach(row => {
     const orderDate = getOrderDateTime(
       row.orderDateTime,
-      row.orderDateRawCol4,
-      row.orderDateFallback
+      row.orderDateRawCol4
     );
-    const dateKey = row.orderDateKey || normalizeDateKey(orderDate);
+    const dateKey = normalizeDateKey(orderDate) || row.orderDateKey;
     if (!dateKey || !isDateInRange(dateKey, fromDate, toDate)) return;
 
     if (!dailyMap.has(dateKey)) {
@@ -829,7 +825,8 @@ function getPurchaseOrderGroupStage() {
       quantity: { $first: '$productQuantity' },
       trackingCandidates: { $push: '$logisticsTrackingCode' },
       fallbackTrackingCandidates: { $push: '$col25' },
-      productAttributeFallback: { $first: '$col7' },
+      productAttributeFallback: { $first: '$col13' },
+      productAttributeRawFallback: { $first: '$col7' },
       quantityFallback: { $first: '$col15' },
       accountNameFallback: { $first: '$col24' },
       orderDateFallback: { $first: '$col25' },
@@ -854,8 +851,7 @@ function mapPurchaseOrderApiRow(row = {}, manualByOrderId = new Map()) {
   const supplementalTrackingCode = toText(manual.supplementalTrackingCode);
   const orderDate = getOrderDateTime(
     row.orderDateTime,
-    row.orderDateRawCol4,
-    row.orderDateFallback
+    row.orderDateRawCol4
   );
   const totalAmount = getFirstAmount(row.totalAmount, row.orderDateRawCol5);
 
@@ -869,13 +865,13 @@ function mapPurchaseOrderApiRow(row = {}, manualByOrderId = new Map()) {
     receivedQuantity: toText(manual.receivedQuantity),
     supplementalTrackingCode,
     skuManual: toText(manual.skuManual),
-    productAttribute: getFirstNonUrl(row.productAttribute, row.productAttributeFallback),
+    productAttribute: getFirstNonUrl(row.productAttribute, row.productAttributeFallback, row.productAttributeRawFallback),
     quantity: getFirstText(row.quantity, row.quantityFallback),
     imageUrl: toText(row.imageUrl),
     accountName: getFirstText(row.accountName, row.accountNameFallback),
     totalAmount,
     orderDate,
-    orderDateKey: row.orderDateKey || normalizeDateKey(orderDate),
+    orderDateKey: normalizeDateKey(orderDate) || row.orderDateKey,
     productLink: getFirstUrl(row.productLink, row.productLinkRawCol6, row.productLinkFallback)
   };
 }
@@ -1086,11 +1082,7 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
     col3: { $nin: ['', null] }
   };
   if (dateFilter.orderDateKey) {
-    sourceFilter.$or = [
-      { orderDateKey: dateFilter.orderDateKey },
-      { orderDateKey: '' },
-      { orderDateKey: { $exists: false } }
-    ];
+    sourceFilter.col4 = { $nin: ['', null] };
   }
 
   if (!searchTerm && !dateFilter.orderDateKey) {
