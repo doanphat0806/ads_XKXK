@@ -10,6 +10,7 @@ export default function AuthScreen() {
     const normalizedUser = username.toLowerCase().trim();
     if (normalizedUser === 'admin1' || normalizedUser === 'phat') return 'shopee';
     if (normalizedUser === 'oder') return 'oder';
+    if (normalizedUser === 'kho') return 'kho';
     return 'facebook';
   };
 

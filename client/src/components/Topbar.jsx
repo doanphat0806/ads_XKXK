@@ -6,6 +6,7 @@ import { toast } from 'react-toastify';
 export default function Topbar({ title }) {
   const { provider, logout, refreshAll, loadAccounts, openModal } = useAppContext();
   const [discovering, setDiscovering] = React.useState(false);
+  const showAdActions = provider !== 'oder' && provider !== 'kho';
 
   const handleAutoDiscover = async () => {
     if (discovering) return;
@@ -42,27 +43,31 @@ export default function Topbar({ title }) {
         <span id="dateLabel" style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--muted2)' }}>
           {new Date().toLocaleDateString('vi-VN')}
         </span>
-        <button className="btn btn-ghost btn-sm" onClick={() => openModal('CONFIG')}>Token / API key</button>
-        <button className="btn btn-ghost btn-sm" onClick={refreshAll}>Lam moi</button>
-        <button
-          className="btn btn-ghost btn-sm"
-          style={{ borderColor: 'var(--b)', color: 'var(--b)' }}
-          onClick={handleAutoDiscover}
-          disabled={discovering}
-        >
-          {discovering ? 'Dang dong bo...' : 'Auto Discover'}
-        </button>
-        <button className="btn btn-ghost btn-sm" onClick={() => openModal('BULK_ADD')}>+ Them nhieu</button>
-        {provider === 'shopee' && (
-          <button
-            className="btn btn-ghost btn-sm"
-            style={{ borderColor: 'var(--g)', color: 'var(--g)' }}
-            onClick={() => openModal('SHOPEE_PAGES')}
-          >
-            + Them Page
-          </button>
+        {showAdActions && (
+          <>
+            <button className="btn btn-ghost btn-sm" onClick={() => openModal('CONFIG')}>Token / API key</button>
+            <button className="btn btn-ghost btn-sm" onClick={refreshAll}>Lam moi</button>
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ borderColor: 'var(--b)', color: 'var(--b)' }}
+              onClick={handleAutoDiscover}
+              disabled={discovering}
+            >
+              {discovering ? 'Dang dong bo...' : 'Auto Discover'}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => openModal('BULK_ADD')}>+ Them nhieu</button>
+            {provider === 'shopee' && (
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ borderColor: 'var(--g)', color: 'var(--g)' }}
+                onClick={() => openModal('SHOPEE_PAGES')}
+              >
+                + Them Page
+              </button>
+            )}
+            <button className="btn btn-g btn-sm topbar-add-account-btn" onClick={() => openModal('ACCOUNT')}>+ Them Tai Khoan</button>
+          </>
         )}
-        <button className="btn btn-g btn-sm topbar-add-account-btn" onClick={() => openModal('ACCOUNT')}>+ Them Tai Khoan</button>
         <button className="btn btn-danger btn-sm" onClick={logout}>Dang Xuat</button>
       </div>
     </div>

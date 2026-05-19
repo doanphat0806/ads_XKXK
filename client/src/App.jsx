@@ -28,6 +28,7 @@ import ModalContainer from './components/ModalContainer';
 function AppContent() {
   const { isAuthenticated, provider, currentUser } = useAppContext();
   const isOder = provider === 'oder';
+  const isKho = provider === 'kho';
   const isAdmin = currentUser?.username === 'admin';
   const location = useLocation();
 
@@ -91,6 +92,16 @@ function AppContent() {
                 <Route path="/purchase-orders" element={<PurchaseOrders />} />
                 <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
                 <Route path="*" element={<Navigate to="/oder-dashboard" replace />} />
+              </>
+            ) : isKho ? (
+              <>
+                <Route path="/purchase-orders" element={<PurchaseOrders />} />
+                <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
+                <Route path="/oder-dashboard" element={<OderDashboard />} />
+                <Route path="/inventory" element={<Inventory />} />
+                <Route path="/inventory-summary" element={<InventorySummary />} />
+                <Route path="/google-sheets" element={<GoogleSheets />} />
+                <Route path="*" element={<Navigate to="/inventory" replace />} />
               </>
             ) : (
               <>

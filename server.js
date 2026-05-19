@@ -262,6 +262,7 @@ function normalizeProvider(value) {
   const normalized = String(value || 'facebook').trim().toLowerCase();
   if (normalized === 'shopee') return 'shopee';
   if (normalized === 'oder') return 'oder';
+  if (normalized === 'kho') return 'kho';
   return 'facebook';
 }
 
@@ -321,7 +322,8 @@ const DEFAULT_LOGIN_USERS = [
   { username: 'user2', password: process.env.USER2_PASSWORD || 'admin', displayName: 'User 2', provider: 'facebook' },
   { username: 'user3', password: process.env.USER3_PASSWORD || 'admin', displayName: 'User 3', provider: 'facebook' },
   { username: 'user4', password: process.env.USER4_PASSWORD || 'admin', displayName: 'User 4', provider: 'facebook' },
-  { username: 'oder', password: 'oder', displayName: 'Order Staff', provider: 'oder' }
+  { username: 'oder', password: 'oder', displayName: 'Order Staff', provider: 'oder' },
+  { username: 'kho', password: process.env.USER_KHO_PASSWORD || 'kho', displayName: 'Kho Staff', provider: 'kho' }
 ];
 
 function getReadCache(key) {
@@ -676,6 +678,35 @@ async function getGoogleAccessTokenForUser(userId, config = {}) {
 
 async function getGoogleAccessToken(req) {
   return getGoogleAccessTokenForUser(req.currentUser._id, requireGoogleOAuthConfig(req));
+}
+
+async function getAdminDataOwnerUser() {
+  const admin = await User.findOne({ username: 'admin', active: true }).select('_id').lean();
+  if (!admin?._id) {
+    throw new Error('Khong tim thay tai khoan admin de lay du lieu kho');
+  }
+  return admin;
+}
+
+async function getInventoryOwnerUserId(req) {
+  if (normalizeProvider(req.currentUser?.provider) !== 'kho') {
+    return req.currentUser?._id;
+  }
+
+  const admin = await getAdminDataOwnerUser();
+  return admin._id;
+}
+
+function withInventoryOwnerFilter(ownerUserId, filter = {}) {
+  return ownerUserId ? { ...filter, ownerUserId } : { ...filter };
+}
+
+async function getInventoryFilter(req, filter = {}) {
+  return withInventoryOwnerFilter(await getInventoryOwnerUserId(req), filter);
+}
+
+async function getInventoryGoogleAccessToken(req) {
+  return getGoogleAccessTokenForUser(await getInventoryOwnerUserId(req), requireGoogleOAuthConfig(req));
 }
 
 function getBearerToken(req) {
@@ -1049,7 +1080,7 @@ async function syncInventorySalePriceToSheet(req, items, salePrice, options = {}
     return { updated: 0, skipped: true };
   }
 
-  const googleAccessToken = await getGoogleAccessToken(req);
+  const googleAccessToken = await getInventoryGoogleAccessToken(req);
   return updateInventorySheetSalePriceWithGoogleAccess(googleAccessToken, rowNumbers, salePrice, options);
 }
 
@@ -7960,7 +7991,7 @@ app.put('/api/oder/dashboard/notes/:dateKey', async (req, res) => {
 app.get('/api/inventory', async (req, res) => {
   try {
     const { search = '' } = req.query;
-    const filter = withUserFilter(req);
+    const filter = await getInventoryFilter(req);
     const term = String(search || '').trim();
 
     if (term) {
@@ -7980,7 +8011,7 @@ app.get('/api/inventory', async (req, res) => {
 
 app.get('/api/inventory/summary', async (req, res) => {
   try {
-    const googleAccessToken = await getGoogleAccessToken(req);
+    const googleAccessToken = await getInventoryGoogleAccessToken(req);
     const [rows, pendingCounts] = await Promise.all([
       fetchInventorySheetRowsWithGoogleAccess(googleAccessToken),
       buildInventoryPendingOrderCounts()
@@ -8044,7 +8075,7 @@ app.get('/api/inventory/summary', async (req, res) => {
 
 app.get('/api/inventory/summary/export', async (req, res) => {
   try {
-    const googleAccessToken = await getGoogleAccessToken(req);
+    const googleAccessToken = await getInventoryGoogleAccessToken(req);
     const [rows, pendingCounts] = await Promise.all([
       fetchInventorySheetRowsWithGoogleAccess(googleAccessToken),
       buildInventoryPendingOrderCounts()
@@ -8123,7 +8154,7 @@ app.get('/api/inventory/scan-summary', async (req, res) => {
     const fromRange = buildVnDateRange(fromDate);
     const toRange = buildVnDateRange(toDate);
 
-    const items = await InventoryItem.find(withUserFilter(req))
+    const items = await InventoryItem.find(await getInventoryFilter(req))
       .select('barcode scans')
       .lean();
 
@@ -8164,7 +8195,7 @@ app.get('/api/inventory/scan-summary', async (req, res) => {
 
 app.get('/api/inventory/sheet-rows', async (req, res) => {
   try {
-    const googleAccessToken = await getGoogleAccessToken(req);
+    const googleAccessToken = await getInventoryGoogleAccessToken(req);
     const [rows, pendingCounts] = await Promise.all([
       fetchInventorySheetRowsWithGoogleAccess(googleAccessToken),
       buildInventoryPendingOrderCounts()
@@ -8215,7 +8246,7 @@ app.post('/api/inventory/scan', async (req, res) => {
     if (!name) insertFields.name = '';
 
     const item = await InventoryItem.findOneAndUpdate(
-      withUserFilter(req, { barcode }),
+      await getInventoryFilter(req, { barcode }),
       {
         $inc: { quantity },
         $set: setFields,
@@ -8240,8 +8271,9 @@ app.post('/api/inventory/import-sheet', async (req, res) => {
   try {
     let sheetItems = [];
     let source = 'public';
+    const ownerUserId = await getInventoryOwnerUserId(req);
     try {
-      const googleAccessToken = await getGoogleAccessToken(req);
+      const googleAccessToken = await getInventoryGoogleAccessToken(req);
       sheetItems = await fetchInventorySheetItemsWithGoogleAccess(googleAccessToken, { refresh: true });
       source = 'google_oauth';
     } catch (googleError) {
@@ -8259,7 +8291,7 @@ app.post('/api/inventory/import-sheet', async (req, res) => {
     const sheetBarcodes = new Set(sheetItems.map(item => String(item.barcode || '').trim()).filter(Boolean));
     const operations = sheetItems.map(item => ({
         updateOne: {
-          filter: withUserFilter(req, { barcode: item.barcode }),
+          filter: withInventoryOwnerFilter(ownerUserId, { barcode: item.barcode }),
           update: {
             $set: {
               warehouseName: item.warehouseName || '',
@@ -8279,12 +8311,12 @@ app.post('/api/inventory/import-sheet', async (req, res) => {
       await InventoryItem.bulkWrite(operations, { ordered: false });
     }
 
-    const deleteFilter = withUserFilter(req, sheetBarcodes.size
+    const deleteFilter = withInventoryOwnerFilter(ownerUserId, sheetBarcodes.size
       ? { barcode: { $nin: Array.from(sheetBarcodes) } }
       : {});
     const deleteResult = await InventoryItem.deleteMany(deleteFilter);
 
-    const items = await InventoryItem.find(withUserFilter(req))
+    const items = await InventoryItem.find(withInventoryOwnerFilter(ownerUserId))
       .sort({ updatedAt: -1 })
       .limit(1000)
       .lean();
@@ -8305,11 +8337,12 @@ app.post('/api/inventory/price-by-code', async (req, res) => {
   try {
     const productCode = normalizeInventoryProductCode(req.body?.productCode);
     const salePrice = String(req.body?.salePrice || '').trim();
+    const ownerUserId = await getInventoryOwnerUserId(req);
     if (!productCode) {
       return res.status(400).json({ error: 'Thieu ma san pham' });
     }
 
-    const inventoryItems = await InventoryItem.find(withUserFilter(req))
+    const inventoryItems = await InventoryItem.find(withInventoryOwnerFilter(ownerUserId))
       .select('_id barcode sheetRowNumbers')
       .lean();
     const matchedItems = inventoryItems
@@ -8324,11 +8357,11 @@ app.post('/api/inventory/price-by-code', async (req, res) => {
     await syncInventorySalePriceToSheet(req, matchedItems, salePrice);
 
     await InventoryItem.updateMany(
-      withUserFilter(req, { _id: { $in: matchedIds } }),
+      withInventoryOwnerFilter(ownerUserId, { _id: { $in: matchedIds } }),
       { $set: { salePrice, updatedAt: now } }
     );
 
-    const items = await InventoryItem.find(withUserFilter(req, { _id: { $in: matchedIds } }))
+    const items = await InventoryItem.find(withInventoryOwnerFilter(ownerUserId, { _id: { $in: matchedIds } }))
       .sort({ barcode: 1 })
       .lean();
 
@@ -8340,11 +8373,12 @@ app.post('/api/inventory/price-by-code', async (req, res) => {
 
 app.patch('/api/inventory/:id', async (req, res) => {
   try {
+    const ownerUserId = await getInventoryOwnerUserId(req);
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: 'ID san pham khong hop le' });
     }
 
-    const currentItem = await InventoryItem.findOne(withUserFilter(req, { _id: req.params.id }))
+    const currentItem = await InventoryItem.findOne(withInventoryOwnerFilter(ownerUserId, { _id: req.params.id }))
       .lean();
     if (!currentItem) return res.status(404).json({ error: 'Khong tim thay san pham trong kho' });
 
@@ -8361,7 +8395,7 @@ app.patch('/api/inventory/:id', async (req, res) => {
     }
 
     const item = await InventoryItem.findOneAndUpdate(
-      withUserFilter(req, { _id: req.params.id }),
+      withInventoryOwnerFilter(ownerUserId, { _id: req.params.id }),
       { $set: update },
       { new: true }
     ).lean();
@@ -8374,11 +8408,12 @@ app.patch('/api/inventory/:id', async (req, res) => {
 
 app.delete('/api/inventory/:id', async (req, res) => {
   try {
+    const ownerUserId = await getInventoryOwnerUserId(req);
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: 'ID san pham khong hop le' });
     }
 
-    const result = await InventoryItem.deleteOne(withUserFilter(req, { _id: req.params.id }));
+    const result = await InventoryItem.deleteOne(withInventoryOwnerFilter(ownerUserId, { _id: req.params.id }));
     if (!result.deletedCount) return res.status(404).json({ error: 'Khong tim thay san pham trong kho' });
     res.json({ ok: true });
   } catch (error) {

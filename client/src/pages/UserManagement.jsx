@@ -13,7 +13,8 @@ const emptyFormData = {
 const providerLabels = {
   facebook: 'Facebook',
   shopee: 'Shopee',
-  oder: 'Oder'
+  oder: 'Oder',
+  kho: 'Kho'
 };
 
 const usernamePattern = /^[a-z0-9._-]+$/;
@@ -252,6 +253,7 @@ export default function UserManagement() {
                     <option value="facebook">Facebook</option>
                     <option value="shopee">Shopee</option>
                     <option value="oder">Oder</option>
+                    <option value="kho">Kho</option>
                   </select>
                   {editingUser?.username === 'admin' && (
                     <div className="inline-note">Tai khoan admin mac dinh khong duoc doi provider.</div>

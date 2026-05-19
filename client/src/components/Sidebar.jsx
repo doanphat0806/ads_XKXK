@@ -23,8 +23,11 @@ import { useAppContext } from '../contexts/AppContext';
 export default function Sidebar() {
   const { stats, allAccounts, openModal, provider, currentUser } = useAppContext();
   const location = useLocation();
+  const isOder = provider === 'oder';
+  const isKho = provider === 'kho';
+  const showAdMenu = !isOder && !isKho;
   const showOrders = provider !== 'shopee';
-  const showInventory = provider !== 'shopee';
+  const showInventory = provider !== 'shopee' && !isOder;
   const isAdmin = currentUser?.username === 'admin';
   const dataPaths = ['/data-purchase-orders', '/inventory', '/orders', '/google-sheets'];
   const dataRouteActive = dataPaths.some(path => location.pathname === path);
@@ -51,13 +54,13 @@ export default function Sidebar() {
         </button>
       </div>
 
-      {provider === 'oder' && (
+      {isOder && (
         <NavLink to="/oder-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dashboard">
           <span className="icon"><LayoutDashboard size={16} strokeWidth={2} /></span><span>Dashboard</span>
         </NavLink>
       )}
 
-      {provider !== 'oder' && (
+      {showAdMenu && (
         <>
           <NavLink to="/" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dashboard" end>
             <span className="icon"><LayoutDashboard size={16} strokeWidth={2} /></span><span>Dashboard</span>
@@ -99,13 +102,13 @@ export default function Sidebar() {
         </>
       )}
 
-      {showInventory && provider !== 'oder' && (
+      {showInventory && (
         <NavLink to="/inventory-summary" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Thong ke kho">
           <span className="icon"><BookText size={16} strokeWidth={2} /></span><span>Thong ke kho</span>
         </NavLink>
       )}
 
-      {provider === 'shopee' && provider !== 'oder' && (
+      {provider === 'shopee' && (
         <NavLink to="/shopee-commission" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Hoa hong">
           <span className="icon"><Coins size={16} strokeWidth={2} /></span><span>Hoa hong</span>
         </NavLink>
@@ -133,19 +136,19 @@ export default function Sidebar() {
                 </NavLink>
               )}
 
-              {showInventory && provider !== 'oder' && (
+              {showInventory && (
                 <NavLink to="/inventory" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`} title="Kho">
                   <span className="icon"><Boxes size={16} strokeWidth={2} /></span><span>Kho</span>
                 </NavLink>
               )}
 
-              {showOrders && provider !== 'oder' && (
+              {showOrders && showAdMenu && (
                 <NavLink to="/orders" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`} title="Don hang">
                   <span className="icon"><Package size={16} strokeWidth={2} /></span><span>Don hang</span>
                 </NavLink>
               )}
 
-              {provider !== 'oder' && (
+              {!isOder && (
                 <NavLink to="/google-sheets" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`} title="Google Sheet">
                   <span className="icon"><FileSpreadsheet size={16} strokeWidth={2} /></span><span>Google Sheet</span>
                 </NavLink>
@@ -155,7 +158,7 @@ export default function Sidebar() {
         </div>
       )}
 
-      {provider !== 'oder' && (
+      {showAdMenu && (
         <>
           <NavLink to="/logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Nhat ky">
             <span className="icon"><BookText size={16} strokeWidth={2} /></span><span>Nhat ky</span>
