@@ -22,6 +22,8 @@ const STATUS_BY_VALUE = STATUS_OPTIONS.reduce((acc, item) => {
 
 const INVALID_TRACKING_VALUES = new Set(['', '未知', '合并订单暂无', 'unknown', 'null', 'undefined']);
 
+const ORDER_DATE_TEXT_PATTERN = /^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/;
+
 const DASHBOARD_METRIC_KEYS = [
   'maDonHang',
   'slHang',
@@ -724,7 +726,7 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
   };
 
   if (dateFilter.orderDateKey) {
-    sourceFilter.col4 = { $nin: ['', null] };
+    sourceFilter.col4 = { $regex: ORDER_DATE_TEXT_PATTERN };
   }
 
   const groupedRows = await DataPurchaseOrder.aggregate([
@@ -762,7 +764,7 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
       row.orderDateTime,
       row.orderDateRawCol4
     );
-    const dateKey = normalizeDateKey(orderDate) || row.orderDateKey;
+    const dateKey = normalizeDateKey(orderDate);
     if (!dateKey || !isDateInRange(dateKey, fromDate, toDate)) return;
 
     if (!dailyMap.has(dateKey)) {
@@ -871,7 +873,7 @@ function mapPurchaseOrderApiRow(row = {}, manualByOrderId = new Map()) {
     accountName: getFirstText(row.accountName, row.accountNameFallback),
     totalAmount,
     orderDate,
-    orderDateKey: normalizeDateKey(orderDate) || row.orderDateKey,
+    orderDateKey: normalizeDateKey(orderDate),
     productLink: getFirstUrl(row.productLink, row.productLinkRawCol6, row.productLinkFallback)
   };
 }
@@ -1082,7 +1084,7 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
     col3: { $nin: ['', null] }
   };
   if (dateFilter.orderDateKey) {
-    sourceFilter.col4 = { $nin: ['', null] };
+    sourceFilter.col4 = { $regex: ORDER_DATE_TEXT_PATTERN };
   }
 
   if (!searchTerm && !dateFilter.orderDateKey) {
@@ -1133,7 +1135,7 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
 
   const rows = groupedRows
     .map(row => mapPurchaseOrderApiRow(row, manualByOrderId))
-    .filter(row => isDateInRange(row.orderDateKey || row.orderDate, fromDate, toDate));
+    .filter(row => isDateInRange(row.orderDate, fromDate, toDate));
 
   const filteredRows = searchTerm ? rows.filter(row => rowMatchesSearch(row, searchTerm)) : rows;
   const summary = buildSummary(filteredRows);
