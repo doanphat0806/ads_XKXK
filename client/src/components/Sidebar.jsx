@@ -29,51 +29,60 @@ export default function Sidebar() {
   const dataPaths = ['/data-purchase-orders', '/inventory', '/orders', '/google-sheets'];
   const dataRouteActive = dataPaths.some(path => location.pathname === path);
   const [dataOpen, setDataOpen] = React.useState(dataRouteActive);
+  const [isTouchExpanded, setIsTouchExpanded] = React.useState(false);
 
   React.useEffect(() => {
     if (dataRouteActive) setDataOpen(true);
   }, [dataRouteActive]);
 
   return (
-    <nav className="sidebar" id="sidebar">
+    <nav className={`sidebar ${isTouchExpanded ? 'is-touch-expanded' : ''}`} id="sidebar" aria-label="Main menu">
       <div className="sidebar-logo">
-        <h1><span className="text">XekoXuka Shop</span></h1>
+        <button
+          type="button"
+          className="sidebar-logo-btn"
+          onClick={() => setIsTouchExpanded(value => !value)}
+          aria-label={isTouchExpanded ? 'Thu gon menu' : 'Mo menu'}
+          aria-expanded={isTouchExpanded}
+          title="Mo menu"
+        >
+          <img className="logo-mark" src="/logo.jpg" alt="XekoXuka Shop" />
+          <span className="text">XekoXuka Shop</span>
+        </button>
       </div>
 
-      <div className="nav-section">Menu</div>
-
       {provider === 'oder' && (
-        <NavLink to="/oder-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <NavLink to="/oder-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dashboard">
           <span className="icon"><LayoutDashboard size={16} strokeWidth={2} /></span><span>Dashboard</span>
         </NavLink>
       )}
 
       {provider !== 'oder' && (
         <>
-          <NavLink to="/" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} end>
+          <NavLink to="/" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dashboard" end>
             <span className="icon"><LayoutDashboard size={16} strokeWidth={2} /></span><span>Dashboard</span>
           </NavLink>
 
-          <NavLink to="/accounts" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <NavLink to="/accounts" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Tai khoan">
             <span className="icon"><Users size={16} strokeWidth={2} /></span><span>Tai khoan</span>
             {allAccounts.length > 0 && (
               <span className="badge-mini" id="navAccBadge">{allAccounts.length}</span>
             )}
           </NavLink>
 
-          <NavLink to="/create-campaign" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <NavLink to="/create-campaign" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Len Camp">
             <span className="icon"><Megaphone size={16} strokeWidth={2} /></span><span>Len Camp</span>
           </NavLink>
 
-          <NavLink to="/creater-page" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <NavLink to="/creater-page" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dang bai">
             <span className="icon"><PenSquare size={16} strokeWidth={2} /></span><span>Dang bai</span>
           </NavLink>
 
-          <NavLink to="/campaigns" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <NavLink to="/campaigns" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Chien dich">
             <span className="icon"><BarChart3 size={16} strokeWidth={2} /></span><span>Chien dich</span>
           </NavLink>
 
-          <NavLink to="/clone-campaigns" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <NavLink to="/clone-campaigns" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Nhan Camp">
             <span className="icon"><CopyPlus size={16} strokeWidth={2} /></span><span>Nhan Camp</span>
           </NavLink>
         </>
@@ -81,23 +90,23 @@ export default function Sidebar() {
 
       {showOrders && (
         <>
-          <NavLink to="/purchase-orders" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <NavLink to="/purchase-orders" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dat Hang">
             <span className="icon"><ShoppingCart size={16} strokeWidth={2} /></span><span>Đặt Hàng</span>
           </NavLink>
-          <NavLink to="/oder-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <NavLink to="/oder-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dashboard Dat Hang">
             <span className="icon"><BarChart3 size={16} strokeWidth={2} /></span><span>Dashboard Đặt Hàng</span>
           </NavLink>
         </>
       )}
 
       {showInventory && provider !== 'oder' && (
-        <NavLink to="/inventory-summary" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <NavLink to="/inventory-summary" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Thong ke kho">
           <span className="icon"><BookText size={16} strokeWidth={2} /></span><span>Thong ke kho</span>
         </NavLink>
       )}
 
       {provider === 'shopee' && provider !== 'oder' && (
-        <NavLink to="/shopee-commission" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <NavLink to="/shopee-commission" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Hoa hong">
           <span className="icon"><Coins size={16} strokeWidth={2} /></span><span>Hoa hong</span>
         </NavLink>
       )}
@@ -109,6 +118,7 @@ export default function Sidebar() {
             className={`nav-item nav-group-trigger ${dataRouteActive ? 'active' : ''}`}
             onClick={() => setDataOpen(open => !open)}
             aria-expanded={dataOpen}
+            title="DATA"
           >
             <span className="icon"><FileSpreadsheet size={16} strokeWidth={2} /></span>
             <span>DATA</span>
@@ -118,25 +128,25 @@ export default function Sidebar() {
           {dataOpen && (
             <div className="nav-subitems">
               {showOrders && (
-                <NavLink to="/data-purchase-orders" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`}>
+                <NavLink to="/data-purchase-orders" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`} title="DATA Dat Hang">
                   <span className="icon"><FileSpreadsheet size={16} strokeWidth={2} /></span><span>DATA ĐẶT HÀNG</span>
                 </NavLink>
               )}
 
               {showInventory && provider !== 'oder' && (
-                <NavLink to="/inventory" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`}>
+                <NavLink to="/inventory" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`} title="Kho">
                   <span className="icon"><Boxes size={16} strokeWidth={2} /></span><span>Kho</span>
                 </NavLink>
               )}
 
               {showOrders && provider !== 'oder' && (
-                <NavLink to="/orders" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`}>
+                <NavLink to="/orders" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`} title="Don hang">
                   <span className="icon"><Package size={16} strokeWidth={2} /></span><span>Don hang</span>
                 </NavLink>
               )}
 
               {provider !== 'oder' && (
-                <NavLink to="/google-sheets" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`}>
+                <NavLink to="/google-sheets" className={({ isActive }) => `nav-item nav-subitem ${isActive ? 'active' : ''}`} title="Google Sheet">
                   <span className="icon"><FileSpreadsheet size={16} strokeWidth={2} /></span><span>Google Sheet</span>
                 </NavLink>
               )}
@@ -147,23 +157,21 @@ export default function Sidebar() {
 
       {provider !== 'oder' && (
         <>
-          <NavLink to="/logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <NavLink to="/logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Nhat ky">
             <span className="icon"><BookText size={16} strokeWidth={2} /></span><span>Nhat ky</span>
           </NavLink>
 
-          <div className="nav-section">He thong</div>
-
           {isAdmin && (
-            <NavLink to="/user-management" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <NavLink to="/user-management" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Quan ly users">
               <span className="icon"><UserCog size={16} strokeWidth={2} /></span><span>Quan ly users</span>
             </NavLink>
           )}
 
-          <div className="nav-item" style={{ cursor: 'pointer' }} onClick={() => openModal('ACCOUNT')}>
+          <div className="nav-item" style={{ cursor: 'pointer' }} onClick={() => openModal('ACCOUNT')} title="Them tai khoan">
             <span className="icon"><CirclePlus size={16} strokeWidth={2} /></span><span>Them tai khoan</span>
           </div>
 
-          <div className="nav-item" style={{ cursor: 'pointer' }} onClick={() => openModal('CONFIG')}>
+          <div className="nav-item" style={{ cursor: 'pointer' }} onClick={() => openModal('CONFIG')} title="Cau hinh API">
             <span className="icon"><Settings size={16} strokeWidth={2} /></span><span>Cau hinh API</span>
           </div>
         </>
