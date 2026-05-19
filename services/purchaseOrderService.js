@@ -23,6 +23,8 @@ const STATUS_BY_VALUE = STATUS_OPTIONS.reduce((acc, item) => {
 const INVALID_TRACKING_VALUES = new Set(['', '未知', '合并订单暂无', 'unknown', 'null', 'undefined']);
 
 const ORDER_DATE_TEXT_PATTERN = /^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/;
+const QUANTITY_TEXT_PATTERN = /^\d+(?:[,.]\d+)?$/;
+const MAX_REASONABLE_QUANTITY = 1000;
 
 const DASHBOARD_METRIC_KEYS = [
   'maDonHang',
@@ -56,10 +58,24 @@ function normalizeText(value) {
     .trim();
 }
 
-function parseNumber(value) {
-  const text = toText(value).replace(/[^\d.,-]/g, '').replace(',', '.');
-  const number = Number(text);
-  return Number.isFinite(number) ? number : 0;
+function parseQuantity(value) {
+  const text = toText(value);
+  if (!text) return 0;
+
+  const normalized = text.replace(',', '.');
+  if (!QUANTITY_TEXT_PATTERN.test(text)) return 0;
+
+  const number = Number(normalized);
+  if (!Number.isFinite(number) || number <= 0 || number > MAX_REASONABLE_QUANTITY) return 0;
+  return number;
+}
+
+function getFirstQuantityText(...values) {
+  for (const value of values) {
+    const text = toText(value);
+    if (parseQuantity(text) > 0) return text;
+  }
+  return '';
 }
 
 function getFirstText(...values) {
@@ -496,7 +512,7 @@ function buildSummary(rows) {
   let trackingCount = 0;
 
   rows.forEach(row => {
-    totalProductQuantity += parseNumber(row.quantity);
+    totalProductQuantity += parseQuantity(row.quantity);
     if (row.trackingCode || row.supplementalTrackingCode) trackingCount += 1;
     if (statusCounts[row.status] !== undefined) statusCounts[row.status] += 1;
   });
@@ -549,9 +565,9 @@ function addDashboardMetrics(target, source) {
 }
 
 function getDashboardQuantityTotal(row = {}) {
-  const primaryQuantity = parseNumber(row.quantity);
+  const primaryQuantity = parseQuantity(row.quantity);
   if (primaryQuantity > 0) return primaryQuantity;
-  return parseNumber(row.quantityFallback);
+  return parseQuantity(row.quantityFallback);
 }
 
 function parseNonNegativeInteger(value) {
@@ -868,7 +884,7 @@ function mapPurchaseOrderApiRow(row = {}, manualByOrderId = new Map()) {
     supplementalTrackingCode,
     skuManual: toText(manual.skuManual),
     productAttribute: getFirstNonUrl(row.productAttribute, row.productAttributeFallback, row.productAttributeRawFallback),
-    quantity: getFirstText(row.quantity, row.quantityFallback),
+    quantity: getFirstQuantityText(row.quantity, row.quantityFallback),
     imageUrl: toText(row.imageUrl),
     accountName: getFirstText(row.accountName, row.accountNameFallback),
     totalAmount,
@@ -890,7 +906,7 @@ function buildPurchaseOrderSummaryFromGroups(groupedRows = [], statusByOrderId =
   let trackingCount = 0;
 
   groupedRows.forEach(row => {
-    totalProductQuantity += parseNumber(getFirstText(row.quantity, row.quantityFallback));
+    totalProductQuantity += parseQuantity(getFirstQuantityText(row.quantity, row.quantityFallback));
     const manual = statusByOrderId.get(row.orderId);
     if (
       getLastValidTracking(row.trackingCandidates)
@@ -980,13 +996,8 @@ async function buildPurchaseOrderSummaryFromDatabase(sourceFilter) {
     { $unwind: { path: '$manual', preserveNullAndEmptyArrays: true } },
     {
       $addFields: {
-        quantityText: {
-          $cond: [
-            { $ne: [{ $trim: { input: { $ifNull: ['$quantity', ''] } } }, ''] },
-            { $trim: { input: { $ifNull: ['$quantity', ''] } } },
-            { $trim: { input: { $ifNull: ['$quantityFallback', ''] } } }
-          ]
-        },
+        quantityTextPrimary: { $trim: { input: { $ifNull: ['$quantity', ''] } } },
+        quantityTextFallback: { $trim: { input: { $ifNull: ['$quantityFallback', ''] } } },
         manualTrackingText: {
           $trim: { input: { $ifNull: ['$manual.supplementalTrackingCode', ''] } }
         },
@@ -995,7 +1006,24 @@ async function buildPurchaseOrderSummaryFromDatabase(sourceFilter) {
     },
     {
       $addFields: {
-        quantityNumber: {
+        quantityText: {
+          $cond: [
+            { $regexMatch: { input: '$quantityTextPrimary', regex: QUANTITY_TEXT_PATTERN } },
+            '$quantityTextPrimary',
+            {
+              $cond: [
+                { $regexMatch: { input: '$quantityTextFallback', regex: QUANTITY_TEXT_PATTERN } },
+                '$quantityTextFallback',
+                ''
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      $addFields: {
+        quantityNumberRaw: {
           $convert: {
             input: { $replaceOne: { input: '$quantityText', find: ',', replacement: '.' } },
             to: 'double',
@@ -1007,6 +1035,22 @@ async function buildPurchaseOrderSummaryFromDatabase(sourceFilter) {
           $or: [
             { $gt: ['$hasSourceTracking', 0] },
             { $ne: ['$manualTrackingText', ''] }
+          ]
+        }
+      }
+    },
+    {
+      $addFields: {
+        quantityNumber: {
+          $cond: [
+            {
+              $and: [
+                { $gt: ['$quantityNumberRaw', 0] },
+                { $lte: ['$quantityNumberRaw', MAX_REASONABLE_QUANTITY] }
+              ]
+            },
+            '$quantityNumberRaw',
+            0
           ]
         }
       }
