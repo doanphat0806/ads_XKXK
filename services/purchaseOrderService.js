@@ -23,7 +23,9 @@ const STATUS_BY_VALUE = STATUS_OPTIONS.reduce((acc, item) => {
 const INVALID_TRACKING_VALUES = new Set(['', '未知', '合并订单暂无', 'unknown', 'null', 'undefined']);
 
 const ORDER_DATE_TEXT_PATTERN = /^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/;
-const QUANTITY_TEXT_PATTERN = /^\d+(?:[,.]\d+)?$/;
+const QUANTITY_EXACT_TEXT_PATTERN = /^\d+(?:[,.]\d+)?$/;
+const QUANTITY_TEXT_PATTERN = /^(?:x\s*)?\d+(?:[,.]\d+)?(?:\s*(?:件|个|pcs?|qty))?$|^(?:qty|quantity|sl|so luong|số lượng)\D*\d+(?:[,.]\d+)?$/i;
+const QUANTITY_NUMBER_PATTERN = /\d+(?:[,.]\d+)?/;
 const MAX_REASONABLE_QUANTITY = 1000;
 
 const DASHBOARD_METRIC_KEYS = [
@@ -61,19 +63,26 @@ function normalizeText(value) {
 function parseQuantity(value) {
   const text = toText(value);
   if (!text) return 0;
+  if (isUrl(text) || looksLikeDateTime(text) || /^\d{6}-\d+/.test(text) || /\d{5,}/.test(text)) return 0;
 
-  const normalized = text.replace(',', '.');
-  if (!QUANTITY_TEXT_PATTERN.test(text)) return 0;
+  const match = QUANTITY_EXACT_TEXT_PATTERN.test(text)
+    ? text
+    : (QUANTITY_TEXT_PATTERN.test(text) ? text.match(QUANTITY_NUMBER_PATTERN)?.[0] : '');
+  if (!match) return 0;
 
-  const number = Number(normalized);
+  const number = Number(match.replace(',', '.'));
   if (!Number.isFinite(number) || number <= 0 || number > MAX_REASONABLE_QUANTITY) return 0;
   return number;
 }
 
+function formatQuantityValue(number) {
+  return Number.isInteger(number) ? String(number) : String(number);
+}
+
 function getFirstQuantityText(...values) {
   for (const value of values) {
-    const text = toText(value);
-    if (parseQuantity(text) > 0) return text;
+    const quantity = parseQuantity(value);
+    if (quantity > 0) return formatQuantityValue(quantity);
   }
   return '';
 }
@@ -1023,19 +1032,32 @@ async function buildPurchaseOrderSummaryFromDatabase(sourceFilter) {
     },
     {
       $addFields: {
-        quantityNumberRaw: {
-          $convert: {
-            input: { $replaceOne: { input: '$quantityText', find: ',', replacement: '.' } },
-            to: 'double',
-            onError: 0,
-            onNull: 0
-          }
+        quantityNumberMatch: {
+          $regexFind: { input: '$quantityText', regex: QUANTITY_NUMBER_PATTERN }
         },
         hasTracking: {
           $or: [
             { $gt: ['$hasSourceTracking', 0] },
             { $ne: ['$manualTrackingText', ''] }
           ]
+        }
+      }
+    },
+    {
+      $addFields: {
+        quantityNumberRaw: {
+          $convert: {
+            input: {
+              $replaceOne: {
+                input: { $ifNull: ['$quantityNumberMatch.match', '0'] },
+                find: ',',
+                replacement: '.'
+              }
+            },
+            to: 'double',
+            onError: 0,
+            onNull: 0
+          }
         }
       }
     },
