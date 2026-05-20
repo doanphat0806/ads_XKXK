@@ -51,6 +51,8 @@ const DEFAULT_HEADERS = SELECTED_COLUMNS.map(column => ({
 }));
 
 const EMPTY_LOGISTICS_VALUES = new Set(['未知', '合并订单暂无']);
+const QUESTION_MARK_LOGISTICS_PATTERN = /^[?\uFFFD\uFF1F\s]+$/;
+const LOGISTICS_EDGE_REPLACEMENT_PATTERN = /^[?\uFFFD\uFF1F\s:,\-;|/\\]+|[?\uFFFD\uFF1F\s:,\-;|/\\]+$/g;
 
 function toText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -59,7 +61,11 @@ function toText(value, fallback = '') {
 
 function normalizeLogisticsTrackingCode(value = '') {
   const text = toText(value);
-  return EMPTY_LOGISTICS_VALUES.has(text) ? '' : text;
+  if (!text || EMPTY_LOGISTICS_VALUES.has(text) || QUESTION_MARK_LOGISTICS_PATTERN.test(text)) return '';
+
+  const cleaned = text.replace(LOGISTICS_EDGE_REPLACEMENT_PATTERN, '').trim();
+  if (!cleaned || EMPTY_LOGISTICS_VALUES.has(cleaned) || QUESTION_MARK_LOGISTICS_PATTERN.test(cleaned)) return '';
+  return cleaned;
 }
 
 function normalizeSearch(value) {

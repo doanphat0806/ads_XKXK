@@ -21,6 +21,8 @@ const STATUS_BY_VALUE = STATUS_OPTIONS.reduce((acc, item) => {
 }, {});
 
 const INVALID_TRACKING_VALUES = new Set(['', '未知', '合并订单暂无', 'unknown', 'null', 'undefined']);
+const QUESTION_MARK_TRACKING_PATTERN = /^[?\uFFFD\uFF1F\s]+$/;
+const TRACKING_EDGE_REPLACEMENT_PATTERN = /^[?\uFFFD\uFF1F\s:,\-;|/\\]+|[?\uFFFD\uFF1F\s:,\-;|/\\]+$/g;
 
 const ORDER_DATE_TEXT_PATTERN = /^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/;
 const QUANTITY_EXACT_TEXT_PATTERN = /^\d+(?:[,.]\d+)?$/;
@@ -132,14 +134,24 @@ function getFirstNonUrl(...values) {
   return '';
 }
 
-function getLastValidTracking(values = []) {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    const value = toText(values[index]);
-    if (!INVALID_TRACKING_VALUES.has(value.toLowerCase()) && !INVALID_TRACKING_VALUES.has(value)) {
-      return value;
-    }
-  }
-  return '';
+function normalizeTrackingText(value = '') {
+  const text = toText(value);
+  if (!text) return '';
+
+  const lowerText = text.toLowerCase();
+  if (INVALID_TRACKING_VALUES.has(lowerText) || INVALID_TRACKING_VALUES.has(text)) return '';
+  if (QUESTION_MARK_TRACKING_PATTERN.test(text)) return '';
+
+  const cleaned = text.replace(TRACKING_EDGE_REPLACEMENT_PATTERN, '').trim();
+  if (!cleaned || QUESTION_MARK_TRACKING_PATTERN.test(cleaned)) return '';
+
+  const lowerCleaned = cleaned.toLowerCase();
+  if (INVALID_TRACKING_VALUES.has(lowerCleaned) || INVALID_TRACKING_VALUES.has(cleaned)) return '';
+  return cleaned;
+}
+
+function getCurrentTracking(row = {}) {
+  return normalizeTrackingText(row.trackingCode) || normalizeTrackingText(row.fallbackTrackingCode);
 }
 
 function normalizeStatus(status = '') {
@@ -766,8 +778,8 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
         orderDateTime: { $last: '$orderDateTime' },
         orderDateRawCol4: { $last: '$col4' },
         orderDateFallback: { $last: '$col25' },
-        trackingCandidates: { $push: '$logisticsTrackingCode' },
-        fallbackTrackingCandidates: { $push: '$col25' },
+        trackingCode: { $last: '$logisticsTrackingCode' },
+        fallbackTrackingCode: { $last: '$col25' },
         accountName: { $last: '$col1' },
         productAttribute: { $last: '$spec' },
         productAttributeFallback: { $last: '$col13' },
@@ -797,7 +809,7 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
     }
 
     const day = dailyMap.get(dateKey);
-    const trackingCode = getLastValidTracking(row.trackingCandidates) || getLastValidTracking(row.fallbackTrackingCandidates);
+    const trackingCode = getCurrentTracking(row);
     const status = normalizeStatus(manualByOrderId.get(row.orderId)?.status);
     const quantity = getDashboardQuantityTotal(row);
 
@@ -850,8 +862,8 @@ function getPurchaseOrderGroupStage() {
       productLinkRawCol6: { $last: '$col6' },
       productAttribute: { $last: '$spec' },
       quantity: { $last: '$productQuantity' },
-      trackingCandidates: { $push: '$logisticsTrackingCode' },
-      fallbackTrackingCandidates: { $push: '$col25' },
+      trackingCode: { $last: '$logisticsTrackingCode' },
+      fallbackTrackingCode: { $last: '$col25' },
       productAttributeFallback: { $last: '$col13' },
       productAttributeRawFallback: { $last: '$col7' },
       quantityFallback: { $last: '$col15' },
@@ -885,7 +897,7 @@ function mapPurchaseOrderApiRow(row = {}, manualByOrderId = new Map()) {
   return {
     rowNumber: row.rowNumber,
     orderId: row.orderId,
-    trackingCode: getLastValidTracking(row.trackingCandidates) || getLastValidTracking(row.fallbackTrackingCandidates),
+    trackingCode: getCurrentTracking(row),
     status,
     statusLabel: statusMeta?.label || '',
     statusClass: statusMeta?.className || '',
@@ -918,8 +930,7 @@ function buildPurchaseOrderSummaryFromGroups(groupedRows = [], statusByOrderId =
     totalProductQuantity += parseQuantity(getFirstQuantityText(row.quantity, row.quantityFallback));
     const manual = statusByOrderId.get(row.orderId);
     if (
-      getLastValidTracking(row.trackingCandidates)
-      || getLastValidTracking(row.fallbackTrackingCandidates)
+      getCurrentTracking(row)
       || toText(manual?.supplementalTrackingCode)
     ) {
       trackingCount += 1;
@@ -944,6 +955,12 @@ function buildPurchaseOrderSummaryFromGroups(groupedRows = [], statusByOrderId =
 
 async function buildPurchaseOrderSummaryFromDatabase(sourceFilter) {
   const invalidTrackingValues = Array.from(INVALID_TRACKING_VALUES).map(value => String(value).toLowerCase());
+  const hasTrackingExpression = field => ({
+    $and: [
+      { $not: [{ $in: [field, invalidTrackingValues] }] },
+      { $not: [{ $regexMatch: { input: field, regex: QUESTION_MARK_TRACKING_PATTERN } }] }
+    ]
+  });
   const [summary = {}] = await DataPurchaseOrder.aggregate([
     { $match: sourceFilter },
     {
@@ -964,8 +981,8 @@ async function buildPurchaseOrderSummaryFromDatabase(sourceFilter) {
       $addFields: {
         rowHasTracking: {
           $or: [
-            { $not: [{ $in: ['$rowTrackingText', invalidTrackingValues] }] },
-            { $not: [{ $in: ['$rowFallbackTrackingText', invalidTrackingValues] }] }
+            hasTrackingExpression('$rowTrackingText'),
+            hasTrackingExpression('$rowFallbackTrackingText')
           ]
         }
       }
@@ -977,7 +994,7 @@ async function buildPurchaseOrderSummaryFromDatabase(sourceFilter) {
         orderId: { $last: '$col3' },
         quantity: { $last: '$productQuantity' },
         quantityFallback: { $last: '$col15' },
-        hasSourceTracking: { $max: { $cond: ['$rowHasTracking', 1, 0] } }
+        hasSourceTracking: { $last: { $cond: ['$rowHasTracking', 1, 0] } }
       }
     },
     {
