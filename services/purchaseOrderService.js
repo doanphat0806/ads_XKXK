@@ -760,20 +760,20 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
     {
       $group: {
         _id: '$col3',
-        orderId: { $first: '$col3' },
-        rowNumber: { $first: '$rowNumber' },
-        orderDateKey: { $first: '$orderDateKey' },
-        orderDateTime: { $first: '$orderDateTime' },
-        orderDateRawCol4: { $first: '$col4' },
-        orderDateFallback: { $first: '$col25' },
+        orderId: { $last: '$col3' },
+        rowNumber: { $last: '$rowNumber' },
+        orderDateKey: { $last: '$orderDateKey' },
+        orderDateTime: { $last: '$orderDateTime' },
+        orderDateRawCol4: { $last: '$col4' },
+        orderDateFallback: { $last: '$col25' },
         trackingCandidates: { $push: '$logisticsTrackingCode' },
         fallbackTrackingCandidates: { $push: '$col25' },
-        accountName: { $first: '$col1' },
-        productAttribute: { $first: '$spec' },
-        productAttributeFallback: { $first: '$col13' },
-        productAttributeRawFallback: { $first: '$col7' },
-        quantity: { $first: '$productQuantity' },
-        quantityFallback: { $first: '$col15' }
+        accountName: { $last: '$col1' },
+        productAttribute: { $last: '$spec' },
+        productAttributeFallback: { $last: '$col13' },
+        productAttributeRawFallback: { $last: '$col7' },
+        quantity: { $last: '$productQuantity' },
+        quantityFallback: { $last: '$col15' }
       }
     },
     { $sort: { orderDateKey: 1, rowNumber: 1 } }
@@ -838,27 +838,27 @@ function getPurchaseOrderGroupStage() {
   return {
     $group: {
       _id: '$col3',
-      rowNumber: { $first: '$rowNumber' },
-      accountName: { $first: '$col1' },
-      imageUrl: { $first: '$col2' },
-      orderId: { $first: '$col3' },
-      orderDateTime: { $first: '$orderDateTime' },
-      totalAmount: { $first: '$totalAmount' },
-      orderDateRawCol4: { $first: '$col4' },
-      orderDateRawCol5: { $first: '$col5' },
-      productLink: { $first: '$col11' },
-      productLinkRawCol6: { $first: '$col6' },
-      productAttribute: { $first: '$spec' },
-      quantity: { $first: '$productQuantity' },
+      rowNumber: { $last: '$rowNumber' },
+      accountName: { $last: '$col1' },
+      imageUrl: { $last: '$col2' },
+      orderId: { $last: '$col3' },
+      orderDateTime: { $last: '$orderDateTime' },
+      totalAmount: { $last: '$totalAmount' },
+      orderDateRawCol4: { $last: '$col4' },
+      orderDateRawCol5: { $last: '$col5' },
+      productLink: { $last: '$col11' },
+      productLinkRawCol6: { $last: '$col6' },
+      productAttribute: { $last: '$spec' },
+      quantity: { $last: '$productQuantity' },
       trackingCandidates: { $push: '$logisticsTrackingCode' },
       fallbackTrackingCandidates: { $push: '$col25' },
-      productAttributeFallback: { $first: '$col13' },
-      productAttributeRawFallback: { $first: '$col7' },
-      quantityFallback: { $first: '$col15' },
-      accountNameFallback: { $first: '$col24' },
-      orderDateFallback: { $first: '$col25' },
-      productLinkFallback: { $first: '$col27' },
-      orderDateKey: { $first: '$orderDateKey' }
+      productAttributeFallback: { $last: '$col13' },
+      productAttributeRawFallback: { $last: '$col7' },
+      quantityFallback: { $last: '$col15' },
+      accountNameFallback: { $last: '$col24' },
+      orderDateFallback: { $last: '$col25' },
+      productLinkFallback: { $last: '$col27' },
+      orderDateKey: { $last: '$orderDateKey' }
     }
   };
 }
@@ -974,9 +974,9 @@ async function buildPurchaseOrderSummaryFromDatabase(sourceFilter) {
     {
       $group: {
         _id: '$col3',
-        orderId: { $first: '$col3' },
-        quantity: { $first: '$productQuantity' },
-        quantityFallback: { $first: '$col15' },
+        orderId: { $last: '$col3' },
+        quantity: { $last: '$productQuantity' },
+        quantityFallback: { $last: '$col15' },
         hasSourceTracking: { $max: { $cond: ['$rowHasTracking', 1, 0] } }
       }
     },
