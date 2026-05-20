@@ -22,6 +22,7 @@ const STATUS_BY_VALUE = STATUS_OPTIONS.reduce((acc, item) => {
 
 const INVALID_TRACKING_VALUES = new Set(['', '未知', '合并订单暂无', 'unknown', 'null', 'undefined']);
 const QUESTION_MARK_TRACKING_PATTERN = /^[?\uFFFD\uFF1F\s]+$/;
+const MONGO_QUESTION_MARK_TRACKING_PATTERN = '^[?\\s]+$';
 const TRACKING_EDGE_REPLACEMENT_PATTERN = /^[?\uFFFD\uFF1F\s:,\-;|/\\]+|[?\uFFFD\uFF1F\s:,\-;|/\\]+$/g;
 
 const ORDER_DATE_TEXT_PATTERN = /^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/;
@@ -958,7 +959,7 @@ async function buildPurchaseOrderSummaryFromDatabase(sourceFilter) {
   const hasTrackingExpression = field => ({
     $and: [
       { $not: [{ $in: [field, invalidTrackingValues] }] },
-      { $not: [{ $regexMatch: { input: field, regex: QUESTION_MARK_TRACKING_PATTERN } }] }
+      { $not: [{ $regexMatch: { input: field, regex: MONGO_QUESTION_MARK_TRACKING_PATTERN } }] }
     ]
   });
   const [summary = {}] = await DataPurchaseOrder.aggregate([
