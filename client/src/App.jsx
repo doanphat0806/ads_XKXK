@@ -22,6 +22,7 @@ import CreaterPage from './pages/CreaterPage';
 import CreateCampaign from './pages/Pages';
 import ShopeeCommission from './pages/ShopeeCommission';
 import OderDashboard from './pages/OderDashboard';
+import ReturnSummary from './pages/ReturnSummary';
 import UserManagement from './pages/UserManagement';
 import ModalContainer from './components/ModalContainer';
 
@@ -42,6 +43,8 @@ function AppContent() {
         return 'Dashboard';
       case '/oder-dashboard':
         return 'Dashboard Đơn Hàng';
+      case '/return-summary':
+        return 'Tổng hoàn';
       case '/user-management':
         return isAdmin ? 'Quản lý tài khoản' : 'Dashboard';
       case '/accounts':
@@ -91,6 +94,7 @@ function AppContent() {
                 <Route path="/oder-dashboard" element={<OderDashboard />} />
                 <Route path="/purchase-orders" element={<PurchaseOrders />} />
                 <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
+                <Route path="/return-summary" element={<ReturnSummary />} />
                 <Route path="*" element={<Navigate to="/oder-dashboard" replace />} />
               </>
             ) : isKho ? (
@@ -98,6 +102,7 @@ function AppContent() {
                 <Route path="/purchase-orders" element={<PurchaseOrders />} />
                 <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
                 <Route path="/oder-dashboard" element={<OderDashboard />} />
+                <Route path="/return-summary" element={<ReturnSummary />} />
                 <Route path="/inventory" element={<Inventory />} />
                 <Route path="/inventory-summary" element={<InventorySummary />} />
                 <Route path="/google-sheets" element={<GoogleSheets />} />
@@ -107,6 +112,7 @@ function AppContent() {
               <>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/oder-dashboard" element={<OderDashboard />} />
+                <Route path="/return-summary" element={<ReturnSummary />} />
                 <Route path="/accounts" element={<Accounts />} />
                 <Route path="/campaigns" element={<Campaigns />} />
                 <Route path="/clone-campaigns" element={<CloneCampaigns />} />

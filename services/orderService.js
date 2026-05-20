@@ -24,6 +24,12 @@ const ordersSheetCache = {
 };
 const orderStatsCache = new Map();
 const orderSheetPageCache = new Map();
+const RETURN_SUMMARY_BUCKETS = [
+  { key: 'san', label: 'Sẵn' },
+  { key: 'sale', label: 'Sale' },
+  { key: 'sale119', label: 'Sale 119+99' },
+  { key: 'od', label: 'Order' }
+];
 
 function buildOrderQuery({ fromDate, toDate } = {}) {
   const query = {
@@ -84,6 +90,97 @@ function normalizeSearchText(value) {
     .trim();
 }
 
+function normalizeMarketingText(value = '') {
+  return normalizeSearchText(value)
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function classifyReturnOrderTagBucket(value = '') {
+  const tokens = normalizeMarketingText(value).split(/\s+/).filter(Boolean);
+  if (!tokens.length) return '';
+
+  const tokenSet = new Set(tokens);
+  const compact = tokens.join('');
+  if (
+    tokenSet.has('sale119') ||
+    tokenSet.has('sale99') ||
+    tokenSet.has('99') ||
+    compact.includes('sale119') ||
+    compact.includes('sale99') ||
+    (tokenSet.has('sale') && (tokenSet.has('119') || tokenSet.has('99')))
+  ) {
+    return 'sale119';
+  }
+  if (tokenSet.has('san') || compact.includes('san')) return 'san';
+  if (tokenSet.has('sale') || compact.includes('sale')) return 'sale';
+  if (
+    tokenSet.has('od') ||
+    tokenSet.has('oder') ||
+    tokenSet.has('order') ||
+    compact.includes('oder') ||
+    compact.includes('order')
+  ) {
+    return 'od';
+  }
+  return '';
+}
+
+function classifyReturnAdNameBucket(value = '') {
+  const tokens = normalizeMarketingText(value).split(/\s+/).filter(Boolean);
+  if (!tokens.length) return '';
+
+  const tokenSet = new Set(tokens);
+  const compact = tokens.join('');
+  if (
+    tokenSet.has('xa') ||
+    tokenSet.has('99') ||
+    tokenSet.has('sale99') ||
+    compact.includes('xa') ||
+    tokenSet.has('sale119') ||
+    compact.includes('sale99') ||
+    compact.includes('sale119') ||
+    (tokenSet.has('sale') && (tokenSet.has('119') || tokenSet.has('99')))
+  ) {
+    return 'sale119';
+  }
+  if (tokenSet.has('san') || compact.includes('san')) return 'san';
+  if (tokenSet.has('sale') || compact.includes('sale')) return 'sale';
+  if (
+    tokenSet.has('win') ||
+    tokenSet.has('test') ||
+    tokenSet.has('od') ||
+    tokenSet.has('oder') ||
+    tokenSet.has('order') ||
+    compact.includes('oder') ||
+    compact.includes('order')
+  ) {
+    return 'od';
+  }
+  return '';
+}
+
+function getOrderTagText(order = {}) {
+  const raw = order.rawData || {};
+  const sheet = raw.sheetColumns || {};
+  const tags = Array.isArray(raw.tags) ? raw.tags.join(' ') : raw.tags;
+  return [sheet.col13, tags].filter(Boolean).join(' ');
+}
+
+function getOrderDateKey(order = {}) {
+  if (order.dateKey) return order.dateKey;
+
+  const raw = order.rawData || {};
+  const sheet = raw.sheetColumns || {};
+  const sheetDateKey = parseSheetDateKey(sheet.col2);
+  if (sheetDateKey) return sheetDateKey;
+
+  const timestamp = new Date(order.createdAt || 0).getTime();
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
+
+  return new Date(timestamp + VN_OFFSET_MS).toISOString().split('T')[0];
+}
+
 function normalizeStatusKey(value) {
   return String(value || '')
     .normalize('NFD')
@@ -103,6 +200,17 @@ function classifyReturnStatus(order = {}) {
   if (status.includes('da hoan')) return 'returned';
   if (status.includes('da nhan')) return 'received';
   return '';
+}
+
+function isUnshippedSummaryStatus(order = {}) {
+  const rawStatus = order.status || order.rawData?.status_name || order.rawData?.status || '';
+  const status = normalizeStatusKey(rawStatus);
+  if (!status) return false;
+
+  return status === 'moi' ||
+    status === 'new' ||
+    status.includes('don moi') ||
+    status.includes('cho hang');
 }
 
 function incrementReturnStats(stats, status, amount = 1) {
@@ -408,6 +516,126 @@ function buildOrderSkuStats(orders = []) {
   return { counts, totalOrders, returnStats, returnStatsBySku };
 }
 
+function createReturnProductRateStats(key, label) {
+  return {
+    key,
+    label,
+    returned: 0,
+    returning: 0,
+    received: 0,
+    returnCount: 0,
+    denominator: 0,
+    rate: 0
+  };
+}
+
+function finalizeReturnProductRateStats(stats = {}) {
+  const returned = Number(stats.returned || 0);
+  const returning = Number(stats.returning || 0);
+  const received = Number(stats.received || 0);
+  const returnCount = returned + returning;
+  const denominator = returnCount + received;
+
+  return {
+    ...stats,
+    returned,
+    returning,
+    received,
+    returnCount,
+    denominator,
+    rate: denominator > 0 ? returnCount / denominator : 0
+  };
+}
+
+function getOrderReturnProductUnitCount(order = {}) {
+  const skus = new Set();
+  for (const item of getOrderItemsFromRaw(order.rawData || {})) {
+    const sku = normalizeSkuKey(getOrderItemSku(item));
+    if (sku) skus.add(sku);
+  }
+  return skus.size;
+}
+
+function buildReturnProductRateStats(orders = []) {
+  const categories = RETURN_SUMMARY_BUCKETS.reduce((acc, bucket) => {
+    acc[bucket.key] = createReturnProductRateStats(bucket.key, bucket.label);
+    return acc;
+  }, {});
+  const total = createReturnProductRateStats('total', 'Tổng');
+
+  for (const order of orders) {
+    const returnStatus = classifyReturnStatus(order);
+    if (!['returned', 'returning', 'received'].includes(returnStatus)) continue;
+
+    const productUnitCount = getOrderReturnProductUnitCount(order);
+    if (productUnitCount <= 0) continue;
+
+    incrementReturnStats(total, returnStatus, productUnitCount);
+
+    const bucketKey = classifyReturnOrderTagBucket(getOrderTagText(order));
+    if (bucketKey && categories[bucketKey]) {
+      incrementReturnStats(categories[bucketKey], returnStatus, productUnitCount);
+    }
+  }
+
+  return {
+    total: finalizeReturnProductRateStats(total),
+    categories: RETURN_SUMMARY_BUCKETS.map(bucket => finalizeReturnProductRateStats(categories[bucket.key]))
+  };
+}
+
+function buildReturnSummaryOrderStats(orders = [], { fromDate = '', toDate = '' } = {}) {
+  const categories = RETURN_SUMMARY_BUCKETS.reduce((acc, bucket) => {
+    acc[bucket.key] = {
+      key: bucket.key,
+      label: bucket.label,
+      orderCount: 0
+    };
+    return acc;
+  }, {});
+  const daily = {};
+  const total = { orderCount: 0, shippedOrderCount: 0, shipRate: 0 };
+
+  for (const order of orders) {
+    const dateKey = getOrderDateKey(order);
+    if (!dateKey) continue;
+    if (fromDate && dateKey < fromDate) continue;
+    if (toDate && dateKey > toDate) continue;
+
+    const orderId = String(order.orderId || order.rawData?.sheetColumns?.col12 || '').trim();
+    if (!orderId) continue;
+
+    if (!daily[dateKey]) {
+      daily[dateKey] = RETURN_SUMMARY_BUCKETS.reduce((acc, bucket) => {
+        acc[bucket.key] = { orderCount: 0 };
+        return acc;
+      }, { total: { orderCount: 0, shippedOrderCount: 0, shipRate: 0 } });
+    }
+
+    total.orderCount += 1;
+    daily[dateKey].total.orderCount += 1;
+    if (!isUnshippedSummaryStatus(order)) {
+      total.shippedOrderCount += 1;
+      daily[dateKey].total.shippedOrderCount += 1;
+    }
+
+    const bucketKey = classifyReturnOrderTagBucket(getOrderTagText(order));
+    if (!bucketKey || !categories[bucketKey]) continue;
+
+    categories[bucketKey].orderCount += 1;
+    daily[dateKey][bucketKey].orderCount += 1;
+  }
+
+  total.shipRate = total.orderCount > 0 ? total.shippedOrderCount / total.orderCount : 0;
+  Object.values(daily).forEach(day => {
+    day.total.shipRate = day.total.orderCount > 0
+      ? day.total.shippedOrderCount / day.total.orderCount
+      : 0;
+  });
+
+  return { categories, daily, total };
+}
+
 async function fetchOrderSheetRows({ refresh = false } = {}) {
   if (!ORDERS_SHEET_ID) {
     throw new Error('Chua cau hinh ORDERS_SHEET_ID');
@@ -575,6 +803,12 @@ module.exports = {
   normalizeStatusKey,
   orderMatchesSearch,
   classifyReturnStatus,
+  classifyReturnOrderTagBucket,
+  classifyReturnAdNameBucket,
+  classifyReturnSummaryBucket: classifyReturnOrderTagBucket,
+  buildReturnSummaryOrderStats,
+  buildReturnProductRateStats,
+  RETURN_SUMMARY_BUCKETS,
   useSheetOrders,
   buildOrderSkuStats,
   buildOrderTableStats,

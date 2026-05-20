@@ -13,6 +13,7 @@ import {
   Megaphone,
   Package,
   PenSquare,
+  RotateCcw,
   ShoppingCart,
   Settings,
   Users,
@@ -98,6 +99,9 @@ export default function Sidebar() {
           </NavLink>
           <NavLink to="/oder-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dashboard Dat Hang">
             <span className="icon"><BarChart3 size={16} strokeWidth={2} /></span><span>Dashboard Đặt Hàng</span>
+          </NavLink>
+          <NavLink to="/return-summary" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Tong hoan">
+            <span className="icon"><RotateCcw size={16} strokeWidth={2} /></span><span>Tổng hoàn</span>
           </NavLink>
         </>
       )}

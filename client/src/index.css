@@ -3790,6 +3790,109 @@
       min-width: 0;
     }
 
+    #page-return-summary {
+      min-width: 0;
+    }
+
+    #page-return-summary .return-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      padding: 0;
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+    }
+
+    #page-return-summary .return-toolbar-card {
+      padding: 0;
+      overflow: hidden;
+    }
+
+    #page-return-summary .return-source {
+      margin-top: 6px;
+      color: var(--muted2);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    #page-return-summary .return-product-rate-panel {
+      min-width: 0;
+      flex: 1 1 100%;
+    }
+
+    #page-return-summary .return-product-rate-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    #page-return-summary .return-product-rate-box {
+      min-width: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--s1);
+    }
+
+    #page-return-summary .return-product-rate-label {
+      color: var(--muted2);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+
+    #page-return-summary .return-product-rate-value {
+      color: var(--r);
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 800;
+      line-height: 1.1;
+      margin-top: 6px;
+    }
+
+    #page-return-summary .return-product-rate-sub {
+      color: var(--muted2);
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.35;
+      margin-top: 4px;
+    }
+
+    #page-return-summary .return-table-wrap {
+      max-height: 68vh;
+    }
+
+    #page-return-summary .return-summary-table {
+      min-width: 680px;
+    }
+
+    #page-return-summary .return-daily-table {
+      min-width: 1680px;
+    }
+
+    #page-return-summary .return-summary-table thead th,
+    #page-return-summary .return-daily-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--s2);
+    }
+
+    #page-return-summary .return-total-row td {
+      background: rgba(24, 201, 200, 0.12);
+      color: var(--txt);
+      font-weight: 800;
+    }
+
+    #page-return-summary .return-cpo-warn {
+      color: var(--r);
+      font-weight: 800;
+    }
+
     #page-orders {
       min-width: 0;
     }
@@ -4011,6 +4114,14 @@
     }
 
     @media (max-width: 1200px) {
+      #page-return-summary .return-summary-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      #page-return-summary .return-product-rate-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
       #page-orders .orders-summary-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
@@ -4025,11 +4136,17 @@
     }
 
     @media (max-width: 640px) {
+      #page-return-summary .return-summary-grid,
       #page-orders .orders-filter-grid,
       #page-orders .orders-summary-grid {
         grid-template-columns: 1fr;
       }
 
+      #page-return-summary .return-product-rate-grid {
+        grid-template-columns: 1fr;
+      }
+
+      #page-return-summary .return-toolbar-card .card-header,
       #page-orders .orders-filter-card .card-header,
       #page-orders .orders-table-header {
         align-items: flex-start;

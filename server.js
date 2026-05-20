@@ -159,6 +159,10 @@ const {
   normalizeStatusKey,
   buildOrderSkuStats,
   buildOrderTableStats,
+  buildReturnSummaryOrderStats,
+  buildReturnProductRateStats,
+  classifyReturnAdNameBucket,
+  RETURN_SUMMARY_BUCKETS,
   fetchOrderSheetRows,
   getOrderSheetPage,
   getOrderSheetOrders,
@@ -7872,6 +7876,258 @@ app.get('/api/orders/sku-counts', async (req, res) => {
     }
 
     res.json({ ok: true, ...stats });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+function createReturnSummaryBucketMap() {
+  return RETURN_SUMMARY_BUCKETS.reduce((acc, bucket) => {
+    acc[bucket.key] = {
+      key: bucket.key,
+      label: bucket.label,
+      orderCount: 0,
+      amount: 0,
+      costPerOrder: 0
+    };
+    return acc;
+  }, {});
+}
+
+function finalizeReturnSummaryBucket(bucket = {}) {
+  const orderCount = Number(bucket.orderCount || 0);
+  const amount = Number(bucket.amount || 0);
+  return {
+    ...bucket,
+    orderCount,
+    amount,
+    costPerOrder: orderCount > 0 ? amount / orderCount : 0
+  };
+}
+
+function makeReturnSummaryDateKeys(fromDate, toDate) {
+  const start = new Date(`${fromDate}T00:00:00Z`);
+  const end = new Date(`${toDate}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
+
+  const keys = [];
+  for (let cursor = start, guard = 0; cursor <= end && guard < 370; guard += 1) {
+    keys.push(cursor.toISOString().split('T')[0]);
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return keys;
+}
+
+function getReturnSummaryDailyRow(dailyMap, dateKey) {
+  if (!dailyMap.has(dateKey)) {
+    dailyMap.set(dateKey, {
+      date: dateKey,
+      categories: createReturnSummaryBucketMap(),
+      totalOrderCount: 0,
+      totalShippedOrderCount: 0
+    });
+  }
+  return dailyMap.get(dateKey);
+}
+
+function finalizeReturnSummaryDailyRow(row = {}) {
+  const categories = RETURN_SUMMARY_BUCKETS.map(bucket => (
+    finalizeReturnSummaryBucket(row.categories?.[bucket.key] || {
+      key: bucket.key,
+      label: bucket.label
+    })
+  ));
+  const total = finalizeReturnSummaryBucket(categories.reduce((acc, item) => {
+    acc.orderCount += item.orderCount;
+    acc.amount += item.amount;
+    return acc;
+  }, { key: 'total', label: 'Tổng', orderCount: 0, amount: 0 }));
+  const totalOrderCount = Number(row.totalOrderCount);
+  if (Number.isFinite(totalOrderCount) && totalOrderCount >= 0) {
+    total.orderCount = totalOrderCount;
+    total.costPerOrder = total.orderCount > 0 ? total.amount / total.orderCount : 0;
+  }
+  total.shippedOrderCount = Number(row.totalShippedOrderCount || 0);
+  total.shipRate = total.orderCount > 0 ? total.shippedOrderCount / total.orderCount : 0;
+
+  return {
+    date: row.date,
+    categories,
+    total
+  };
+}
+
+function buildProductReturnSummary(orderRows = []) {
+  const skuStats = buildOrderSkuStats(orderRows);
+  const rows = Object.entries(skuStats.returnStatsBySku || {})
+    .map(([sku, stats = {}]) => {
+      const returned = Number(stats.returned || 0);
+      const returning = Number(stats.returning || 0);
+      const received = Number(stats.received || 0);
+      const returnCount = returned + returning;
+      const denominator = Number(stats.denominator || (returnCount + received));
+      return {
+        sku,
+        returned,
+        returning,
+        received,
+        returnCount,
+        denominator,
+        rate: denominator > 0 ? returnCount / denominator : 0
+      };
+    })
+    .filter(row => row.denominator > 0)
+    .sort((a, b) => (
+      (b.rate - a.rate) ||
+      (b.returnCount - a.returnCount) ||
+      (b.denominator - a.denominator) ||
+      a.sku.localeCompare(b.sku)
+    ));
+
+  const total = rows.reduce((acc, row) => {
+    acc.returned += row.returned;
+    acc.returning += row.returning;
+    acc.received += row.received;
+    acc.returnCount += row.returnCount;
+    acc.denominator += row.denominator;
+    return acc;
+  }, {
+    returned: 0,
+    returning: 0,
+    received: 0,
+    returnCount: 0,
+    denominator: 0,
+    rate: 0
+  });
+  total.rate = total.denominator > 0 ? total.returnCount / total.denominator : 0;
+
+  return {
+    rows: rows.slice(0, 100),
+    total
+  };
+}
+
+app.get('/api/return-summary', async (req, res) => {
+  try {
+    const provider = normalizeProvider(req.query.provider || 'facebook');
+    const fromDate = String(req.query.fromDate || '').slice(0, 10);
+    const toDate = String(req.query.toDate || '').slice(0, 10);
+    const refresh = req.query.refresh === 'true' || req.query.refresh === true;
+    const hasValidFromDate = !fromDate || /^\d{4}-\d{2}-\d{2}$/.test(fromDate);
+    const hasValidToDate = !toDate || /^\d{4}-\d{2}-\d{2}$/.test(toDate);
+    if (!hasValidFromDate || !hasValidToDate || (fromDate && toDate && fromDate > toDate)) {
+      return res.status(400).json({ error: 'Khoang ngay khong hop le' });
+    }
+
+    const cacheKey = userScopedCacheKey(req, `return-summary:${provider}:${fromDate || 'all'}:${toDate || 'all'}:${ordersSheetCache.fetchedAt || 0}`);
+    const cached = refresh ? null : getReadCache(cacheKey);
+    if (cached) return res.json(cached);
+
+    const accounts = await Account.find(withUserFilter(req, buildAccountProviderFilter(provider)))
+      .select('_id')
+      .lean();
+    const accountIds = accounts.map(account => account._id);
+    const campaignMatch = {
+      accountId: { $in: accountIds }
+    };
+    if (fromDate || toDate) {
+      campaignMatch.date = {};
+      if (fromDate) campaignMatch.date.$gte = fromDate;
+      if (toDate) campaignMatch.date.$lte = toDate;
+    }
+
+    const [orderRows, campaignRows] = await Promise.all([
+      useSheetOrders()
+        ? getOrderSheetOrders({ fromDate, toDate, limit: 200000, refresh })
+        : Order.find(buildOrderQuery({ fromDate, toDate }))
+          .select('orderId status rawData createdAt')
+          .limit(200000)
+          .lean(),
+      accountIds.length ? Campaign.aggregate([
+        {
+          $match: campaignMatch
+        },
+        {
+          $group: {
+            _id: { date: '$date', adName: '$adName' },
+            date: { $first: '$date' },
+            adName: { $first: '$adName' },
+            amount: { $sum: '$spend' }
+          }
+        },
+        { $project: { _id: 0, date: 1, adName: 1, amount: 1 } }
+      ]).allowDiskUse(true) : Promise.resolve([])
+    ]);
+
+    const orderStats = buildReturnSummaryOrderStats(orderRows, { fromDate, toDate });
+    const productReturnSummary = buildProductReturnSummary(orderRows);
+    const productReturnRateSummary = buildReturnProductRateStats(orderRows);
+    const categories = createReturnSummaryBucketMap();
+    const dailyMap = new Map();
+
+    RETURN_SUMMARY_BUCKETS.forEach(bucket => {
+      categories[bucket.key].orderCount = Number(orderStats.categories?.[bucket.key]?.orderCount || 0);
+    });
+
+    Object.entries(orderStats.daily || {}).forEach(([dateKey, byBucket]) => {
+      const day = getReturnSummaryDailyRow(dailyMap, dateKey);
+      day.totalOrderCount = Number(byBucket?.total?.orderCount || 0);
+      day.totalShippedOrderCount = Number(byBucket?.total?.shippedOrderCount || 0);
+      RETURN_SUMMARY_BUCKETS.forEach(bucket => {
+        day.categories[bucket.key].orderCount = Number(byBucket?.[bucket.key]?.orderCount || 0);
+      });
+    });
+
+    campaignRows.forEach(row => {
+      const dateKey = String(row.date || '').slice(0, 10);
+      if (!dateKey) return;
+      const bucketKey = classifyReturnAdNameBucket(row.adName);
+      if (!bucketKey || !categories[bucketKey]) return;
+
+      const amount = Number(row.amount || 0);
+      categories[bucketKey].amount += amount;
+      getReturnSummaryDailyRow(dailyMap, dateKey).categories[bucketKey].amount += amount;
+    });
+
+    const categoryRows = RETURN_SUMMARY_BUCKETS.map(bucket => finalizeReturnSummaryBucket(categories[bucket.key]));
+    const total = finalizeReturnSummaryBucket(categoryRows.reduce((acc, item) => {
+      acc.amount += item.amount;
+      return acc;
+    }, {
+      key: 'total',
+      label: 'Tổng',
+      orderCount: Number(orderStats.total?.orderCount || 0),
+      amount: 0
+    }));
+    total.shippedOrderCount = Number(orderStats.total?.shippedOrderCount || 0);
+    total.shipRate = total.orderCount > 0 ? total.shippedOrderCount / total.orderCount : 0;
+
+    const fullDateKeys = makeReturnSummaryDateKeys(fromDate, toDate);
+    const dateKeys = fullDateKeys.length > 0 && fullDateKeys.length <= 120
+      ? fullDateKeys
+      : [...dailyMap.keys()].sort();
+    const dailyRows = dateKeys
+      .map(dateKey => finalizeReturnSummaryDailyRow(getReturnSummaryDailyRow(dailyMap, dateKey)))
+      .filter(row => fullDateKeys.length <= 120 || row.total.orderCount > 0 || row.total.amount > 0);
+
+    res.json(setReadCache(cacheKey, {
+      ok: true,
+      source: {
+        orders: useSheetOrders() ? 'google_sheet' : 'database',
+        campaigns: 'database'
+      },
+      fromDate,
+      toDate,
+      provider,
+      categories: categoryRows,
+      total,
+      dailyRows,
+      productReturnRows: productReturnSummary.rows,
+      productReturnTotal: productReturnRateSummary.total,
+      productReturnCategories: productReturnRateSummary.categories,
+      orderTotal: Number(orderStats.total?.orderCount || 0),
+      campaignRowCount: campaignRows.length
+    }));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
