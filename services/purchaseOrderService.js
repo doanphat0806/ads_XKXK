@@ -831,7 +831,7 @@ async function getPurchaseOrderDashboard({ fromDate = '', toDate = '' } = {}) {
     if (status === 'that_lac') day.thatLac += 1;
   });
 
-  const dailyStats = Array.from(dailyMap.values()).sort((a, b) => a.ngay.localeCompare(b.ngay));
+  const dailyStats = Array.from(dailyMap.values()).sort((a, b) => b.ngay.localeCompare(a.ngay));
   dailyStats.forEach(day => {
     day.chuaCoMvdRaw = Number(day.chuaCoMvdRaw || day.chuaCoMvd || 0);
     day.huy = parseNonNegativeInteger(cancellationMap[day.ngay]);
