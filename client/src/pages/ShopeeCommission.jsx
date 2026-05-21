@@ -2,8 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import { api, formatNumber, formatVND, todayString, uploadForm } from '../lib/api';
 import DateRangePicker from '../components/DateRangePicker';
-import { useAppContext } from '../contexts/AppContext';
-import { getGeminiApiKey, removeGeminiApiKeyForUser, requestGeminiMessage } from '../lib/gemini';
+import { removeGeminiApiKey, requestGeminiMessage } from '../lib/gemini';
 
 const DEFAULT_FROM_DATE = '2026-04-27';
 const EMPTY_ARRAY = [];
@@ -176,7 +175,6 @@ Trả lời ngắn gọn bằng tiếng Việt, tập trung vào hành động c
 }
 
 export default function ShopeeCommission() {
-  const { currentUser } = useAppContext();
   const [fromDate, setFromDate] = useState(DEFAULT_FROM_DATE);
   const [toDate, setToDate] = useState(() => todayString());
   const [summary, setSummary] = useState(null);
@@ -248,15 +246,8 @@ export default function ShopeeCommission() {
   ), [commissionBySubId]);
 
   const callAi = async ({ system = '', messages = [] }) => {
-    const apiKey = getGeminiApiKey(currentUser);
-    if (!apiKey) {
-      toast.error('Vui lòng nhập Gemini API Key');
-      return null;
-    }
-
     try {
       return await requestGeminiMessage({
-        apiKey,
         system,
         messages,
         maxTokens: 1500,
@@ -264,20 +255,21 @@ export default function ShopeeCommission() {
       });
     } catch (error) {
       console.error('Gemini API error:', error);
-      if (error?.status === 401) {
-        removeGeminiApiKeyForUser(currentUser);
-      }
       toast.error(getAiErrorMessage(error));
       throw error;
     }
   };
 
-  const clearInvalidAiKey = () => {
-    removeGeminiApiKeyForUser(currentUser);
-    setAiError('');
-    setAiBudgetError('');
-    setChatError('');
-    toast.info('Đã xóa API Key lỗi. Nhập key mới ở thanh trên cùng.');
+  const clearInvalidAiKey = async () => {
+    try {
+      await removeGeminiApiKey();
+      setAiError('');
+      setAiBudgetError('');
+      setChatError('');
+      toast.info('Đã xóa API Key lỗi khỏi database. Nhập key mới ở thanh trên cùng.');
+    } catch (error) {
+      toast.error(`Xóa Gemini key lỗi: ${error.message}`);
+    }
   };
 
   const runAiAnalysis = async (sourceSummary = summary, retryOnRateLimit = true) => {

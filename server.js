@@ -838,12 +838,14 @@ async function getAccountAutoConfig(account) {
 async function getEffectiveSecrets(account) {
   const config = await getAppConfig();
   let ownerFbToken = '';
+  let ownerGeminiKey = '';
   if (account.ownerUserId) {
-    const owner = await User.findById(account.ownerUserId).select('fbToken').lean();
+    const owner = await User.findById(account.ownerUserId).select('fbToken geminiKey').lean();
     ownerFbToken = owner?.fbToken || '';
+    ownerGeminiKey = owner?.geminiKey || '';
   }
   let fbToken = account.fbToken || ownerFbToken || config?.fbToken || '';
-  let geminiKey = account.geminiKey || config?.geminiKey || '';
+  let geminiKey = account.geminiKey || ownerGeminiKey || config?.geminiKey || '';
   return { fbToken, geminiKey };
 }
 
@@ -4258,7 +4260,8 @@ app.post('/api/auth/login', async (req, res) => {
         id: user._id,
         username: user.username,
         displayName: user.displayName || user.username,
-        provider: user.provider
+        provider: user.provider,
+        hasGeminiKey: Boolean(user.geminiKey)
       }
     });
   } catch (error) {
@@ -4273,9 +4276,55 @@ app.get('/api/auth/me', authenticateApiRequest, async (req, res) => {
       id: req.currentUser._id,
       username: req.currentUser.username,
       displayName: req.currentUser.displayName || req.currentUser.username,
-      provider: req.currentUser.provider
+      provider: req.currentUser.provider,
+      hasGeminiKey: Boolean(req.currentUser.geminiKey)
     }
   });
+});
+
+app.get('/api/ai/gemini/key-status', async (req, res) => {
+  res.json({ ok: true, hasGeminiKey: Boolean(req.currentUser?.geminiKey) });
+});
+
+app.put('/api/ai/gemini/key', async (req, res) => {
+  try {
+    const apiKey = String(req.body?.apiKey || '').trim();
+    if (!apiKey) return res.status(400).json({ error: 'Vui long nhap Gemini API Key' });
+
+    await requestGeminiGenerateContent({
+      apiKey,
+      messages: [{ role: 'user', content: 'ping' }],
+      maxTokens: 16,
+      timeout: 30000
+    });
+
+    await User.findByIdAndUpdate(req.currentUser._id, {
+      geminiKey: apiKey,
+      updatedAt: new Date()
+    });
+
+    res.json({ ok: true, hasGeminiKey: true });
+  } catch (error) {
+    const status = error.response?.status || (error.code === 'ECONNABORTED' ? 504 : 500);
+    const geminiError = extractGeminiError(error);
+    res.status(status).json({
+      error: typeof geminiError === 'string' ? geminiError : 'Gemini API loi',
+      type: error.response?.data?.error?.status || '',
+      status
+    });
+  }
+});
+
+app.delete('/api/ai/gemini/key', async (req, res) => {
+  try {
+    await User.findByIdAndUpdate(req.currentUser._id, {
+      geminiKey: '',
+      updatedAt: new Date()
+    });
+    res.json({ ok: true, hasGeminiKey: false });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 app.post('/api/ai/claude', async (req, res) => {
@@ -4319,7 +4368,7 @@ app.post('/api/ai/claude', async (req, res) => {
 
 app.post('/api/ai/gemini', async (req, res) => {
   try {
-    const apiKey = String(req.body?.apiKey || '').trim();
+    const apiKey = String(req.currentUser?.geminiKey || '').trim();
     if (!apiKey) return res.status(400).json({ error: 'Vui long nhap Gemini API Key' });
 
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];

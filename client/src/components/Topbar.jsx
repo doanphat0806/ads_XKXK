@@ -3,66 +3,49 @@ import { useAppContext } from '../contexts/AppContext';
 import { api } from '../lib/api';
 import { toast } from 'react-toastify';
 import {
-  getGeminiApiKey,
   hasGeminiApiKey,
+  loadGeminiApiKeyStatus,
   onGeminiApiKeyChange,
-  removeGeminiApiKeyForUser,
-  saveGeminiApiKeyForUser,
-  testGeminiApiKey
+  removeGeminiApiKey,
+  saveGeminiApiKey
 } from '../lib/gemini';
 
 export default function Topbar({ title }) {
   const { provider, currentUser, logout, refreshAll, loadAccounts, openModal } = useAppContext();
   const [discovering, setDiscovering] = React.useState(false);
   const [geminiKeyInput, setGeminiKeyInput] = React.useState('');
-  const [geminiReady, setGeminiReady] = React.useState(() => hasGeminiApiKey(currentUser));
+  const [geminiReady, setGeminiReady] = React.useState(() => hasGeminiApiKey());
   const [testingGeminiKey, setTestingGeminiKey] = React.useState(false);
   const showAdActions = provider !== 'oder' && provider !== 'kho';
 
   React.useEffect(() => {
-    const syncGeminiStatus = () => setGeminiReady(hasGeminiApiKey(currentUser));
+    const syncGeminiStatus = () => setGeminiReady(hasGeminiApiKey());
     syncGeminiStatus();
     return onGeminiApiKeyChange(syncGeminiStatus);
+  }, []);
+
+  React.useEffect(() => {
+    if (!currentUser) return;
+    loadGeminiApiKeyStatus()
+      .then(hasKey => setGeminiReady(hasKey))
+      .catch(error => console.warn('Failed to load Gemini key status', error));
   }, [currentUser]);
 
-  const saveGeminiKey = () => {
-    if (!saveGeminiApiKeyForUser(currentUser, geminiKeyInput)) {
-      toast.error('Vui lòng nhập Gemini API Key');
-      return;
-    }
-    setGeminiKeyInput('');
-    setGeminiReady(Boolean(getGeminiApiKey(currentUser)));
-    toast.success('Đã lưu Gemini API Key');
-  };
-
-  const removeGeminiKey = () => {
-    if (!window.confirm('Bạn chắc chắn muốn xóa Gemini API Key của tài khoản này?')) return;
-    removeGeminiApiKeyForUser(currentUser);
-    setGeminiKeyInput('');
-    setGeminiReady(false);
-    toast.success('Đã xóa Gemini API Key');
-  };
-
-  const testCurrentGeminiKey = async () => {
-    const apiKey = geminiKeyInput.trim() || getGeminiApiKey(currentUser);
-    if (!apiKey) {
+  const saveGeminiKey = async () => {
+    if (!geminiKeyInput.trim()) {
       toast.error('Vui lòng nhập Gemini API Key');
       return;
     }
 
     setTestingGeminiKey(true);
     try {
-      await testGeminiApiKey(apiKey);
-      if (geminiKeyInput.trim()) {
-        saveGeminiApiKeyForUser(currentUser, geminiKeyInput);
-        setGeminiKeyInput('');
-      }
+      await saveGeminiApiKey(geminiKeyInput);
+      setGeminiKeyInput('');
       setGeminiReady(true);
-      toast.success('Gemini API Key hợp lệ');
+      toast.success('Gemini API Key hợp lệ và đã lưu vào database');
     } catch (error) {
-      console.error('Gemini key test failed:', error);
+      console.error('Gemini key save failed:', error);
       if (error?.status === 401) {
-        removeGeminiApiKeyForUser(currentUser);
         setGeminiReady(false);
         toast.error('API Key không hợp lệ hoặc không dùng được với Gemini API');
         return;
@@ -71,9 +54,21 @@ export default function Topbar({ title }) {
         toast.error('Đã vượt rate limit, thử lại sau 60 giây');
         return;
       }
-      toast.error(`Test Gemini key lỗi: ${error.message}`);
+      toast.error(`Lưu Gemini key lỗi: ${error.message}`);
     } finally {
       setTestingGeminiKey(false);
+    }
+  };
+
+  const removeGeminiKey = async () => {
+    if (!window.confirm('Bạn chắc chắn muốn xóa Gemini API Key của tài khoản này?')) return;
+    try {
+      await removeGeminiApiKey();
+      setGeminiKeyInput('');
+      setGeminiReady(false);
+      toast.success('Đã xóa Gemini API Key khỏi database');
+    } catch (error) {
+      toast.error(`Xóa Gemini key lỗi: ${error.message}`);
     }
   };
 
@@ -126,9 +121,8 @@ export default function Topbar({ title }) {
                 }}
                 aria-label="Gemini API Key"
               />
-              <button className="btn btn-ghost btn-sm" onClick={saveGeminiKey}>Lưu</button>
-              <button className="btn btn-ghost btn-sm" onClick={testCurrentGeminiKey} disabled={testingGeminiKey}>
-                {testingGeminiKey ? 'Đang test...' : 'Test key'}
+              <button className="btn btn-ghost btn-sm" onClick={saveGeminiKey} disabled={testingGeminiKey}>
+                {testingGeminiKey ? 'Đang lưu...' : 'Lưu'}
               </button>
               {geminiReady && (
                 <>

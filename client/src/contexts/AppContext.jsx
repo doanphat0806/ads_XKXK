@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { api, cachedApi, readResponseCache, todayString } from '../lib/api';
 import { toast } from 'react-toastify';
-import { activateGeminiApiKeyForUser, clearActiveGeminiApiKey } from '../lib/gemini';
+import { setGeminiKeyStatus } from '../lib/gemini';
 
 const AppContext = createContext();
 
@@ -33,7 +33,7 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => {
     if (isAuthenticated && currentUser) {
-      activateGeminiApiKeyForUser(currentUser);
+      setGeminiKeyStatus(Boolean(currentUser.hasGeminiKey));
     }
   }, [isAuthenticated, currentUser]);
 
@@ -43,7 +43,7 @@ export const AppProvider = ({ children }) => {
       localStorage.setItem('adsctrl-token', result.token);
       localStorage.setItem('adsctrl-provider', result.user?.provider || type);
       localStorage.setItem('adsctrl-user', JSON.stringify(result.user || null));
-      activateGeminiApiKeyForUser(result.user || null);
+      setGeminiKeyStatus(Boolean(result.user?.hasGeminiKey));
       setCurrentUser(result.user || null);
       setIsAuthenticated(true);
       setProvider(result.user?.provider || type);
@@ -60,7 +60,7 @@ export const AppProvider = ({ children }) => {
     localStorage.removeItem('adsctrl-auth');
     localStorage.removeItem('adsctrl-provider');
     localStorage.removeItem('adsctrl-user');
-    clearActiveGeminiApiKey();
+    setGeminiKeyStatus(false);
     sessionStorage.clear();
     setCurrentUser(null);
     setStats({});
