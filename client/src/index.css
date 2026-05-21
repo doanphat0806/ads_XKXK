@@ -663,6 +663,11 @@
       white-space: nowrap;
     }
 
+    .topbar-claude-remove {
+      border-color: rgba(244, 63, 94, 0.3);
+      color: var(--r);
+    }
+
     .content {
       padding: 24px 28px;
       flex: 1;
@@ -1677,6 +1682,14 @@
 
     #page-shopee-commission .shopee-ai-error.compact {
       margin: 0;
+    }
+
+    #page-shopee-commission .shopee-ai-error-actions {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
     #page-shopee-commission .shopee-module-grid {

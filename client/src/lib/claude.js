@@ -81,6 +81,14 @@ export function saveClaudeApiKeyForUser(user, apiKey) {
   return true;
 }
 
+export function removeClaudeApiKeyForUser(user) {
+  const scopedStorageKey = getScopedStorageKey(user);
+  if (scopedStorageKey) localStorage.removeItem(scopedStorageKey);
+  localStorage.removeItem(CLAUDE_API_KEY_STORAGE_KEY);
+  localStorage.removeItem(CLAUDE_API_KEY_OWNER_STORAGE_KEY);
+  notifyClaudeApiKeyChange();
+}
+
 export async function requestClaudeMessage({ apiKey, system = '', messages = [], maxTokens = 1500, timeoutMs = 30000 }) {
   return api('POST', '/ai/claude', {
     apiKey,

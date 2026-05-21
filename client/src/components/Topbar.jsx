@@ -6,6 +6,7 @@ import {
   getClaudeApiKey,
   hasClaudeApiKey,
   onClaudeApiKeyChange,
+  removeClaudeApiKeyForUser,
   saveClaudeApiKeyForUser
 } from '../lib/claude';
 
@@ -30,6 +31,14 @@ export default function Topbar({ title }) {
     setClaudeKeyInput('');
     setClaudeReady(Boolean(getClaudeApiKey(currentUser)));
     toast.success('Đã lưu Claude API Key');
+  };
+
+  const removeClaudeKey = () => {
+    if (!window.confirm('Bạn chắc chắn muốn xóa Claude API Key của tài khoản này?')) return;
+    removeClaudeApiKeyForUser(currentUser);
+    setClaudeKeyInput('');
+    setClaudeReady(false);
+    toast.success('Đã xóa Claude API Key');
   };
 
   const handleAutoDiscover = async () => {
@@ -82,7 +91,12 @@ export default function Topbar({ title }) {
                 aria-label="Claude API Key"
               />
               <button className="btn btn-ghost btn-sm" onClick={saveClaudeKey}>Lưu</button>
-              {claudeReady && <span className="ai-ready-badge">🤖 AI sẵn sàng</span>}
+              {claudeReady && (
+                <>
+                  <span className="ai-ready-badge">🤖 AI sẵn sàng</span>
+                  <button className="btn btn-ghost btn-sm topbar-claude-remove" onClick={removeClaudeKey}>Xóa key</button>
+                </>
+              )}
             </div>
             <button className="btn btn-ghost btn-sm" onClick={refreshAll}>Lam moi</button>
             <button

@@ -3,7 +3,7 @@ import { toast } from 'react-toastify';
 import { api, formatNumber, formatVND, todayString, uploadForm } from '../lib/api';
 import DateRangePicker from '../components/DateRangePicker';
 import { useAppContext } from '../contexts/AppContext';
-import { getClaudeApiKey, requestClaudeMessage } from '../lib/claude';
+import { getClaudeApiKey, removeClaudeApiKeyForUser, requestClaudeMessage } from '../lib/claude';
 
 const DEFAULT_FROM_DATE = '2026-04-27';
 const EMPTY_ARRAY = [];
@@ -264,9 +264,20 @@ export default function ShopeeCommission() {
       });
     } catch (error) {
       console.error('Claude API error:', error);
+      if (error?.status === 401) {
+        removeClaudeApiKeyForUser(currentUser);
+      }
       toast.error(getClaudeErrorMessage(error));
       throw error;
     }
+  };
+
+  const clearInvalidClaudeKey = () => {
+    removeClaudeApiKeyForUser(currentUser);
+    setAiError('');
+    setAiBudgetError('');
+    setChatError('');
+    toast.info('Đã xóa API Key lỗi. Nhập key mới ở thanh trên cùng.');
   };
 
   const runAiAnalysis = async (sourceSummary = summary, retryOnRateLimit = true) => {
@@ -468,7 +479,12 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chỉ trả về JSON.`;
           ) : aiError ? (
             <div className="shopee-ai-error">
               <span>{aiError}</span>
-              <button className="btn btn-ghost btn-sm" onClick={() => runAiAnalysis()}>Thử lại</button>
+              <div className="shopee-ai-error-actions">
+                {aiError.includes('API Key') && (
+                  <button className="btn btn-ghost btn-sm" onClick={clearInvalidClaudeKey}>Xóa key lỗi</button>
+                )}
+                <button className="btn btn-ghost btn-sm" onClick={() => runAiAnalysis()}>Thử lại</button>
+              </div>
             </div>
           ) : (
             <div className="shopee-ai-content">
@@ -596,7 +612,12 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chỉ trả về JSON.`;
                 ) : aiBudgetError ? (
                   <div className="shopee-ai-error compact">
                     <span>{aiBudgetError}</span>
-                    <button className="btn btn-ghost btn-sm" onClick={() => runAiBudgetPlan()}>Thử lại</button>
+                    <div className="shopee-ai-error-actions">
+                      {aiBudgetError.includes('API Key') && (
+                        <button className="btn btn-ghost btn-sm" onClick={clearInvalidClaudeKey}>Xóa key lỗi</button>
+                      )}
+                      <button className="btn btn-ghost btn-sm" onClick={() => runAiBudgetPlan()}>Thử lại</button>
+                    </div>
                   </div>
                 ) : aiBudgetPlan ? (
                   <>
@@ -770,19 +791,24 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chỉ trả về JSON.`;
               {chatError && (
                 <div className="shopee-ai-error compact">
                   <span>{chatError}</span>
-                  {chatRetryRequest && (
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => requestSubIdChat(
-                        chatRetryRequest.row,
-                        chatRetryRequest.apiMessages,
-                        chatRetryRequest.displayMessages,
-                        false
-                      )}
-                    >
-                      Thử lại
-                    </button>
-                  )}
+                  <div className="shopee-ai-error-actions">
+                    {chatError.includes('API Key') && (
+                      <button className="btn btn-ghost btn-sm" onClick={clearInvalidClaudeKey}>Xóa key lỗi</button>
+                    )}
+                    {chatRetryRequest && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => requestSubIdChat(
+                          chatRetryRequest.row,
+                          chatRetryRequest.apiMessages,
+                          chatRetryRequest.displayMessages,
+                          false
+                        )}
+                      >
+                        Thử lại
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
