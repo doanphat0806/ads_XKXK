@@ -2478,27 +2478,7 @@ async function fetchCampaignMetaMap(fbToken, campaignIds = []) {
 }
 
 async function fetchCampaignBidAmountMap(fbToken, campaignIds = []) {
-  const bidAmountByCampaignId = new Map();
-  const normalizedIds = [...new Set((campaignIds || []).map(id => String(id || '').trim()).filter(Boolean))];
-  for (const campaignId of normalizedIds) {
-    try {
-      const { items } = await fetchAllFbEdge(fbToken, `${campaignId}/adsets`, {
-        fields: 'id,bid_amount',
-        limit: 50
-      }, {
-        requestOptions: { retries: 1, rateLimitRetries: 1 }
-      });
-      const bids = (items || [])
-        .map(item => Number(item?.bid_amount || 0))
-        .filter(value => Number.isFinite(value) && value > 0);
-      if (bids.length) {
-        bidAmountByCampaignId.set(campaignId, Math.round(bids.reduce((sum, value) => sum + value, 0) / bids.length));
-      }
-    } catch (error) {
-      console.warn(`[campaigns:bid] skip campaign ${campaignId}: ${error.message}`);
-    }
-  }
-  return bidAmountByCampaignId;
+  return new Map();
 }
 
 async function fetchCampaignMetaMapBestEffort(fbToken, campaignIds = []) {
@@ -3435,7 +3415,7 @@ async function fetchShopeeAccountData(account) {
     }
 
     const campaignMetaById = await fetchCampaignMetaMap(fbToken, [...campaignIds]);
-    const campaignBidAmountById = await fetchCampaignBidAmountMap(fbToken, [...campaignIds]);
+    const campaignBidAmountById = new Map();
 
     for (const insight of metricInsights) {
       const campaignId = String(insight.campaign_id);
@@ -3502,10 +3482,7 @@ async function fetchAccountData(account) {
     ...existingCampaigns.map(campaign => String(campaign.campaignId || '').trim()).filter(Boolean)
   ]);
   const campaignMetaById = await fetchCampaignMetaMap(fbToken, [...allCampaignIds]);
-  const shouldFetchBidAmount = normalizeProvider(account?.provider) === 'shopee';
-  const campaignBidAmountById = shouldFetchBidAmount
-    ? await fetchCampaignBidAmountMap(fbToken, [...allCampaignIds])
-    : new Map();
+  const campaignBidAmountById = await fetchCampaignBidAmountMap(fbToken, [...allCampaignIds]);
 
   let insightTotalSpend = 0;
   let insightTotalMessages = 0;
@@ -4176,15 +4153,26 @@ async function syncTodayCampaignSpendForAccount(account) {
 
   accountRuns[accountId] = true;
   try {
-    if (account.provider === 'shopee') {
-      await fetchShopeeAccountData(account);
-    } else {
-      await fetchAccountData(account);
-    }
+    const result = account.provider === 'shopee'
+      ? await fetchShopeeAccountData(account)
+      : await fetchAccountData(account);
+
     await Account.findByIdAndUpdate(account._id, {
       lastChecked: new Date(),
       status: 'connected'
     });
+
+    if (account.provider === 'shopee') {
+      const campaignCount = result.campaigns ? result.campaigns.length : 0;
+      const spendText = (result.totalSpend || 0).toLocaleString() + 'đ';
+      await addLog(
+        account._id,
+        account.name,
+        'success',
+        `Tự động đồng bộ thành công: cập nhật ${campaignCount} chiến dịch, tổng chi tiêu hôm nay ${spendText}`
+      );
+    }
+
     return { ok: true };
   } catch (error) {
     if (!isMongoReady()) return { skipped: true, error: error.message };
@@ -5593,6 +5581,15 @@ app.post('/api/accounts/:id/refresh', async (req, res) => {
       status: 'connected'
     });
 
+    const campaignCount = result.campaigns ? result.campaigns.length : 0;
+    const spendText = (result.totalSpend || 0).toLocaleString() + 'đ';
+    await addLog(
+      account._id,
+      account.name,
+      'success',
+      `Làm mới dữ liệu thành công: cập nhật ${campaignCount} chiến dịch, tổng chi tiêu hôm nay ${spendText}`
+    );
+
     res.json({ ok: true, ...result });
   } catch (error) {
     const account = await Account.findOne(withUserFilter(req, { _id: req.params.id })).catch(() => null);
@@ -6594,12 +6591,7 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
   } catch (error) {
     console.warn(`[campaigns:adnames] skip ${account?.name || account?._id} ${fromDate}..${toDate}: ${error.message}`);
   }
-  const campaignIdsForBid = isShopee
-    ? [...new Set((insights || []).map(insight => String(insight?.campaign_id || '').trim()).filter(Boolean))]
-    : [];
-  const campaignBidAmountById = isShopee
-    ? await fetchCampaignBidAmountMap(fbToken, campaignIdsForBid)
-    : new Map();
+  const campaignBidAmountById = new Map();
   let count = 0;
   const seenByDate = new Map();
 
