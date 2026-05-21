@@ -5253,8 +5253,8 @@ app.post('/api/accounts/auto-discover', async (req, res) => {
         sources,
         sourceErrors,
         message: provider === 'shopee'
-          ? `Tim thay ${allAdAccounts.length} tai khoan nhung khong co tai khoan Shopee nao bat dau bang XK11, XK12 hoac XK13.`
-          : `Tim thay ${allAdAccounts.length} tai khoan nhung tat ca deu thuoc nhom Shopee XK11, XK12, XK13.`
+          ? `Tim thay ${allAdAccounts.length} tai khoan nhung khong co tai khoan Shopee nao bat dau bang XK11, XK12, XK30, XK29, XK28 hoac XK13.`
+          : `Tim thay ${allAdAccounts.length} tai khoan nhung tat ca deu thuoc nhom Shopee XK11, XK12, XK30, XK29, XK28 hoac XK13.`
       });
     }
 
