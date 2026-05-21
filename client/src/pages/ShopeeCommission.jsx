@@ -38,24 +38,54 @@ function formatCompactVND(value) {
   return formatVND(number);
 }
 
+function getBudgetPriorityScore(row) {
+  const commission = Math.max(0, Number(row.hoa_hong || 0));
+  const spend = Math.max(0, Number(row.chi_phi_pb || 0));
+  const roi = Number(row.roi || 0);
+  if (roi <= 0 || commission <= 0 || spend <= 0) return 0;
+
+  const clicks = Math.max(0, Number(row.clicks || 0));
+  const campaignRows = Math.max(0, Number(row.so_camp || 0));
+  const volumeScore = Math.sqrt(commission * spend);
+  const roiMultiplier = Math.pow(1 + Math.min(roi, 200) / 100, 0.75);
+  const sampleMultiplier = 1 + Math.min(clicks / 1000, 0.25) + Math.min(campaignRows / 50, 0.15);
+  return volumeScore * roiMultiplier * sampleMultiplier;
+}
+
+function getBudgetPriorityRows(rows = []) {
+  return rows
+    .map(row => ({ ...row, diem_de_xuat: getBudgetPriorityScore(row) }))
+    .filter(row => row.diem_de_xuat > 0)
+    .sort((a, b) => (
+      b.diem_de_xuat - a.diem_de_xuat ||
+      Number(b.hoa_hong || 0) - Number(a.hoa_hong || 0) ||
+      Number(b.chi_phi_pb || 0) - Number(a.chi_phi_pb || 0) ||
+      Number(b.roi || 0) - Number(a.roi || 0)
+    ));
+}
+
 function buildBudgetPlan(rows = [], totalSpend = 0) {
-  const eligibleRows = rows
-    .filter(row => Number(row.roi || 0) > 0 && Number(row.hoa_hong || 0) > 0)
-    .sort((a, b) => Number(b.roi || 0) - Number(a.roi || 0));
+  const eligibleRows = getBudgetPriorityRows(rows);
 
   const budgetPool = Number(totalSpend || 0);
-  const totalRoiWeight = eligibleRows.reduce((sum, row) => sum + Math.max(0, Number(row.roi || 0)), 0);
-  if (!eligibleRows.length || totalRoiWeight <= 0 || budgetPool <= 0) return [];
+  const selectedRows = eligibleRows.slice(0, 12);
+  const totalPriorityWeight = selectedRows.reduce((sum, row) => sum + Number(row.diem_de_xuat || 0), 0);
+  if (!selectedRows.length || totalPriorityWeight <= 0 || budgetPool <= 0) return [];
 
-  return eligibleRows.slice(0, 12).map(row => {
-    const roiWeight = Math.max(0, Number(row.roi || 0));
-    const suggestedBudget = budgetPool * (roiWeight / totalRoiWeight);
-    const estimatedCommission = suggestedBudget * (1 + (Number(row.roi || 0) / 100));
+  return selectedRows.map(row => {
+    const suggestedBudget = budgetPool * (Number(row.diem_de_xuat || 0) / totalPriorityWeight);
+    const currentCommissionRate = Number(row.chi_phi_pb || 0) > 0
+      ? Number(row.hoa_hong || 0) / Number(row.chi_phi_pb || 0)
+      : 1 + (Number(row.roi || 0) / 100);
+    const estimatedCommission = suggestedBudget * currentCommissionRate;
     return {
       sub_id2: row.sub_id2,
+      hoa_hong: Number(row.hoa_hong || 0),
+      chi_phi_pb: Number(row.chi_phi_pb || 0),
       ns_de_xuat: suggestedBudget,
       hh_du_kien: estimatedCommission,
-      roi: Number(row.roi || 0)
+      roi: Number(row.roi || 0),
+      diem_de_xuat: Number(row.diem_de_xuat || 0)
     };
   });
 }
@@ -66,12 +96,64 @@ function buildRowsPayload(rows = []) {
     hoa_hong: Number(row.hoa_hong || 0),
     hh_tb: Number(row.hh_tb || 0),
     chi_phi_pb: Number(row.chi_phi_pb || 0),
+    ngan_sach_hien_tai: Number(row.chi_phi_pb || 0),
     clicks: Number(row.clicks || 0),
     cpc: Number(row.cpc || 0),
     so_camp: Number(row.so_camp || 0),
     roi: Number(row.roi || 0),
+    diem_de_xuat: getBudgetPriorityScore(row),
     danh_gia: row.danh_gia || ''
   }));
+}
+
+function roundMoney(value) {
+  return Math.round(Number(value || 0));
+}
+
+function roundPercent(value) {
+  return Number(Number(value || 0).toFixed(2));
+}
+
+function buildAiBudgetLearningContext({ summary = {}, rows = [], algorithmPlan = [] }) {
+  const totalBudget = Number(summary?.totalSpend || 0);
+  const activeDayCount = Number(summary?.activeDayCount || 0);
+  const totalCommission = Number(summary?.totalCommission || 0);
+  const totalProfit = Number(summary?.totalProfit || (totalCommission - totalBudget));
+  const algorithmPlanBySubId = new Map(
+    algorithmPlan.map(item => [String(item.sub_id2 || '').trim().toLowerCase(), item])
+  );
+
+  return {
+    ky_du_lieu: {
+      from_date: summary?.fromDate || '',
+      to_date: summary?.toDate || '',
+      so_ngay_co_chi_tieu: activeDayCount
+    },
+    ngan_sach_tong: {
+      ngan_sach_hien_tai: roundMoney(totalBudget),
+      ngan_sach_ngay_tb: activeDayCount > 0 ? roundMoney(totalBudget / activeDayCount) : 0,
+      tong_hoa_hong: roundMoney(totalCommission),
+      loi_nhuan: roundMoney(totalProfit),
+      roi_tong: roundPercent(summary?.totalRoi)
+    },
+    hoc_tu_ngan_sach_hien_tai: rows.map(row => {
+      const currentBudget = Number(row.chi_phi_pb || 0);
+      const algorithmPlanItem = algorithmPlanBySubId.get(String(row.sub_id2 || '').trim().toLowerCase());
+      const suggestedBudget = Number(algorithmPlanItem?.ns_de_xuat || 0);
+
+      return {
+        sub_id2: row.sub_id2,
+        ngan_sach_hien_tai: roundMoney(currentBudget),
+        ty_trong_ngan_sach_hien_tai: totalBudget > 0 ? roundPercent((currentBudget / totalBudget) * 100) : 0,
+        ngan_sach_de_xuat_thuat_toan: roundMoney(suggestedBudget),
+        ty_trong_de_xuat_thuat_toan: totalBudget > 0 ? roundPercent((suggestedBudget / totalBudget) * 100) : 0,
+        chenhlech_ngan_sach: roundMoney(suggestedBudget - currentBudget),
+        hoa_hong_hien_tai: roundMoney(row.hoa_hong),
+        roi: roundPercent(row.roi),
+        diem_de_xuat: roundMoney(row.diem_de_xuat)
+      };
+    })
+  };
 }
 
 function extractAiText(response) {
@@ -163,8 +245,8 @@ function getRowChangeText(row, alerts = []) {
 }
 
 function buildSubIdSystemPrompt(row, alerts = []) {
-  return `Bạn là chuyên gia Affiliate Marketing Shopee.
-Context về sub_id2 đang phân tích:
+  return `Bạn là một trợ lý AI chuyên tối ưu chiến dịch Affiliate.
+Dữ liệu SUB_ID2 được cung cấp:
 - Sub_id2: ${row.sub_id2}
 - Hoa hồng: ${formatVND(row.hoa_hong || 0)}
 - HH TB/đơn: ${formatVND(row.hh_tb || 0)}
@@ -176,7 +258,7 @@ Context về sub_id2 đang phân tích:
 - Đánh giá hiện tại: ${row.danh_gia || '-'}
 - So với kỳ trước: ${getRowChangeText(row, alerts)}
 
-Trả lời ngắn gọn bằng tiếng Việt, tập trung vào hành động cụ thể nên làm với sub_id2 này.`;
+Nhìn vào dữ liệu SUB_ID2 được cung cấp, hãy phân tích nhanh hiệu quả dựa trên ROI, CPC và lượng Click. Trả về một đoạn nhận xét ngắn gọn dưới 30 từ, chỉ rõ lý do thắng/thua và hành động tiếp theo. Ví dụ: "ROI tốt, CPC rẻ, tiếp tục scale mạnh" hoặc "Lượt click cao nhưng đơn ảo, check lại landing page".`;
 }
 
 export default function ShopeeCommission() {
@@ -323,24 +405,29 @@ Chỉ trả về JSON, không giải thích thêm.`;
   };
 
   const runAiBudgetPlan = async (retryOnRateLimit = true) => {
-    const rows = buildRowsPayload(commissionBySubId)
-      .filter(row => Number(row.roi || 0) > 0)
-      .sort((a, b) => Number(b.roi || 0) - Number(a.roi || 0));
+    const rows = getBudgetPriorityRows(buildRowsPayload(commissionBySubId)).slice(0, 30);
     const totalBudget = Number(summary?.totalSpend || 0);
     if (!rows.length || totalBudget <= 0) {
-      toast.error('Chưa đủ dữ liệu ROI và ngân sách để hỏi AI');
+      toast.error('Chưa đủ dữ liệu hoa hồng, chi phí và ROI để hỏi AI');
       return;
     }
 
     setAiBudgetLoading(true);
     setAiBudgetError('');
     try {
+      const budgetLearningContext = buildAiBudgetLearningContext({
+        summary,
+        rows,
+        algorithmPlan: budgetPlan
+      });
       const prompt = `Tôi có tổng ngân sách ${Math.round(totalBudget)} đồng cho affiliate Shopee.
+Context ngân sách để AI học cách phân bổ: ${JSON.stringify(budgetLearningContext, null, 2)}
+
 Dữ liệu hiệu quả các sub_id2: ${JSON.stringify(rows, null, 2)}
 
-Mỗi sub_id2 có kèm lượt click, CPC và số dòng camp để đánh giá chất lượng traffic.
+Mỗi sub_id2 có kèm hoa hồng, ngân sách/chi phí hiện tại, ROI, lượt click, CPC, số dòng camp và điểm đề xuất.
 
-Hãy đề xuất phân bổ ngân sách tối ưu để maximize tổng hoa hồng. Trả về JSON:
+Hãy học từ ngân sách hiện tại và ngân sách đề xuất thuật toán, rồi đề xuất phân bổ ngân sách tối ưu để maximize tổng hoa hồng ổn định. Ưu tiên các sub_id2 có hoa hồng cao, chi tiêu đã đủ nhiều, ROI dương và có mẫu traffic/camp đủ tin cậy. Không ưu tiên sub_id2 chỉ vì ROI cao nhưng chi phí hoặc hoa hồng còn quá nhỏ. Trả về JSON:
 {
   "phan_bo": [
     {"sub_id2": "xxx", "ngan_sach": 1000000, "ly_do": "tối đa 12 từ"}
@@ -349,7 +436,7 @@ Hãy đề xuất phân bổ ngân sách tối ưu để maximize tổng hoa h�
   "loi_nhuan_du_kien": 2000000,
   "chien_luoc": "giải thích ngắn về chiến lược phân bổ"
 }
-Chỉ phân bổ cho sub_id2 ROI > 0. Chọn tối đa 12 sub_id2 tốt nhất. Chỉ trả về JSON.`;
+Tổng ngan_sach trong phan_bo phải xấp xỉ ngan_sach_hien_tai trong context ngân sách. Chỉ phân bổ cho sub_id2 ROI > 0, hoa hồng > 0 và chi phí > 0. Chọn tối đa 12 sub_id2 ổn định nhất theo hoa hồng, chi phí/ngân sách hiện tại, ROI và điểm đề xuất. Chỉ trả về JSON.`;
       const response = await callAi({
         messages: [{ role: 'user', content: prompt }],
         responseMimeType: 'application/json'
@@ -416,7 +503,7 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chọn tối đa 12 sub_id2 tốt nhất. 
   const openSubIdChat = (row) => {
     const initialApiMessages = [{
       role: 'user',
-      content: 'Hãy phân tích ban đầu sub_id2 này: nên scale, giữ, giảm hay dừng? Nêu lý do và hành động cụ thể.'
+      content: 'Phân tích nhanh SUB_ID2 này dưới 30 từ, nêu lý do thắng/thua và hành động tiếp theo.'
     }];
     setChatRow(row);
     setChatMessages([]);
@@ -590,6 +677,9 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chọn tối đa 12 sub_id2 tốt nhất. 
                     <thead>
                       <tr>
                         <th>SUB_ID2</th>
+                        <th className="text-right">Hoa hồng</th>
+                        <th className="text-right">Chi phí</th>
+                        <th className="text-right">ROI</th>
                         <th className="text-right">NS Đề xuất (đ)</th>
                         <th className="text-right">HH Dự kiến (đ)</th>
                       </tr>
@@ -598,6 +688,9 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chọn tối đa 12 sub_id2 tốt nhất. 
                       {budgetPlan.map(row => (
                         <tr key={row.sub_id2}>
                           <td>{row.sub_id2}</td>
+                          <td className="text-right mono-sm shopee-commission-main">{formatVND(row.hoa_hong)}</td>
+                          <td className="text-right mono-sm shopee-cost">{formatVND(row.chi_phi_pb)}</td>
+                          <td className="text-right mono-sm">{formatNumber(row.roi)}%</td>
                           <td className="text-right mono-sm">{formatVND(row.ns_de_xuat)}</td>
                           <td className="text-right mono-sm shopee-commission-main">{formatVND(row.hh_du_kien)}</td>
                         </tr>
