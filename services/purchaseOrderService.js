@@ -715,42 +715,45 @@ function getMonthInfo(dateKey = '') {
 
 function buildDashboardRowsWithTotals(dailyStats = []) {
   const result = [];
-  let weekTotal = null;
-  let monthTotal = null;
-  let currentWeekKey = '';
-  let currentMonthKey = '';
+  const monthGroups = [];
+  let currentMonthGroup = null;
+  let currentWeekGroup = null;
 
-  dailyStats.forEach(day => {
+  for (const day of dailyStats) {
     const weekInfo = getIsoWeekInfo(day.ngay);
     const monthInfo = getMonthInfo(day.ngay);
 
-    if (currentWeekKey && currentWeekKey !== weekInfo.key && weekTotal) {
-      result.push({ ...weekTotal, isWeekTotal: true });
-      weekTotal = null;
+    if (!currentMonthGroup || currentMonthGroup.key !== monthInfo.key) {
+      currentMonthGroup = {
+        key: monthInfo.key,
+        total: makeDashboardRow(monthInfo.label),
+        weekGroups: []
+      };
+      monthGroups.push(currentMonthGroup);
+      currentWeekGroup = null;
     }
 
-    if (currentMonthKey && currentMonthKey !== monthInfo.key && monthTotal) {
-      result.push({ ...monthTotal, isMonthTotal: true });
-      monthTotal = null;
+    if (!currentWeekGroup || currentWeekGroup.key !== weekInfo.key) {
+      currentWeekGroup = {
+        key: weekInfo.key,
+        total: makeDashboardRow(weekInfo.label),
+        days: []
+      };
+      currentMonthGroup.weekGroups.push(currentWeekGroup);
     }
 
-    if (!weekTotal) {
-      weekTotal = makeDashboardRow(weekInfo.label);
-      currentWeekKey = weekInfo.key;
+    addDashboardMetrics(currentWeekGroup.total, day);
+    addDashboardMetrics(currentMonthGroup.total, day);
+    currentWeekGroup.days.push(day);
+  }
+
+  for (const monthGroup of monthGroups) {
+    result.push({ ...monthGroup.total, isMonthTotal: true });
+    for (const weekGroup of monthGroup.weekGroups) {
+      result.push({ ...weekGroup.total, isWeekTotal: true });
+      result.push(...weekGroup.days);
     }
-    addDashboardMetrics(weekTotal, day);
-
-    if (!monthTotal) {
-      monthTotal = makeDashboardRow(monthInfo.label);
-      currentMonthKey = monthInfo.key;
-    }
-    addDashboardMetrics(monthTotal, day);
-
-    result.push(day);
-  });
-
-  if (weekTotal) result.push({ ...weekTotal, isWeekTotal: true });
-  if (monthTotal) result.push({ ...monthTotal, isMonthTotal: true });
+  }
 
   return result;
 }

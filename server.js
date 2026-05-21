@@ -2477,6 +2477,30 @@ async function fetchCampaignMetaMap(fbToken, campaignIds = []) {
   return campaignMetaById;
 }
 
+async function fetchCampaignBidAmountMap(fbToken, campaignIds = []) {
+  const bidAmountByCampaignId = new Map();
+  const normalizedIds = [...new Set((campaignIds || []).map(id => String(id || '').trim()).filter(Boolean))];
+  for (const campaignId of normalizedIds) {
+    try {
+      const { items } = await fetchAllFbEdge(fbToken, `${campaignId}/adsets`, {
+        fields: 'id,bid_amount',
+        limit: 50
+      }, {
+        requestOptions: { retries: 1, rateLimitRetries: 1 }
+      });
+      const bids = (items || [])
+        .map(item => Number(item?.bid_amount || 0))
+        .filter(value => Number.isFinite(value) && value > 0);
+      if (bids.length) {
+        bidAmountByCampaignId.set(campaignId, Math.round(bids.reduce((sum, value) => sum + value, 0) / bids.length));
+      }
+    } catch (error) {
+      console.warn(`[campaigns:bid] skip campaign ${campaignId}: ${error.message}`);
+    }
+  }
+  return bidAmountByCampaignId;
+}
+
 async function fetchCampaignMetaMapBestEffort(fbToken, campaignIds = []) {
   const campaignMetaById = new Map();
   const normalizedIds = [...new Set((campaignIds || []).map(id => String(id || '').trim()).filter(Boolean))];
@@ -3411,13 +3435,17 @@ async function fetchShopeeAccountData(account) {
     }
 
     const campaignMetaById = await fetchCampaignMetaMap(fbToken, [...campaignIds]);
+    const campaignBidAmountById = await fetchCampaignBidAmountMap(fbToken, [...campaignIds]);
 
     for (const insight of metricInsights) {
       const campaignId = String(insight.campaign_id);
       const meta = campaignMetaById.get(campaignId) || {};
+      const existingCampaign = campaigns.find(campaign => String(campaign.campaignId || '').trim() === campaignId) || {};
+      const bidAmount = campaignBidAmountById.get(campaignId) || Number(existingCampaign.bidAmount || 0);
       const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || '';
       const campaignUpdate = {
         ...meta,
+        bidAmount,
         name: insight.campaign_name,
         spend: insight.spend,
         impressions: insight.impressions,
@@ -3474,6 +3502,10 @@ async function fetchAccountData(account) {
     ...existingCampaigns.map(campaign => String(campaign.campaignId || '').trim()).filter(Boolean)
   ]);
   const campaignMetaById = await fetchCampaignMetaMap(fbToken, [...allCampaignIds]);
+  const shouldFetchBidAmount = normalizeProvider(account?.provider) === 'shopee';
+  const campaignBidAmountById = shouldFetchBidAmount
+    ? await fetchCampaignBidAmountMap(fbToken, [...allCampaignIds])
+    : new Map();
 
   let insightTotalSpend = 0;
   let insightTotalMessages = 0;
@@ -3487,10 +3519,12 @@ async function fetchAccountData(account) {
     insightTotalMessages += messages;
     const meta = campaignMetaById.get(campaignId) || {};
     const existingCampaign = existingCampaigns.find(campaign => String(campaign.campaignId || '').trim() === campaignId) || {};
+    const bidAmount = campaignBidAmountById.get(campaignId) || Number(existingCampaign.bidAmount || 0);
     const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || '';
 
     const campaignUpdate = {
       ...meta,
+      bidAmount,
       name: insight.campaign_name,
       spend,
       impressions,
@@ -3517,6 +3551,7 @@ async function fetchAccountData(account) {
       status: meta.status,
       daily_budget: meta.dailyBudget,
       lifetime_budget: meta.lifetimeBudget,
+      bidAmount,
       created_time: meta.createdTime,
       spend,
       messages,
@@ -3540,9 +3575,11 @@ async function fetchAccountData(account) {
     if (!campaignId || seenCampaignIds.has(campaignId)) continue;
 
     const meta = campaignMetaById.get(campaignId) || {};
+    const bidAmount = campaignBidAmountById.get(campaignId) || Number(storedCampaign.bidAmount || 0);
     const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || storedCampaign.adName || '';
     await upsertDailyCampaign(account._id, campaignId, today, {
       ...meta,
+      bidAmount,
       ...(adName ? { adName } : {}),
       spend: Number(storedCampaign.spend || 0),
       impressions: Number(storedCampaign.impressions || 0),
@@ -3566,6 +3603,7 @@ async function fetchAccountData(account) {
       status: meta.status || storedCampaign.status,
       daily_budget: Number(meta.dailyBudget ?? storedCampaign.dailyBudget ?? 0),
       lifetime_budget: Number(meta.lifetimeBudget ?? storedCampaign.lifetimeBudget ?? 0),
+      bidAmount,
       created_time: meta.createdTime || storedCampaign.createdTime,
       spend: Number(storedCampaign.spend || 0),
       messages: Number(storedCampaign.messages || 0),
@@ -6112,6 +6150,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
           adName: finalAdName,
           status: 'ACTIVE',
           dailyBudget,
+          bidAmount: isShopee ? shopeeBidAmount : 0,
           budgetType: 'DAILY',
           isScheduled: true,
           scheduledStartTime: scheduledStart.fbStartTime,
@@ -6536,6 +6575,7 @@ async function fetchAccountAdNameMapInRange(account, fromDate, toDate) {
 }
 
 async function syncAccountHistoricalData(account, fromDate, toDate, options = {}) {
+  const { fbToken } = await getEffectiveSecrets(account);
   const insights = await fetchAccountInsightsInRange(account, fromDate, toDate);
   const isShopee = normalizeProvider(account?.provider) === 'shopee';
   let adNamesByDateCampaign = new Map();
@@ -6545,6 +6585,12 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
   } catch (error) {
     console.warn(`[campaigns:adnames] skip ${account?.name || account?._id} ${fromDate}..${toDate}: ${error.message}`);
   }
+  const campaignIdsForBid = isShopee
+    ? [...new Set((insights || []).map(insight => String(insight?.campaign_id || '').trim()).filter(Boolean))]
+    : [];
+  const campaignBidAmountById = isShopee
+    ? await fetchCampaignBidAmountMap(fbToken, campaignIdsForBid)
+    : new Map();
   let count = 0;
   const seenByDate = new Map();
 
@@ -6562,9 +6608,11 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
     const costPerMessage = isShopee ? 0 : getMetaCostPerMessageFromInsight(insight);
     const metaOrders = isShopee ? 0 : getMetaOrdersFromInsight(insight);
     const adName = adNamesByDateCampaign.get(`${normalizeCampaignDate(date)}:${String(insight.campaign_id).trim()}`) || '';
+    const bidAmount = campaignBidAmountById.get(String(insight.campaign_id)) || 0;
 
     const campaignUpdate = {
       name: insight.campaign_name,
+      bidAmount,
       spend,
       impressions,
       clicks,
@@ -7807,6 +7855,18 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
             spend: { $sum: '$spend' },
             clicks: { $sum: '$clicks' },
             campaignRows: { $sum: 1 },
+            bidWeightedSpend: { $sum: { $multiply: [{ $ifNull: ['$bidAmount', 0] }, { $ifNull: ['$spend', 0] }] } },
+            bidSpendWeight: { $sum: { $cond: [{ $gt: [{ $ifNull: ['$bidAmount', 0] }, 0] }, { $ifNull: ['$spend', 0] }, 0] } },
+            bidTotal: { $sum: { $ifNull: ['$bidAmount', 0] } },
+            bidCount: { $sum: { $cond: [{ $gt: [{ $ifNull: ['$bidAmount', 0] }, 0] }, 1, 0] } },
+            activeDays: { $addToSet: '$date' },
+            dailySpendRows: {
+              $push: {
+                date: '$date',
+                spend: '$spend',
+                clicks: '$clicks'
+              }
+            },
             originalName: { $first: '$name' }
           }
         }
@@ -7830,6 +7890,18 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
             spend: { $sum: '$spend' },
             clicks: { $sum: '$clicks' },
             campaignRows: { $sum: 1 },
+            bidWeightedSpend: { $sum: { $multiply: [{ $ifNull: ['$bidAmount', 0] }, { $ifNull: ['$spend', 0] }] } },
+            bidSpendWeight: { $sum: { $cond: [{ $gt: [{ $ifNull: ['$bidAmount', 0] }, 0] }, { $ifNull: ['$spend', 0] }, 0] } },
+            bidTotal: { $sum: { $ifNull: ['$bidAmount', 0] } },
+            bidCount: { $sum: { $cond: [{ $gt: [{ $ifNull: ['$bidAmount', 0] }, 0] }, 1, 0] } },
+            activeDays: { $addToSet: '$date' },
+            dailySpendRows: {
+              $push: {
+                date: '$date',
+                spend: '$spend',
+                clicks: '$clicks'
+              }
+            },
             originalName: { $first: '$name' }
           }
         }
@@ -7848,7 +7920,49 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
       scale: 'SCALE NHẸ',
       scale_strong: 'SCALE MẠNH'
     };
-    const buildProfitRows = (commissionRows = [], spendRows = []) => {
+    const buildDailySpendStats = (dailyRows = [], fallbackTotalSpend = 0, options = {}) => {
+      const dailyMap = new Map();
+      for (const row of dailyRows || []) {
+        const date = String(row?.date || '').trim();
+        if (!date) continue;
+        const item = dailyMap.get(date) || { date, spend: 0, clicks: 0 };
+        item.spend += Number(row.spend || 0);
+        item.clicks += Number(row.clicks || 0);
+        dailyMap.set(date, item);
+      }
+
+      let daily = [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date));
+      const optionFromDate = String(options.fromDate || '').trim();
+      const optionToDate = String(options.toDate || '').trim();
+      if (optionFromDate && optionToDate && optionFromDate <= optionToDate) {
+        const fullDaily = [];
+        for (let time = new Date(`${optionFromDate}T00:00:00Z`).getTime(); time <= new Date(`${optionToDate}T00:00:00Z`).getTime(); time += dateMs) {
+          const date = new Date(time).toISOString().split('T')[0];
+          fullDaily.push(dailyMap.get(date) || { date, spend: 0, clicks: 0 });
+        }
+        daily = fullDaily;
+      }
+      const totalSpend = daily.reduce((sum, row) => sum + Number(row.spend || 0), 0) || Number(fallbackTotalSpend || 0);
+      const activeDayCount = daily.filter(row => Number(row.spend || 0) > 0).length;
+      const avgDailySpend = activeDayCount > 0 ? totalSpend / activeDayCount : 0;
+      const recentRows = daily.slice(-3);
+      const recentSpend = recentRows.reduce((sum, row) => sum + Number(row.spend || 0), 0);
+      const recentAvgDailySpend = recentRows.length > 0 ? recentSpend / recentRows.length : 0;
+      const lastDaySpend = Number(daily[daily.length - 1]?.spend || 0);
+      const recentSpendRate = avgDailySpend > 0 ? recentAvgDailySpend / avgDailySpend : 1;
+      const slowSpend = activeDayCount >= 3 && avgDailySpend > 0 && recentSpendRate < 0.7;
+
+      return {
+        activeDayCount,
+        avgDailySpend,
+        recentAvgDailySpend,
+        lastDaySpend,
+        recentSpendRate,
+        slowSpend,
+        daily
+      };
+    };
+    const buildProfitRows = (commissionRows = [], spendRows = [], options = {}) => {
       const unifiedMap = new Map();
       for (const item of commissionRows) {
         const key = String(item.subId2 || '').trim().toLowerCase();
@@ -7858,7 +7972,12 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
           rowCount: Number(item.rowCount || 0),
           chi_phi_pb: 0,
           clicks: 0,
-          campaignRows: 0
+          campaignRows: 0,
+          bidWeightedSpend: 0,
+          bidSpendWeight: 0,
+          bidTotal: 0,
+          bidCount: 0,
+          dailySpendRows: []
         });
       }
 
@@ -7870,17 +7989,32 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
           rowCount: 0,
           chi_phi_pb: 0,
           clicks: 0,
-          campaignRows: 0
+          campaignRows: 0,
+          bidWeightedSpend: 0,
+          bidSpendWeight: 0,
+          bidTotal: 0,
+          bidCount: 0,
+          dailySpendRows: []
         };
         existing.chi_phi_pb += Number(item.spend || 0);
         existing.clicks += Number(item.clicks || 0);
         existing.campaignRows += Number(item.campaignRows || 0);
+        existing.bidWeightedSpend += Number(item.bidWeightedSpend || 0);
+        existing.bidSpendWeight += Number(item.bidSpendWeight || 0);
+        existing.bidTotal += Number(item.bidTotal || 0);
+        existing.bidCount += Number(item.bidCount || 0);
+        existing.dailySpendRows.push(...(Array.isArray(item.dailySpendRows) ? item.dailySpendRows : []));
         unifiedMap.set(key, existing);
       }
 
       return Array.from(unifiedMap.values()).map(item => {
         const profit = item.hoa_hong - item.chi_phi_pb;
         const roi = item.chi_phi_pb > 0 ? (profit / item.chi_phi_pb) * 100 : (profit > 0 ? 100 : 0);
+        const bidAmount = item.bidSpendWeight > 0
+          ? item.bidWeightedSpend / item.bidSpendWeight
+          : (item.bidCount > 0 ? item.bidTotal / item.bidCount : 0);
+        const dailySpendStats = buildDailySpendStats(item.dailySpendRows, item.chi_phi_pb, options);
+        const shouldIncreaseBid = dailySpendStats.slowSpend && roi > 0 && item.hoa_hong > 0;
         const optimization = getShopeeOptimizationDecision({
           spend: item.chi_phi_pb,
           commission: item.hoa_hong,
@@ -7894,14 +8028,21 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
           clicks: item.clicks,
           cpc: item.clicks > 0 ? item.chi_phi_pb / item.clicks : 0,
           so_camp: item.campaignRows,
+          bid_amount: bidAmount,
+          spend_ngay_tb: dailySpendStats.avgDailySpend,
+          spend_3_ngay_tb: dailySpendStats.recentAvgDailySpend,
+          spend_ngay_cuoi: dailySpendStats.lastDaySpend,
+          ti_le_tieu_gan_day: dailySpendStats.recentSpendRate,
+          tieu_cham: dailySpendStats.slowSpend,
+          goi_y_bid: shouldIncreaseBid ? 'TĂNG BID' : 'GIỮ BID',
           roi,
           danh_gia: labelByAction[optimization.action] || optimization.label || ''
         };
       });
     };
 
-    let unifiedList = buildProfitRows(commissionBySubId, spendByCampaignName);
-    const previousList = buildProfitRows(previousCommissionBySubId, previousSpendByCampaignName);
+    let unifiedList = buildProfitRows(commissionBySubId, spendByCampaignName, { fromDate, toDate });
+    const previousList = buildProfitRows(previousCommissionBySubId, previousSpendByCampaignName, { fromDate: previousFromDate, toDate: previousToDate });
     const previousBySubId = new Map(previousList.map(item => [String(item.sub_id2 || '').trim().toLowerCase(), item]));
 
     unifiedList.sort((a, b) => b.hoa_hong - a.hoa_hong || b.roi - a.roi);

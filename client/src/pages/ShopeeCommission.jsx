@@ -100,6 +100,13 @@ function buildRowsPayload(rows = []) {
     clicks: Number(row.clicks || 0),
     cpc: Number(row.cpc || 0),
     so_camp: Number(row.so_camp || 0),
+    bid_amount: Number(row.bid_amount || 0),
+    spend_ngay_tb: Number(row.spend_ngay_tb || 0),
+    spend_3_ngay_tb: Number(row.spend_3_ngay_tb || 0),
+    spend_ngay_cuoi: Number(row.spend_ngay_cuoi || 0),
+    ti_le_tieu_gan_day: Number(row.ti_le_tieu_gan_day || 0),
+    tieu_cham: Boolean(row.tieu_cham),
+    goi_y_bid: row.goi_y_bid || '',
     roi: Number(row.roi || 0),
     diem_de_xuat: getBudgetPriorityScore(row),
     danh_gia: row.danh_gia || ''
@@ -150,6 +157,13 @@ function buildAiBudgetLearningContext({ summary = {}, rows = [], algorithmPlan =
         chenhlech_ngan_sach: roundMoney(suggestedBudget - currentBudget),
         hoa_hong_hien_tai: roundMoney(row.hoa_hong),
         roi: roundPercent(row.roi),
+        bid_hien_tai: roundMoney(row.bid_amount),
+        spend_ngay_tb: roundMoney(row.spend_ngay_tb),
+        spend_3_ngay_tb: roundMoney(row.spend_3_ngay_tb),
+        spend_ngay_cuoi: roundMoney(row.spend_ngay_cuoi),
+        ti_le_tieu_gan_day: roundPercent(Number(row.ti_le_tieu_gan_day || 0) * 100),
+        tieu_cham: Boolean(row.tieu_cham),
+        goi_y_bid: row.goi_y_bid || '',
         diem_de_xuat: roundMoney(row.diem_de_xuat)
       };
     })
@@ -254,11 +268,18 @@ Dữ liệu SUB_ID2 được cung cấp:
 - Lượt click: ${formatNumber(row.clicks || 0)}
 - CPC: ${row.clicks > 0 ? formatVND(row.cpc || 0) : '-'}
 - Số dòng camp: ${formatNumber(row.so_camp || 0)}
+- Bid hiện tại: ${row.bid_amount > 0 ? formatVND(row.bid_amount) : '-'}
+- Spend TB/ngày: ${formatVND(row.spend_ngay_tb || 0)}
+- Spend TB 3 ngày gần nhất: ${formatVND(row.spend_3_ngay_tb || 0)}
+- Spend ngày cuối: ${formatVND(row.spend_ngay_cuoi || 0)}
+- Tốc độ tiêu gần đây: ${formatNumber(Math.round(Number(row.ti_le_tieu_gan_day || 0) * 100))}%
+- Tiêu chậm: ${row.tieu_cham ? 'Có' : 'Không'}
+- Gợi ý bid: ${row.goi_y_bid || '-'}
 - ROI: ${formatNumber(row.roi || 0)}%
 - Đánh giá hiện tại: ${row.danh_gia || '-'}
 - So với kỳ trước: ${getRowChangeText(row, alerts)}
 
-Nhìn vào dữ liệu SUB_ID2 được cung cấp, hãy phân tích nhanh hiệu quả dựa trên ROI, CPC và lượng Click. Trả về một đoạn nhận xét ngắn gọn dưới 30 từ, chỉ rõ lý do thắng/thua và hành động tiếp theo. Ví dụ: "ROI tốt, CPC rẻ, tiếp tục scale mạnh" hoặc "Lượt click cao nhưng đơn ảo, check lại landing page".`;
+Nhìn vào dữ liệu SUB_ID2 được cung cấp, hãy phân tích nhanh hiệu quả dựa trên ROI, CPC, lượng Click, bid hiện tại và tốc độ tiêu theo ngày. Trả về một đoạn nhận xét ngắn gọn dưới 30 từ, chỉ rõ lý do thắng/thua và hành động tiếp theo, gồm tăng/giữ/giảm bid nếu cần. Ví dụ: "ROI tốt, tiêu chậm, tăng bid nhẹ" hoặc "Click cao CPC đắt, giữ bid và check landing page".`;
 }
 
 export default function ShopeeCommission() {
@@ -375,7 +396,7 @@ Dưới đây là dữ liệu hiệu quả các sub_id2 tháng này:
 
 ${JSON.stringify(buildRowsPayload(rows), null, 2)}
 
-Mỗi dòng đã bao gồm dữ liệu hoa hồng, chi phí quảng cáo phân bổ theo camp, lượt click, CPC và số dòng camp.
+Mỗi dòng đã bao gồm dữ liệu hoa hồng, chi phí quảng cáo phân bổ theo camp, lượt click, CPC, số dòng camp, bid hiện tại và tốc độ tiêu theo ngày.
 
 Hãy phân tích ngắn gọn bằng tiếng Việt, trả về JSON:
 {
@@ -425,9 +446,9 @@ Context ngân sách để AI học cách phân bổ: ${JSON.stringify(budgetLear
 
 Dữ liệu hiệu quả các sub_id2: ${JSON.stringify(rows, null, 2)}
 
-Mỗi sub_id2 có kèm hoa hồng, ngân sách/chi phí hiện tại, ROI, lượt click, CPC, số dòng camp và điểm đề xuất.
+Mỗi sub_id2 có kèm hoa hồng, ngân sách/chi phí hiện tại, ROI, lượt click, CPC, số dòng camp, bid hiện tại, tốc độ tiêu theo ngày và điểm đề xuất.
 
-Hãy học từ ngân sách hiện tại và ngân sách đề xuất thuật toán, rồi đề xuất phân bổ ngân sách tối ưu để maximize tổng hoa hồng ổn định. Ưu tiên các sub_id2 có hoa hồng cao, chi tiêu đã đủ nhiều, ROI dương và có mẫu traffic/camp đủ tin cậy. Không ưu tiên sub_id2 chỉ vì ROI cao nhưng chi phí hoặc hoa hồng còn quá nhỏ. Trả về JSON:
+Hãy học từ ngân sách hiện tại, bid hiện tại, tốc độ tiêu theo ngày và ngân sách đề xuất thuật toán, rồi đề xuất phân bổ ngân sách tối ưu để maximize tổng hoa hồng ổn định. Ưu tiên các sub_id2 có hoa hồng cao, chi tiêu đã đủ nhiều, ROI dương và có mẫu traffic/camp đủ tin cậy. Nếu ROI tốt nhưng tiêu chậm, cân nhắc tăng bid nhẹ; nếu CPC đắt/ROI yếu thì giữ hoặc giảm bid. Không ưu tiên sub_id2 chỉ vì ROI cao nhưng chi phí hoặc hoa hồng còn quá nhỏ. Trả về JSON:
 {
   "phan_bo": [
     {"sub_id2": "xxx", "ngan_sach": 1000000, "ly_do": "tối đa 12 từ"}
@@ -436,7 +457,7 @@ Hãy học từ ngân sách hiện tại và ngân sách đề xuất thuật to
   "loi_nhuan_du_kien": 2000000,
   "chien_luoc": "giải thích ngắn về chiến lược phân bổ"
 }
-Tổng ngan_sach trong phan_bo phải xấp xỉ ngan_sach_hien_tai trong context ngân sách. Chỉ phân bổ cho sub_id2 ROI > 0, hoa hồng > 0 và chi phí > 0. Chọn tối đa 12 sub_id2 ổn định nhất theo hoa hồng, chi phí/ngân sách hiện tại, ROI và điểm đề xuất. Chỉ trả về JSON.`;
+Tổng ngan_sach trong phan_bo phải xấp xỉ ngan_sach_hien_tai trong context ngân sách. Chỉ phân bổ cho sub_id2 ROI > 0, hoa hồng > 0 và chi phí > 0. Chọn tối đa 12 sub_id2 ổn định nhất theo hoa hồng, chi phí/ngân sách hiện tại, ROI, bid hiện tại, tốc độ tiêu và điểm đề xuất. Chỉ trả về JSON.`;
       const response = await callAi({
         messages: [{ role: 'user', content: prompt }],
         responseMimeType: 'application/json'
@@ -503,8 +524,7 @@ Tổng ngan_sach trong phan_bo phải xấp xỉ ngan_sach_hien_tai trong contex
   const openSubIdChat = (row) => {
     const initialApiMessages = [{
       role: 'user',
-            content: 'Hãy phân tích bàn đầu sub_id2 này : nên scale,giữ, giảm hay dừng?Nêu lý do và hành động cụ thể,nêu lý do thắng/thua và hành động tiếp theo.'
-
+      content: 'Phân tích nhanh SUB_ID2 này: nên scale, giữ, giảm hay dừng; có cần tăng/giữ/giảm bid không? Nêu lý do thắng/thua và hành động tiếp theo.'
     }];
     setChatRow(row);
     setChatMessages([]);
@@ -830,7 +850,10 @@ Tổng ngan_sach trong phan_bo phải xấp xỉ ngan_sach_hien_tai trong contex
                   <th className="text-right">CHI PHÍ PB (đ)</th>
                   <th className="text-right">LƯỢT CLICK</th>
                   <th className="text-right">CPC (đ)</th>
+                  <th className="text-right">BID</th>
+                  <th className="text-right">TIÊU 3N</th>
                   <th className="text-right">ROI (%)</th>
+                  <th>BID AI</th>
                   <th>ĐÁNH GIÁ</th>
                   <th className="text-center">AI</th>
                 </tr>
@@ -844,8 +867,18 @@ Tổng ngan_sach trong phan_bo phải xấp xỉ ngan_sach_hien_tai trong contex
                     <td className="text-right mono-sm shopee-cost">{formatVND(row.chi_phi_pb || 0)}</td>
                     <td className="text-right mono-sm">{formatNumber(row.clicks || 0)}</td>
                     <td className="text-right mono-sm">{Number(row.clicks || 0) > 0 ? formatVND(row.cpc || 0) : '-'}</td>
+                    <td className="text-right mono-sm">{Number(row.bid_amount || 0) > 0 ? formatVND(row.bid_amount || 0) : '-'}</td>
+                    <td className="text-right mono-sm">
+                      {formatVND(row.spend_3_ngay_tb || 0)}
+                      {row.tieu_cham && <span className="badge warning" style={{ marginLeft: 6 }}>Chậm</span>}
+                    </td>
                     <td className="text-right">
                       <span className={`badge ${getRoiBadgeClass(row.roi)}`}>{formatNumber(row.roi || 0)}%</span>
+                    </td>
+                    <td>
+                      <span className={`badge ${row.goi_y_bid === 'TĂNG BID' ? 'warning' : 'neutral'}`}>
+                        {row.goi_y_bid || '-'}
+                      </span>
                     </td>
                     <td>
                       <span className={`badge ${getEvaluationBadgeClass(row.danh_gia)}`}>
