@@ -295,10 +295,10 @@ function isShopeeAdAccountName(name) {
 
 function getAccountProviderNameError(provider, name) {
   if (provider === 'shopee' && !isShopeeAdAccountName(name)) {
-    return 'Tai khoan Shopee chi cho phep ten bat dau bang XK11, XK12 hoac XK13.';
+    return 'Tai khoan Shopee chi cho phep ten bat dau bang XK11, XK12, XK30, XK29, XK28 hoac XK13.';
   }
   if (provider === 'facebook' && isShopeeAdAccountName(name)) {
-    return 'Tai khoan bat dau bang XK11, XK12 hoac XK13 chi duoc them vao role Shopee.';
+    return 'Tai khoan bat dau bang XK11, XK12, XK30, XK29, XK28 hoac XK13 chi duoc them vao role Shopee.';
   }
   return '';
 }
