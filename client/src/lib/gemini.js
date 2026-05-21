@@ -49,11 +49,18 @@ export async function removeGeminiApiKey() {
   return cachedGeminiKeyStatus;
 }
 
-export async function requestGeminiMessage({ system = '', messages = [], maxTokens = 1500, timeoutMs = 30000 }) {
+export async function requestGeminiMessage({
+  system = '',
+  messages = [],
+  maxTokens = 1500,
+  timeoutMs = 30000,
+  responseMimeType = ''
+}) {
   return api('POST', '/ai/gemini', {
     system,
     messages,
-    max_tokens: maxTokens
+    max_tokens: maxTokens,
+    response_mime_type: responseMimeType
   }, {
     timeoutMs: timeoutMs + 5000
   });

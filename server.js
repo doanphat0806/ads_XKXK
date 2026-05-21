@@ -1169,17 +1169,27 @@ function extractGeminiText(data = {}) {
     .trim();
 }
 
-async function requestGeminiGenerateContent({ apiKey, system = '', messages = [], maxTokens = 1500, timeout = 30000, model = '' }) {
+async function requestGeminiGenerateContent({
+  apiKey,
+  system = '',
+  messages = [],
+  maxTokens = 1500,
+  timeout = 30000,
+  model = '',
+  responseMimeType = ''
+}) {
   const contents = toGeminiContents(messages);
   if (!contents.length) throw new Error('Noi dung AI khong hop le');
 
+  const mimeType = String(responseMimeType || '').trim();
   const payload = {
     contents,
     generationConfig: {
       maxOutputTokens: parseBoundedInt(maxTokens, 1500, 1, 1500),
-      temperature: 0.2
+      temperature: mimeType === 'application/json' ? 0 : 0.2
     }
   };
+  if (mimeType) payload.generationConfig.responseMimeType = mimeType;
   const systemText = String(system || '').trim();
   if (systemText) payload.systemInstruction = { parts: [{ text: systemText }] };
 
@@ -4380,7 +4390,8 @@ app.post('/api/ai/gemini', async (req, res) => {
       messages,
       maxTokens: req.body?.max_tokens,
       timeout: 30000,
-      model: req.body?.model
+      model: req.body?.model,
+      responseMimeType: req.body?.response_mime_type
     });
     const text = extractGeminiText(response.data);
 

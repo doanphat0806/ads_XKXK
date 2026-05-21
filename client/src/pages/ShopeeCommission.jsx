@@ -92,10 +92,15 @@ function parseAiJson(text) {
 
   try {
     return JSON.parse(cleaned);
-  } catch {
+  } catch (error) {
     const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('AI trả về dữ liệu không phải JSON');
-    return JSON.parse(jsonMatch[0]);
+    if (!jsonMatch) throw new Error('AI trả về dữ liệu không phải JSON', { cause: error });
+    try {
+      return JSON.parse(jsonMatch[0]);
+    } catch (parseError) {
+      console.warn('Invalid AI JSON response:', { error, text: cleaned });
+      throw new Error('AI trả về JSON chưa hợp lệ, bấm Thử lại', { cause: parseError });
+    }
   }
 }
 
@@ -245,13 +250,14 @@ export default function ShopeeCommission() {
       .slice(0, 8)
   ), [commissionBySubId]);
 
-  const callAi = async ({ system = '', messages = [] }) => {
+  const callAi = async ({ system = '', messages = [], responseMimeType = '' }) => {
     try {
       return await requestGeminiMessage({
         system,
         messages,
         maxTokens: 1500,
-        timeoutMs: 30000
+        timeoutMs: 30000,
+        responseMimeType
       });
     } catch (error) {
       console.error('Gemini API error:', error);
@@ -292,13 +298,16 @@ Mỗi dòng đã bao gồm dữ liệu hoa hồng, chi phí quảng cáo phân b
 Hãy phân tích ngắn gọn bằng tiếng Việt, trả về JSON:
 {
   "tom_tat": "1-2 câu tổng quan kết quả tháng này",
-  "top_scale": ["sub_id2 nên tăng ngân sách ngay, kèm lý do ngắn"],
-  "can_dung": ["sub_id2 nên dừng ngay, kèm lý do ngắn"],
-  "canh_bao": ["rủi ro hoặc bất thường cần chú ý"],
+  "top_scale": ["sub_id2 nên tăng ngân sách ngay, kèm lý do ngắn, tối đa 5 mục"],
+  "can_dung": ["sub_id2 nên dừng ngay, kèm lý do ngắn, tối đa 5 mục"],
+  "canh_bao": ["rủi ro hoặc bất thường cần chú ý, tối đa 5 mục"],
   "khuyen_nghi": "1 khuyến nghị chiến lược tổng thể"
 }
 Chỉ trả về JSON, không giải thích thêm.`;
-      const response = await callAi({ messages: [{ role: 'user', content: prompt }] });
+      const response = await callAi({
+        messages: [{ role: 'user', content: prompt }],
+        responseMimeType: 'application/json'
+      });
       if (!response) return;
       const parsed = parseAiJson(extractAiText(response));
       setAiAnalysis(normalizeAiAnalysis(parsed));
@@ -314,7 +323,9 @@ Chỉ trả về JSON, không giải thích thêm.`;
   };
 
   const runAiBudgetPlan = async (retryOnRateLimit = true) => {
-    const rows = buildRowsPayload(commissionBySubId).filter(row => Number(row.roi || 0) > 0);
+    const rows = buildRowsPayload(commissionBySubId)
+      .filter(row => Number(row.roi || 0) > 0)
+      .sort((a, b) => Number(b.roi || 0) - Number(a.roi || 0));
     const totalBudget = Number(summary?.totalSpend || 0);
     if (!rows.length || totalBudget <= 0) {
       toast.error('Chưa đủ dữ liệu ROI và ngân sách để hỏi AI');
@@ -332,14 +343,17 @@ Mỗi sub_id2 có kèm lượt click, CPC và số dòng camp để đánh giá 
 Hãy đề xuất phân bổ ngân sách tối ưu để maximize tổng hoa hồng. Trả về JSON:
 {
   "phan_bo": [
-    {"sub_id2": "xxx", "ngan_sach": 1000000, "ly_do": "..."}
+    {"sub_id2": "xxx", "ngan_sach": 1000000, "ly_do": "tối đa 12 từ"}
   ],
   "tong_hh_du_kien": 5000000,
   "loi_nhuan_du_kien": 2000000,
   "chien_luoc": "giải thích ngắn về chiến lược phân bổ"
 }
-Chỉ phân bổ cho sub_id2 ROI > 0. Chỉ trả về JSON.`;
-      const response = await callAi({ messages: [{ role: 'user', content: prompt }] });
+Chỉ phân bổ cho sub_id2 ROI > 0. Chọn tối đa 12 sub_id2 tốt nhất. Chỉ trả về JSON.`;
+      const response = await callAi({
+        messages: [{ role: 'user', content: prompt }],
+        responseMimeType: 'application/json'
+      });
       if (!response) return;
       const parsed = parseAiJson(extractAiText(response));
       setAiBudgetPlan(normalizeAiBudget(parsed));
