@@ -2588,7 +2588,7 @@ async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toD
   const includeAccountInfo = options.includeAccountInfo === true;
   const persist = options.persist === true;
   const concurrency = parseBoundedInt(options.concurrency, 2, 1, 5);
-  const facebookAccounts = (accounts || []).filter(account => account?.provider !== 'shopee');
+  const facebookAccounts = (accounts || []);
   if (!facebookAccounts.length) return [];
 
   const accountResults = await mapWithConcurrency(facebookAccounts, async (account) => {
@@ -6269,8 +6269,12 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
     const includeScheduledNoSpend = req.query.includeScheduledNoSpend === 'true' || req.query.includeScheduledNoSpend === true;
     const includeLiveCreated = req.query.includeLiveCreated === 'true' || req.query.includeLiveCreated === true;
     const includeLiveCampaigns = includeScheduledNoSpend && includeLiveCreated && dateRangeTouchesTodayOrFuture(fDate, tDate);
-    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}`);
-    const cached = includeLiveCampaigns ? null : getReadCache(cacheKey);
+    const includeMetaInsights = req.query.includeMetaInsights === 'true' || req.query.includeMetaInsights === true;
+    const today = todayStr();
+    const shouldFetchMetaInsights = includeMetaInsights && String(fDate) <= today;
+    const metaInsightsToDate = String(tDate) > today ? today : tDate;
+    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}:${shouldFetchMetaInsights ? 'meta-insights' : 'stored-insights'}`);
+    const cached = includeLiveCampaigns || shouldFetchMetaInsights ? null : getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
     const ownedAccount = await Account.findOne(withUserFilter(req, { _id: req.params.id }))
@@ -6376,8 +6380,13 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
       }
     }
 
-    console.log(`[campaigns:account] account=${req.params.id} ${fDate}..${tDate} rows=${result.length} ${Date.now() - startedAt}ms`);
-    res.json(includeLiveCampaigns ? result : setReadCache(cacheKey, result));
+    if (shouldFetchMetaInsights) {
+      const metaRows = await fetchMetaCampaignMetricRowsForReport([ownedAccount], fDate, metaInsightsToDate, { includeAccountInfo: false, persist: true });
+      result = applyMetaCampaignMetricRows(result, metaRows);
+    }
+
+    console.log(`[campaigns:account] account=${req.params.id} ${fDate}..${tDate} rows=${result.length} meta=${shouldFetchMetaInsights ? 'yes' : 'no'} ${Date.now() - startedAt}ms`);
+    res.json(includeLiveCampaigns || shouldFetchMetaInsights ? result : setReadCache(cacheKey, result));
   } catch (error) {
     console.error(`[campaigns:account] failed after ${Date.now() - startedAt}ms: ${error.message}`);
     res.status(500).json({ error: error.message });
@@ -6395,7 +6404,7 @@ app.get('/api/campaigns/today', async (req, res) => {
     const includeMetaInsights = req.query.includeMetaInsights === 'true' || req.query.includeMetaInsights === true;
     const includeLiveCampaigns = includeScheduledNoSpend && includeLiveCreated && dateRangeTouchesTodayOrFuture(fDate, tDate);
     const today = todayStr();
-    const shouldFetchMetaInsights = includeMetaInsights && provider !== 'shopee' && String(fDate) <= today;
+    const shouldFetchMetaInsights = includeMetaInsights && String(fDate) <= today;
     const metaInsightsToDate = String(tDate) > today ? today : tDate;
     const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}:${shouldFetchMetaInsights ? 'meta-insights' : 'stored-insights'}`);
     const cached = includeLiveCampaigns || shouldFetchMetaInsights ? null : getReadCache(cacheKey);

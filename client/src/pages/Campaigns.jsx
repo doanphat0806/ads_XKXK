@@ -62,7 +62,7 @@ export default function Campaigns() {
   const [lastToggleLog, setLastToggleLog] = useState('');
   const toggleReloadTimerRef = useRef(null);
 
-  const loadCampaigns = useCallback(async (showLoader = true) => {
+  const loadCampaigns = useCallback(async (showLoader = true, forceRefresh = false) => {
     if (showLoader || campaigns.length === 0) {
       setLoading(true);
     }
@@ -75,6 +75,9 @@ export default function Campaigns() {
         includeScheduledNoSpend: 'true',
         includeLiveCreated: 'true'
       });
+      if (forceRefresh) {
+        params.set('includeMetaInsights', 'true');
+      }
       const url = filterAcc
         ? `/accounts/${filterAcc}/campaigns?${params.toString()}`
         : `/campaigns/today?${params.toString()}`;
@@ -93,7 +96,7 @@ export default function Campaigns() {
       window.clearTimeout(toggleReloadTimerRef.current);
       toggleReloadTimerRef.current = null;
     }
-    loadCampaigns(showLoader);
+    loadCampaigns(showLoader, true);
   }, [loadCampaigns]);
 
   const scheduleToggleReload = useCallback(() => {
