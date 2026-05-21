@@ -295,10 +295,10 @@ function isShopeeAdAccountName(name) {
 
 function getAccountProviderNameError(provider, name) {
   if (provider === 'shopee' && !isShopeeAdAccountName(name)) {
-    return 'Tai khoan Shopee chi cho phep ten bat dau bang XK11, XK12, XK30, XK29, XK28 hoac XK13.';
+    return 'Tai khoan Shopee chi cho phep ten bat dau bang XK lien sau la so (vi du: XK11).';
   }
   if (provider === 'facebook' && isShopeeAdAccountName(name)) {
-    return 'Tai khoan bat dau bang XK11, XK12, XK30, XK29, XK28 hoac XK13 chi duoc them vao role Shopee.';
+    return 'Tai khoan bat dau bang XK lien sau la so (vi du: XK11) chi duoc them vao role Shopee.';
   }
   return '';
 }
@@ -5253,8 +5253,8 @@ app.post('/api/accounts/auto-discover', async (req, res) => {
         sources,
         sourceErrors,
         message: provider === 'shopee'
-          ? `Tim thay ${allAdAccounts.length} tai khoan nhung khong co tai khoan Shopee nao bat dau bang XK11, XK12, XK30, XK29, XK28 hoac XK13.`
-          : `Tim thay ${allAdAccounts.length} tai khoan nhung tat ca deu thuoc nhom Shopee XK11, XK12, XK30, XK29, XK28 hoac XK13.`
+          ? `Tim thay ${allAdAccounts.length} tai khoan nhung khong co tai khoan Shopee nao bat dau bang XK lien sau la so (vi du: XK11).`
+          : `Tim thay ${allAdAccounts.length} tai khoan nhung tat ca deu thuoc nhom Shopee (ten bat dau bang XK lien sau la so).`
       });
     }
 
