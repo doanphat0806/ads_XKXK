@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { api, cachedApi, readResponseCache, todayString } from '../lib/api';
 import { toast } from 'react-toastify';
+import { activateClaudeApiKeyForUser, clearActiveClaudeApiKey } from '../lib/claude';
 
 const AppContext = createContext();
 
@@ -30,12 +31,19 @@ export const AppProvider = ({ children }) => {
   const openModal = (type, data = null) => setModalState({ type, data });
   const closeModal = () => setModalState({ type: null, data: null });
 
+  useEffect(() => {
+    if (isAuthenticated && currentUser) {
+      activateClaudeApiKeyForUser(currentUser);
+    }
+  }, [isAuthenticated, currentUser]);
+
   const login = async (username, password, type = 'facebook') => {
     try {
       const result = await api('POST', '/auth/login', { username, password, provider: type });
       localStorage.setItem('adsctrl-token', result.token);
       localStorage.setItem('adsctrl-provider', result.user?.provider || type);
       localStorage.setItem('adsctrl-user', JSON.stringify(result.user || null));
+      activateClaudeApiKeyForUser(result.user || null);
       setCurrentUser(result.user || null);
       setIsAuthenticated(true);
       setProvider(result.user?.provider || type);
@@ -52,6 +60,7 @@ export const AppProvider = ({ children }) => {
     localStorage.removeItem('adsctrl-auth');
     localStorage.removeItem('adsctrl-provider');
     localStorage.removeItem('adsctrl-user');
+    clearActiveClaudeApiKey();
     sessionStorage.clear();
     setCurrentUser(null);
     setStats({});

@@ -4220,6 +4220,43 @@ app.get('/api/auth/me', authenticateApiRequest, async (req, res) => {
   });
 });
 
+app.post('/api/ai/claude', async (req, res) => {
+  try {
+    const apiKey = String(req.body?.apiKey || '').trim();
+    if (!apiKey) return res.status(400).json({ error: 'Vui long nhap Claude API Key' });
+
+    const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    if (!messages.length) return res.status(400).json({ error: 'Thieu noi dung can phan tich' });
+
+    const maxTokens = parseBoundedInt(req.body?.max_tokens, 1500, 1, 1500);
+    const payload = {
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: maxTokens,
+      messages
+    };
+    const system = String(req.body?.system || '').trim();
+    if (system) payload.system = system;
+
+    const response = await axios.post('https://api.anthropic.com/v1/messages', payload, {
+      timeout: 30000,
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01'
+      }
+    });
+
+    res.json(response.data);
+  } catch (error) {
+    const status = error.response?.status || (error.code === 'ECONNABORTED' ? 504 : 500);
+    const anthropicError = error.response?.data?.error?.message || error.response?.data?.error || error.message;
+    res.status(status).json({
+      error: typeof anthropicError === 'string' ? anthropicError : 'Claude API loi',
+      status
+    });
+  }
+});
+
 app.get('/api/users', async (req, res) => {
   try {
     if (!requireAdminUser(req, res)) return;
@@ -7477,17 +7514,31 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
     const accountFilter = withUserFilter(req, buildAccountProviderFilter('shopee'));
     const accounts = await Account.find(accountFilter).select('_id name adAccountId').lean();
     const accountIds = accounts.map(account => account._id);
+    const dateMs = 24 * 60 * 60 * 1000;
+    const rangeStart = new Date(`${fromDate}T00:00:00Z`);
+    const rangeEnd = new Date(`${toDate}T00:00:00Z`);
+    const rangeDays = Math.max(1, Math.round((rangeEnd.getTime() - rangeStart.getTime()) / dateMs) + 1);
+    const previousToDate = new Date(rangeStart.getTime() - dateMs).toISOString().split('T')[0];
+    const previousFromDate = new Date(rangeStart.getTime() - (rangeDays * dateMs)).toISOString().split('T')[0];
 
     const match = {
       accountId: { $in: accountIds },
       date: { $gte: fromDate, $lte: toDate }
     };
+    const previousMatch = {
+      accountId: { $in: accountIds },
+      date: { $gte: previousFromDate, $lte: previousToDate }
+    };
     const commissionMatch = {
       ownerUserId: req.currentUser._id,
       date: { $gte: fromDate, $lte: toDate }
     };
+    const previousCommissionMatch = {
+      ownerUserId: req.currentUser._id,
+      date: { $gte: previousFromDate, $lte: previousToDate }
+    };
 
-    const [totalRows, byDate, byAccount, commissionBySubId, commissionByDate] = await Promise.all([
+    const [totalRows, byDate, byAccount, commissionBySubId, commissionByDate, spendByCampaignName, previousCommissionBySubId, previousSpendByCampaignName] = await Promise.all([
       Campaign.aggregate([
         { $match: match },
         {
@@ -7587,6 +7638,41 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
         },
         { $project: { _id: 0, date: '$_id', commission: 1, subIdCount: 1, rowCount: 1 } },
         { $sort: { date: 1 } }
+      ]),
+      Campaign.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: { $toLower: '$name' },
+            spend: { $sum: '$spend' },
+            clicks: { $sum: '$clicks' },
+            campaignRows: { $sum: 1 },
+            originalName: { $first: '$name' }
+          }
+        }
+      ]),
+      ShopeeCommission.aggregate([
+        { $match: previousCommissionMatch },
+        {
+          $group: {
+            _id: '$subId2',
+            commission: { $sum: '$commission' },
+            rowCount: { $sum: '$rowCount' }
+          }
+        },
+        { $project: { _id: 0, subId2: '$_id', commission: 1, rowCount: 1 } }
+      ]),
+      Campaign.aggregate([
+        { $match: previousMatch },
+        {
+          $group: {
+            _id: { $toLower: '$name' },
+            spend: { $sum: '$spend' },
+            clicks: { $sum: '$clicks' },
+            campaignRows: { $sum: 1 },
+            originalName: { $first: '$name' }
+          }
+        }
       ])
     ]);
 
@@ -7594,58 +7680,103 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
     const commissionTotal = commissionBySubId.reduce((sum, item) => sum + Number(item.commission || 0), 0);
     const autoConfig = await getUserAutoConfig(req.currentUser._id);
 
-    const spendByCampaignName = await Campaign.aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: { $toLower: '$name' },
-          spend: { $sum: '$spend' },
-          originalName: { $first: '$name' }
-        }
+    const labelByAction = {
+      pause: 'TẮT',
+      warning: 'CẢNH BÁO',
+      testing: 'TEST THÊM',
+      keep: 'GIỮ',
+      scale: 'SCALE NHẸ',
+      scale_strong: 'SCALE MẠNH'
+    };
+    const buildProfitRows = (commissionRows = [], spendRows = []) => {
+      const unifiedMap = new Map();
+      for (const item of commissionRows) {
+        const key = String(item.subId2 || '').trim().toLowerCase();
+        unifiedMap.set(key, {
+          sub_id2: item.subId2,
+          hoa_hong: Number(item.commission || 0),
+          rowCount: Number(item.rowCount || 0),
+          chi_phi_pb: 0,
+          clicks: 0,
+          campaignRows: 0
+        });
       }
-    ]);
 
-    const unifiedMap = new Map();
-    for (const item of commissionBySubId) {
-      const key = String(item.subId2 || '').trim().toLowerCase();
-      unifiedMap.set(key, {
-        subId2: item.subId2,
-        commission: item.commission || 0,
-        spend: 0
+      for (const item of spendRows) {
+        const key = String(item._id || '').trim().toLowerCase();
+        const existing = unifiedMap.get(key) || {
+          sub_id2: item.originalName || item._id,
+          hoa_hong: 0,
+          rowCount: 0,
+          chi_phi_pb: 0,
+          clicks: 0,
+          campaignRows: 0
+        };
+        existing.chi_phi_pb += Number(item.spend || 0);
+        existing.clicks += Number(item.clicks || 0);
+        existing.campaignRows += Number(item.campaignRows || 0);
+        unifiedMap.set(key, existing);
+      }
+
+      return Array.from(unifiedMap.values()).map(item => {
+        const profit = item.hoa_hong - item.chi_phi_pb;
+        const roi = item.chi_phi_pb > 0 ? (profit / item.chi_phi_pb) * 100 : (profit > 0 ? 100 : 0);
+        const optimization = getShopeeOptimizationDecision({
+          spend: item.chi_phi_pb,
+          commission: item.hoa_hong,
+          minSpendLimit: autoConfig.autoPauseShopeeMinSpendLimit
+        });
+        return {
+          sub_id2: item.sub_id2,
+          hoa_hong: item.hoa_hong,
+          hh_tb: item.rowCount > 0 ? item.hoa_hong / item.rowCount : 0,
+          chi_phi_pb: item.chi_phi_pb,
+          clicks: item.clicks,
+          cpc: item.clicks > 0 ? item.chi_phi_pb / item.clicks : 0,
+          so_camp: item.campaignRows,
+          roi,
+          danh_gia: labelByAction[optimization.action] || optimization.label || ''
+        };
       });
-    }
+    };
 
-    for (const item of spendByCampaignName) {
-      const key = String(item._id || '').trim().toLowerCase();
-      const existing = unifiedMap.get(key) || {
-        subId2: item.originalName || item._id,
-        commission: 0,
-        spend: 0
-      };
-      existing.spend += (item.spend || 0);
-      unifiedMap.set(key, existing);
-    }
+    let unifiedList = buildProfitRows(commissionBySubId, spendByCampaignName);
+    const previousList = buildProfitRows(previousCommissionBySubId, previousSpendByCampaignName);
+    const previousBySubId = new Map(previousList.map(item => [String(item.sub_id2 || '').trim().toLowerCase(), item]));
 
-    let unifiedList = Array.from(unifiedMap.values()).map(item => {
-      const doanhThu = item.commission - item.spend;
-      const roi = item.spend > 0 ? (doanhThu / item.spend) * 100 : (doanhThu > 0 ? 100 : 0);
-      const optimization = getShopeeOptimizationDecision({
-        spend: item.spend,
-        commission: item.commission,
-        minSpendLimit: autoConfig.autoPauseShopeeMinSpendLimit
-      });
-      return {
-        ...item,
-        doanhThu,
-        roi,
-        roas: optimization.roas,
-        hhAdsPercent: optimization.hhAdsPercent,
-        optimization
-      };
-    });
-
-    unifiedList.sort((a, b) => b.commission - a.commission || b.spend - a.spend);
+    unifiedList.sort((a, b) => b.hoa_hong - a.hoa_hong || b.roi - a.roi);
     unifiedList = unifiedList.slice(0, 500);
+    const alertCandidates = [];
+    unifiedList.forEach(item => {
+      const previous = previousBySubId.get(String(item.sub_id2 || '').trim().toLowerCase());
+      if (!previous) return;
+      const previousCommission = Number(previous.hoa_hong || 0);
+      const currentCommission = Number(item.hoa_hong || 0);
+      if (previousCommission > 0 && currentCommission < previousCommission * 0.8) {
+        alertCandidates.push({
+          type: 'warning',
+          sub_id2: item.sub_id2,
+          previous_hoa_hong: previousCommission,
+          current_hoa_hong: currentCommission
+        });
+      }
+      if (previousCommission > 0 && currentCommission > previousCommission * 1.3) {
+        alertCandidates.push({
+          type: 'positive',
+          sub_id2: item.sub_id2,
+          previous_hoa_hong: previousCommission,
+          current_hoa_hong: currentCommission
+        });
+      }
+      if (Number(previous.roi || 0) >= SHOPEE_STRONG_SCALE_ROI_PERCENT && Number(item.roi || 0) < 50) {
+        alertCandidates.push({
+          type: 'orange',
+          sub_id2: item.sub_id2,
+          previous_roi: previous.roi,
+          current_roi: item.roi
+        });
+      }
+    });
 
     // Swap original array contents
     commissionBySubId.length = 0;
@@ -7660,9 +7791,18 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
       totalCampaignRows: totals.totalCampaignRows || 0,
       activeDayCount: totals.activeDayCount || 0,
       totalCommission: commissionTotal,
+      totalProfit: commissionTotal - Number(totals.totalSpend || 0),
+      totalRoi: Number(totals.totalSpend || 0) > 0
+        ? ((commissionTotal - Number(totals.totalSpend || 0)) / Number(totals.totalSpend || 0)) * 100
+        : (commissionTotal > 0 ? 100 : 0),
       autoPauseShopeeMinSpendLimit: autoConfig.autoPauseShopeeMinSpendLimit,
       commissionSubIdCount: commissionBySubId.length,
       commissionBySubId,
+      alerts: alertCandidates,
+      previousPeriod: {
+        fromDate: previousFromDate,
+        toDate: previousToDate
+      },
       commissionByDate,
       byDate,
       byAccount

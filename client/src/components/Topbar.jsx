@@ -2,11 +2,35 @@ import React from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import { api } from '../lib/api';
 import { toast } from 'react-toastify';
+import {
+  getClaudeApiKey,
+  hasClaudeApiKey,
+  onClaudeApiKeyChange,
+  saveClaudeApiKeyForUser
+} from '../lib/claude';
 
 export default function Topbar({ title }) {
-  const { provider, logout, refreshAll, loadAccounts, openModal } = useAppContext();
+  const { provider, currentUser, logout, refreshAll, loadAccounts, openModal } = useAppContext();
   const [discovering, setDiscovering] = React.useState(false);
+  const [claudeKeyInput, setClaudeKeyInput] = React.useState('');
+  const [claudeReady, setClaudeReady] = React.useState(() => hasClaudeApiKey(currentUser));
   const showAdActions = provider !== 'oder' && provider !== 'kho';
+
+  React.useEffect(() => {
+    const syncClaudeStatus = () => setClaudeReady(hasClaudeApiKey(currentUser));
+    syncClaudeStatus();
+    return onClaudeApiKeyChange(syncClaudeStatus);
+  }, [currentUser]);
+
+  const saveClaudeKey = () => {
+    if (!saveClaudeApiKeyForUser(currentUser, claudeKeyInput)) {
+      toast.error('Vui lòng nhập Claude API Key');
+      return;
+    }
+    setClaudeKeyInput('');
+    setClaudeReady(Boolean(getClaudeApiKey(currentUser)));
+    toast.success('Đã lưu Claude API Key');
+  };
 
   const handleAutoDiscover = async () => {
     if (discovering) return;
@@ -46,6 +70,20 @@ export default function Topbar({ title }) {
         {showAdActions && (
           <>
             <button className="btn btn-ghost btn-sm" onClick={() => openModal('CONFIG')}>Token / API key</button>
+            <div className="topbar-claude-key">
+              <input
+                type="password"
+                placeholder="Claude API Key..."
+                value={claudeKeyInput}
+                onChange={event => setClaudeKeyInput(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') saveClaudeKey();
+                }}
+                aria-label="Claude API Key"
+              />
+              <button className="btn btn-ghost btn-sm" onClick={saveClaudeKey}>Lưu</button>
+              {claudeReady && <span className="ai-ready-badge">🤖 AI sẵn sàng</span>}
+            </div>
             <button className="btn btn-ghost btn-sm" onClick={refreshAll}>Lam moi</button>
             <button
               className="btn btn-ghost btn-sm"
