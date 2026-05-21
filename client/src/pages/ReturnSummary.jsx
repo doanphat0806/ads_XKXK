@@ -68,7 +68,10 @@ export default function ReturnSummary() {
   }, []);
 
   const categoryRows = summary?.categories || EMPTY_ARRAY;
-  const dailyRows = summary?.dailyRows || EMPTY_ARRAY;
+  const rawDailyRows = summary?.dailyRows || EMPTY_ARRAY;
+  const dailyRows = useMemo(() => (
+    [...rawDailyRows].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+  ), [rawDailyRows]);
   const productReturnTotal = summary?.productReturnTotal;
   const productReturnCategoryRows = summary?.productReturnCategories || EMPTY_ARRAY;
   const total = summary?.total || {};

@@ -8108,8 +8108,8 @@ app.get('/api/return-summary', async (req, res) => {
 
     const fullDateKeys = makeReturnSummaryDateKeys(fromDate, toDate);
     const dateKeys = fullDateKeys.length > 0 && fullDateKeys.length <= 120
-      ? fullDateKeys
-      : [...dailyMap.keys()].sort();
+      ? [...fullDateKeys].reverse()
+      : [...dailyMap.keys()].sort((a, b) => b.localeCompare(a));
     const dailyRows = dateKeys
       .map(dateKey => finalizeReturnSummaryDailyRow(getReturnSummaryDailyRow(dailyMap, dateKey)))
       .filter(row => fullDateKeys.length <= 120 || row.total.orderCount > 0 || row.total.amount > 0);
