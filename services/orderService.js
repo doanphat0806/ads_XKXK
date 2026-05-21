@@ -594,7 +594,18 @@ function buildReturnSummaryOrderStats(orders = [], { fromDate = '', toDate = '' 
     return acc;
   }, {});
   const daily = {};
-  const total = { orderCount: 0, shippedOrderCount: 0, shipRate: 0 };
+  const monthly = {};
+  const total = {
+    orderCount: 0,
+    shippedOrderCount: 0,
+    shipRate: 0,
+    returned: 0,
+    returning: 0,
+    received: 0,
+    returnCount: 0,
+    returnDenominator: 0,
+    returnRate: 0
+  };
 
   for (const order of orders) {
     const dateKey = getOrderDateKey(order);
@@ -604,20 +615,55 @@ function buildReturnSummaryOrderStats(orders = [], { fromDate = '', toDate = '' 
 
     const orderId = String(order.orderId || order.rawData?.sheetColumns?.col12 || '').trim();
     if (!orderId) continue;
+    const monthKey = dateKey.slice(0, 7);
 
     if (!daily[dateKey]) {
       daily[dateKey] = RETURN_SUMMARY_BUCKETS.reduce((acc, bucket) => {
         acc[bucket.key] = { orderCount: 0 };
         return acc;
-      }, { total: { orderCount: 0, shippedOrderCount: 0, shipRate: 0 } });
+      }, {
+        total: {
+          orderCount: 0,
+          shippedOrderCount: 0,
+          shipRate: 0,
+          returned: 0,
+          returning: 0,
+          received: 0,
+          returnCount: 0,
+          returnDenominator: 0,
+          returnRate: 0
+        }
+      });
+    }
+    if (!monthly[monthKey]) {
+      monthly[monthKey] = {
+        total: {
+          orderCount: 0,
+          shippedOrderCount: 0,
+          shipRate: 0,
+          returned: 0,
+          returning: 0,
+          received: 0,
+          returnCount: 0,
+          returnDenominator: 0,
+          returnRate: 0
+        }
+      };
     }
 
     total.orderCount += 1;
     daily[dateKey].total.orderCount += 1;
+    monthly[monthKey].total.orderCount += 1;
     if (!isUnshippedSummaryStatus(order)) {
       total.shippedOrderCount += 1;
       daily[dateKey].total.shippedOrderCount += 1;
+      monthly[monthKey].total.shippedOrderCount += 1;
     }
+
+    const returnStatus = classifyReturnStatus(order);
+    incrementReturnStats(total, returnStatus, 1);
+    incrementReturnStats(daily[dateKey].total, returnStatus, 1);
+    incrementReturnStats(monthly[monthKey].total, returnStatus, 1);
 
     const bucketKey = classifyReturnOrderTagBucket(getOrderTagText(order));
     if (!bucketKey || !categories[bucketKey]) continue;
@@ -626,14 +672,15 @@ function buildReturnSummaryOrderStats(orders = [], { fromDate = '', toDate = '' 
     daily[dateKey][bucketKey].orderCount += 1;
   }
 
-  total.shipRate = total.orderCount > 0 ? total.shippedOrderCount / total.orderCount : 0;
-  Object.values(daily).forEach(day => {
-    day.total.shipRate = day.total.orderCount > 0
-      ? day.total.shippedOrderCount / day.total.orderCount
-      : 0;
-  });
+  [total, ...Object.values(daily).map(day => day.total), ...Object.values(monthly).map(month => month.total)]
+    .forEach(stats => {
+      stats.shipRate = stats.orderCount > 0 ? stats.shippedOrderCount / stats.orderCount : 0;
+      stats.returnCount = Number(stats.returned || 0) + Number(stats.returning || 0);
+      stats.returnDenominator = stats.returnCount + Number(stats.received || 0);
+      stats.returnRate = stats.returnDenominator > 0 ? stats.returnCount / stats.returnDenominator : 0;
+    });
 
-  return { categories, daily, total };
+  return { categories, daily, monthly, total };
 }
 
 async function fetchOrderSheetRows({ refresh = false } = {}) {

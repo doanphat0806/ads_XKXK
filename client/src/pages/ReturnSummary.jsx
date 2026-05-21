@@ -20,6 +20,12 @@ function displayDate(dateKey = '') {
   return `${day}/${month}/${year}`;
 }
 
+function displayMonth(monthKey = '') {
+  const [year, month] = String(monthKey || '').split('-');
+  if (!year || !month) return monthKey || '-';
+  return `${month}/${year}`;
+}
+
 function getCategory(row = {}, key = '') {
   return (row.categories || EMPTY_ARRAY).find(item => item.key === key) || {
     key,
@@ -68,6 +74,10 @@ export default function ReturnSummary() {
   }, []);
 
   const categoryRows = summary?.categories || EMPTY_ARRAY;
+  const rawMonthlyRows = summary?.monthlyRows || EMPTY_ARRAY;
+  const monthlyRows = useMemo(() => (
+    [...rawMonthlyRows].sort((a, b) => String(b.month || '').localeCompare(String(a.month || '')))
+  ), [rawMonthlyRows]);
   const rawDailyRows = summary?.dailyRows || EMPTY_ARRAY;
   const dailyRows = useMemo(() => (
     [...rawDailyRows].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
@@ -141,6 +151,48 @@ export default function ReturnSummary() {
               ))}
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="card section-gap">
+        <div className="card-header">
+          <div className="card-title">Thống kê theo tháng</div>
+        </div>
+        <div className="tbl-wrap return-table-wrap return-monthly-wrap">
+          {loading && !summary ? (
+            <div className="empty"><span className="spin">...</span><p>Đang tải...</p></div>
+          ) : monthlyRows.length === 0 ? (
+            <div className="empty"><div className="ei">0</div><p>Chưa có dữ liệu theo tháng</p></div>
+          ) : (
+            <table className="tbl return-monthly-table">
+              <thead>
+                <tr>
+                  <th>Tháng</th>
+                  <th className="text-right">Tổng đơn</th>
+                  <th className="text-right">Đơn hoàn</th>
+                  <th className="text-right">Tỉ lệ hoàn</th>
+                  <th className="text-right">Tỉ lệ ship</th>
+                  <th className="text-right">Tổng tiền</th>
+                  <th className="text-right">CPO</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthlyRows.map(row => (
+                  <tr key={row.month}>
+                    <td className="mono-sm">{displayMonth(row.month)}</td>
+                    <td className="text-right mono-sm">{formatNumber(row.orderCount || 0)}</td>
+                    <td className="text-right mono-sm">
+                      {formatNumber(row.returnCount || 0)} / {formatNumber(row.returnDenominator || 0)}
+                    </td>
+                    <td className="text-right mono-sm">{formatPercent(row.returnRate || 0)}</td>
+                    <td className="text-right mono-sm">{formatPercent(row.shipRate || 0)}</td>
+                    <td className="text-right mono-sm">{formatVND(row.amount || 0)}</td>
+                    <td className={getCpoClassName(row.costPerOrder)}>{formatCpo(row.costPerOrder)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 

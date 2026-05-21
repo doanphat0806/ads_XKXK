@@ -3893,11 +3893,16 @@
       min-width: 680px;
     }
 
+    #page-return-summary .return-monthly-table {
+      min-width: 940px;
+    }
+
     #page-return-summary .return-daily-table {
       min-width: 1680px;
     }
 
     #page-return-summary .return-summary-table thead th,
+    #page-return-summary .return-monthly-table thead th,
     #page-return-summary .return-daily-table thead th {
       position: sticky;
       top: 0;

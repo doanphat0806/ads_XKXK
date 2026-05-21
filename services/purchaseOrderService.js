@@ -224,15 +224,17 @@ function parseCsvRows(csvText = '') {
       if (char === '"' && next === '"') {
         cell += '"';
         index += 1;
-      } else if (char === '"') {
+      } else if (char === '"' && (next === ',' || next === '\n' || next === '\r' || next === undefined)) {
         inQuotes = false;
+      } else if (char === '"') {
+        cell += char;
       } else {
         cell += char;
       }
       continue;
     }
 
-    if (char === '"') {
+    if (char === '"' && cell === '') {
       inQuotes = true;
     } else if (char === ',') {
       row.push(cell);

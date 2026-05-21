@@ -7957,6 +7957,47 @@ function finalizeReturnSummaryDailyRow(row = {}) {
   };
 }
 
+function getReturnSummaryMonthlyRow(monthlyMap, monthKey) {
+  if (!monthlyMap.has(monthKey)) {
+    monthlyMap.set(monthKey, {
+      month: monthKey,
+      amount: 0,
+      orderCount: 0,
+      shippedOrderCount: 0,
+      returned: 0,
+      returning: 0,
+      received: 0
+    });
+  }
+  return monthlyMap.get(monthKey);
+}
+
+function finalizeReturnSummaryMonthlyRow(row = {}) {
+  const orderCount = Number(row.orderCount || 0);
+  const amount = Number(row.amount || 0);
+  const shippedOrderCount = Number(row.shippedOrderCount || 0);
+  const returned = Number(row.returned || 0);
+  const returning = Number(row.returning || 0);
+  const received = Number(row.received || 0);
+  const returnCount = returned + returning;
+  const returnDenominator = returnCount + received;
+
+  return {
+    month: row.month,
+    orderCount,
+    shippedOrderCount,
+    shipRate: orderCount > 0 ? shippedOrderCount / orderCount : 0,
+    returned,
+    returning,
+    received,
+    returnCount,
+    returnDenominator,
+    returnRate: returnDenominator > 0 ? returnCount / returnDenominator : 0,
+    amount,
+    costPerOrder: orderCount > 0 ? amount / orderCount : 0
+  };
+}
+
 function buildProductReturnSummary(orderRows = []) {
   const skuStats = buildOrderSkuStats(orderRows);
   const rows = Object.entries(skuStats.returnStatsBySku || {})
@@ -8068,6 +8109,7 @@ app.get('/api/return-summary', async (req, res) => {
     const productReturnRateSummary = buildReturnProductRateStats(orderRows);
     const categories = createReturnSummaryBucketMap();
     const dailyMap = new Map();
+    const monthlyMap = new Map();
 
     RETURN_SUMMARY_BUCKETS.forEach(bucket => {
       categories[bucket.key].orderCount = Number(orderStats.categories?.[bucket.key]?.orderCount || 0);
@@ -8082,15 +8124,27 @@ app.get('/api/return-summary', async (req, res) => {
       });
     });
 
+    Object.entries(orderStats.monthly || {}).forEach(([monthKey, stats]) => {
+      const month = getReturnSummaryMonthlyRow(monthlyMap, monthKey);
+      const totalStats = stats?.total || {};
+      month.orderCount = Number(totalStats.orderCount || 0);
+      month.shippedOrderCount = Number(totalStats.shippedOrderCount || 0);
+      month.returned = Number(totalStats.returned || 0);
+      month.returning = Number(totalStats.returning || 0);
+      month.received = Number(totalStats.received || 0);
+    });
+
     campaignRows.forEach(row => {
       const dateKey = String(row.date || '').slice(0, 10);
       if (!dateKey) return;
       const bucketKey = classifyReturnAdNameBucket(row.adName);
       if (!bucketKey || !categories[bucketKey]) return;
+      const monthKey = dateKey.slice(0, 7);
 
       const amount = Number(row.amount || 0);
       categories[bucketKey].amount += amount;
       getReturnSummaryDailyRow(dailyMap, dateKey).categories[bucketKey].amount += amount;
+      getReturnSummaryMonthlyRow(monthlyMap, monthKey).amount += amount;
     });
 
     const categoryRows = RETURN_SUMMARY_BUCKETS.map(bucket => finalizeReturnSummaryBucket(categories[bucket.key]));
@@ -8113,6 +8167,10 @@ app.get('/api/return-summary', async (req, res) => {
     const dailyRows = dateKeys
       .map(dateKey => finalizeReturnSummaryDailyRow(getReturnSummaryDailyRow(dailyMap, dateKey)))
       .filter(row => fullDateKeys.length <= 120 || row.total.orderCount > 0 || row.total.amount > 0);
+    const monthlyRows = [...monthlyMap.keys()]
+      .sort((a, b) => b.localeCompare(a))
+      .map(monthKey => finalizeReturnSummaryMonthlyRow(getReturnSummaryMonthlyRow(monthlyMap, monthKey)))
+      .filter(row => row.orderCount > 0 || row.amount > 0);
 
     res.json(setReadCache(cacheKey, {
       ok: true,
@@ -8125,6 +8183,7 @@ app.get('/api/return-summary', async (req, res) => {
       provider,
       categories: categoryRows,
       total,
+      monthlyRows,
       dailyRows,
       productReturnRows: productReturnSummary.rows,
       productReturnTotal: productReturnRateSummary.total,
@@ -8256,6 +8315,7 @@ app.post('/api/data-purchase-orders/import-csv', async (req, res) => {
     }
 
     const result = await importDataPurchaseOrdersFromCsvText(csvText);
+    clearPurchaseOrderReadCache();
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
