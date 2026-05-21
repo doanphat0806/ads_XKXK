@@ -843,8 +843,8 @@ async function getEffectiveSecrets(account) {
     ownerFbToken = owner?.fbToken || '';
   }
   let fbToken = account.fbToken || ownerFbToken || config?.fbToken || '';
-  let claudeKey = account.claudeKey || config?.claudeKey || '';
-  return { fbToken, claudeKey };
+  let geminiKey = account.geminiKey || config?.geminiKey || '';
+  return { fbToken, geminiKey };
 }
 
 function normalizeAdAccountId(value) {
@@ -1120,12 +1120,79 @@ async function buildAccountPayload(input = {}) {
     provider,
     fbToken: provider === 'facebook' ? String(input.fbToken || owner?.fbToken || config?.fbToken || '').trim() : '',
     adAccountId,
-    claudeKey: String(input.claudeKey || config?.claudeKey || '').trim(),
+    geminiKey: String(input.geminiKey || config?.geminiKey || '').trim(),
     spendThreshold: Number(input.spendThreshold || 20000),
     checkInterval: Number(input.checkInterval || 60),
     autoEnabled: Boolean(input.autoEnabled),
     linkedPageIds: Array.isArray(input.linkedPageIds) ? input.linkedPageIds : []
   };
+}
+
+function toGeminiTextParts(content) {
+  if (Array.isArray(content)) {
+    return content
+      .map(item => {
+        if (typeof item === 'string') return item;
+        return typeof item?.text === 'string' ? item.text : '';
+      })
+      .filter(Boolean)
+      .map(text => ({ text }));
+  }
+
+  const text = String(content || '').trim();
+  return text ? [{ text }] : [];
+}
+
+function toGeminiContents(messages = []) {
+  return messages
+    .map(message => {
+      const role = message?.role === 'assistant' ? 'model' : 'user';
+      const parts = toGeminiTextParts(message?.content);
+      return parts.length ? { role, parts } : null;
+    })
+    .filter(Boolean);
+}
+
+function extractGeminiError(error) {
+  const data = error.response?.data;
+  return data?.error?.message || data?.error || error.message;
+}
+
+function extractGeminiText(data = {}) {
+  return (data?.candidates || [])
+    .flatMap(candidate => candidate?.content?.parts || [])
+    .map(part => (typeof part?.text === 'string' ? part.text : ''))
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+async function requestGeminiGenerateContent({ apiKey, system = '', messages = [], maxTokens = 1500, timeout = 30000, model = '' }) {
+  const contents = toGeminiContents(messages);
+  if (!contents.length) throw new Error('Noi dung AI khong hop le');
+
+  const payload = {
+    contents,
+    generationConfig: {
+      maxOutputTokens: parseBoundedInt(maxTokens, 1500, 1, 1500),
+      temperature: 0.2
+    }
+  };
+  const systemText = String(system || '').trim();
+  if (systemText) payload.systemInstruction = { parts: [{ text: systemText }] };
+
+  const activeModel = String(model || process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite').trim();
+  const response = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(activeModel)}:generateContent`,
+    payload,
+    {
+      timeout,
+      params: { key: apiKey },
+      headers: { 'content-type': 'application/json' }
+    }
+  );
+
+  return { data: response.data, model: activeModel };
 }
 
 function todayStr() {
@@ -3523,7 +3590,7 @@ async function runAutoControl(account, options = {}) {
     const { campaigns, totalSpend, totalMessages, unreadMessages } = isShopee
       ? await fetchShopeeAccountData(account)
       : await fetchAccountData(account);
-    const { fbToken, claudeKey } = await getEffectiveSecrets(account);
+    const { fbToken, geminiKey } = await getEffectiveSecrets(account);
     const today = todayStr();
 
     await Account.findByIdAndUpdate(account._id, {
@@ -3629,33 +3696,24 @@ async function runAutoControl(account, options = {}) {
 
     await runScheduledDuplicatePauseForScope(account, config, today);
 
-    if (claudeKey) {
+    if (geminiKey) {
       try {
         const todayCampaigns = await Campaign.find({ accountId: account._id, date: today });
         const totalMsg = todayCampaigns.reduce((sum, campaign) => sum + campaign.messages, 0);
         const avgCPM = totalMsg > 0 ? totalSpend / totalMsg : 0;
 
-        const response = await axios.post(
-          'https://api.anthropic.com/v1/messages',
-          {
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 200,
-            messages: [{
-              role: 'user',
-              content: `Tai khoan "${account.name}": chi tieu ${totalSpend.toLocaleString()}d, tin nhan inbox: ${unreadMessages}, tong tin nhan camp: ${totalMsg}, CPM trung binh: ${avgCPM.toFixed(0)}d. Nen giu nguyen hay can luu y gi? 1 cau ngan gon.`
-            }]
-          },
-          {
-            headers: {
-              'x-api-key': claudeKey,
-              'anthropic-version': '2023-06-01'
-            }
-          }
-        );
+        const response = await requestGeminiGenerateContent({
+          apiKey: geminiKey,
+          maxTokens: 200,
+          messages: [{
+            role: 'user',
+            content: `Tai khoan "${account.name}": chi tieu ${totalSpend.toLocaleString()}d, tin nhan inbox: ${unreadMessages}, tong tin nhan camp: ${totalMsg}, CPM trung binh: ${avgCPM.toFixed(0)}d. Nen giu nguyen hay can luu y gi? 1 cau ngan gon.`
+          }]
+        });
 
-        const aiMsg = response.data.content?.[0]?.text || '';
+        const aiMsg = extractGeminiText(response.data);
         if (aiMsg) {
-          await addLog(account._id, account.name, 'ai', `Claude: ${aiMsg}`);
+          await addLog(account._id, account.name, 'ai', `Gemini: ${aiMsg}`);
         }
       } catch { }
     }
@@ -4250,8 +4308,44 @@ app.post('/api/ai/claude', async (req, res) => {
   } catch (error) {
     const status = error.response?.status || (error.code === 'ECONNABORTED' ? 504 : 500);
     const anthropicError = error.response?.data?.error?.message || error.response?.data?.error || error.message;
+    const anthropicType = error.response?.data?.error?.type || '';
     res.status(status).json({
       error: typeof anthropicError === 'string' ? anthropicError : 'Claude API loi',
+      type: anthropicType,
+      status
+    });
+  }
+});
+
+app.post('/api/ai/gemini', async (req, res) => {
+  try {
+    const apiKey = String(req.body?.apiKey || '').trim();
+    if (!apiKey) return res.status(400).json({ error: 'Vui long nhap Gemini API Key' });
+
+    const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    if (!messages.length) return res.status(400).json({ error: 'Thieu noi dung can phan tich' });
+
+    const response = await requestGeminiGenerateContent({
+      apiKey,
+      system: req.body?.system,
+      messages,
+      maxTokens: req.body?.max_tokens,
+      timeout: 30000,
+      model: req.body?.model
+    });
+    const text = extractGeminiText(response.data);
+
+    res.json({
+      content: text ? [{ type: 'text', text }] : [],
+      raw: response.data,
+      model: response.model
+    });
+  } catch (error) {
+    const status = error.response?.status || (error.code === 'ECONNABORTED' ? 504 : 500);
+    const geminiError = extractGeminiError(error);
+    res.status(status).json({
+      error: typeof geminiError === 'string' ? geminiError : 'Gemini API loi',
+      type: error.response?.data?.error?.status || '',
       status
     });
   }
@@ -4639,6 +4733,7 @@ app.get('/api/config', async (req, res) => {
       fbTokenLastRefreshTime: user?.fbTokenLastRefreshTime || config?.fbTokenLastRefreshTime || null,
       fbTokenLastDebugTime: user?.fbTokenLastDebugTime || config?.fbTokenLastDebugTime || null,
       fbTokenLastRefreshError: user?.fbTokenLastRefreshError || config?.fbTokenLastRefreshError || '',
+      hasGeminiKey: Boolean(config?.geminiKey),
       hasClaudeKey: Boolean(config?.claudeKey),
       hasFbAppId: Boolean(config?.fbAppId),
       hasFbAppSecret: Boolean(config?.fbAppSecret),
@@ -4911,6 +5006,9 @@ app.put('/api/scheduled-duplicate-pause-time', async (req, res) => {
 app.put('/api/config', async (req, res) => {
   try {
     const updates = { updatedAt: new Date() };
+    if (typeof req.body.geminiKey === 'string' && req.body.geminiKey.trim()) {
+      updates.geminiKey = req.body.geminiKey.trim();
+    }
     if (typeof req.body.claudeKey === 'string' && req.body.claudeKey.trim()) {
       updates.claudeKey = req.body.claudeKey.trim();
     }
@@ -4946,6 +5044,7 @@ app.put('/api/config', async (req, res) => {
     res.json({
       ok: true,
       hasFbToken: Boolean(req.body.fbToken?.trim() || config.fbToken),
+      hasGeminiKey: Boolean(config.geminiKey),
       hasClaudeKey: Boolean(config.claudeKey),
       hasFbAppId: Boolean(config.fbAppId),
       hasFbAppSecret: Boolean(config.fbAppSecret),
@@ -5126,7 +5225,7 @@ app.post('/api/accounts/auto-discover', async (req, res) => {
             provider,
             fbToken: provider === 'facebook' ? fbToken : '',
             adAccountId: provider === 'facebook' ? actId : String(actId || '').trim(),
-            claudeKey: String(config?.claudeKey || '').trim(),
+            geminiKey: String(config?.geminiKey || '').trim(),
             spendThreshold: 20000,
             checkInterval: 60,
             autoEnabled: false,
@@ -5243,6 +5342,7 @@ app.put('/api/accounts/:id', async (req, res) => {
 
     if (!updates.fbToken) delete updates.fbToken;
     if (!updates.claudeKey) delete updates.claudeKey;
+    if (!updates.geminiKey) delete updates.geminiKey;
     if (Object.prototype.hasOwnProperty.call(updates, 'provider')) {
       updates.provider = normalizeProvider(updates.provider);
     }

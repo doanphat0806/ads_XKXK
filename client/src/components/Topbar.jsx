@@ -3,42 +3,78 @@ import { useAppContext } from '../contexts/AppContext';
 import { api } from '../lib/api';
 import { toast } from 'react-toastify';
 import {
-  getClaudeApiKey,
-  hasClaudeApiKey,
-  onClaudeApiKeyChange,
-  removeClaudeApiKeyForUser,
-  saveClaudeApiKeyForUser
-} from '../lib/claude';
+  getGeminiApiKey,
+  hasGeminiApiKey,
+  onGeminiApiKeyChange,
+  removeGeminiApiKeyForUser,
+  saveGeminiApiKeyForUser,
+  testGeminiApiKey
+} from '../lib/gemini';
 
 export default function Topbar({ title }) {
   const { provider, currentUser, logout, refreshAll, loadAccounts, openModal } = useAppContext();
   const [discovering, setDiscovering] = React.useState(false);
-  const [claudeKeyInput, setClaudeKeyInput] = React.useState('');
-  const [claudeReady, setClaudeReady] = React.useState(() => hasClaudeApiKey(currentUser));
+  const [geminiKeyInput, setGeminiKeyInput] = React.useState('');
+  const [geminiReady, setGeminiReady] = React.useState(() => hasGeminiApiKey(currentUser));
+  const [testingGeminiKey, setTestingGeminiKey] = React.useState(false);
   const showAdActions = provider !== 'oder' && provider !== 'kho';
 
   React.useEffect(() => {
-    const syncClaudeStatus = () => setClaudeReady(hasClaudeApiKey(currentUser));
-    syncClaudeStatus();
-    return onClaudeApiKeyChange(syncClaudeStatus);
+    const syncGeminiStatus = () => setGeminiReady(hasGeminiApiKey(currentUser));
+    syncGeminiStatus();
+    return onGeminiApiKeyChange(syncGeminiStatus);
   }, [currentUser]);
 
-  const saveClaudeKey = () => {
-    if (!saveClaudeApiKeyForUser(currentUser, claudeKeyInput)) {
-      toast.error('Vui lòng nhập Claude API Key');
+  const saveGeminiKey = () => {
+    if (!saveGeminiApiKeyForUser(currentUser, geminiKeyInput)) {
+      toast.error('Vui lòng nhập Gemini API Key');
       return;
     }
-    setClaudeKeyInput('');
-    setClaudeReady(Boolean(getClaudeApiKey(currentUser)));
-    toast.success('Đã lưu Claude API Key');
+    setGeminiKeyInput('');
+    setGeminiReady(Boolean(getGeminiApiKey(currentUser)));
+    toast.success('Đã lưu Gemini API Key');
   };
 
-  const removeClaudeKey = () => {
-    if (!window.confirm('Bạn chắc chắn muốn xóa Claude API Key của tài khoản này?')) return;
-    removeClaudeApiKeyForUser(currentUser);
-    setClaudeKeyInput('');
-    setClaudeReady(false);
-    toast.success('Đã xóa Claude API Key');
+  const removeGeminiKey = () => {
+    if (!window.confirm('Bạn chắc chắn muốn xóa Gemini API Key của tài khoản này?')) return;
+    removeGeminiApiKeyForUser(currentUser);
+    setGeminiKeyInput('');
+    setGeminiReady(false);
+    toast.success('Đã xóa Gemini API Key');
+  };
+
+  const testCurrentGeminiKey = async () => {
+    const apiKey = geminiKeyInput.trim() || getGeminiApiKey(currentUser);
+    if (!apiKey) {
+      toast.error('Vui lòng nhập Gemini API Key');
+      return;
+    }
+
+    setTestingGeminiKey(true);
+    try {
+      await testGeminiApiKey(apiKey);
+      if (geminiKeyInput.trim()) {
+        saveGeminiApiKeyForUser(currentUser, geminiKeyInput);
+        setGeminiKeyInput('');
+      }
+      setGeminiReady(true);
+      toast.success('Gemini API Key hợp lệ');
+    } catch (error) {
+      console.error('Gemini key test failed:', error);
+      if (error?.status === 401) {
+        removeGeminiApiKeyForUser(currentUser);
+        setGeminiReady(false);
+        toast.error('API Key không hợp lệ hoặc không dùng được với Gemini API');
+        return;
+      }
+      if (error?.status === 429) {
+        toast.error('Đã vượt rate limit, thử lại sau 60 giây');
+        return;
+      }
+      toast.error(`Test Gemini key lỗi: ${error.message}`);
+    } finally {
+      setTestingGeminiKey(false);
+    }
   };
 
   const handleAutoDiscover = async () => {
@@ -79,22 +115,25 @@ export default function Topbar({ title }) {
         {showAdActions && (
           <>
             <button className="btn btn-ghost btn-sm" onClick={() => openModal('CONFIG')}>Token / API key</button>
-            <div className="topbar-claude-key">
+            <div className="topbar-ai-key">
               <input
                 type="password"
-                placeholder="Claude API Key..."
-                value={claudeKeyInput}
-                onChange={event => setClaudeKeyInput(event.target.value)}
+                placeholder="Gemini API Key..."
+                value={geminiKeyInput}
+                onChange={event => setGeminiKeyInput(event.target.value)}
                 onKeyDown={event => {
-                  if (event.key === 'Enter') saveClaudeKey();
+                  if (event.key === 'Enter') saveGeminiKey();
                 }}
-                aria-label="Claude API Key"
+                aria-label="Gemini API Key"
               />
-              <button className="btn btn-ghost btn-sm" onClick={saveClaudeKey}>Lưu</button>
-              {claudeReady && (
+              <button className="btn btn-ghost btn-sm" onClick={saveGeminiKey}>Lưu</button>
+              <button className="btn btn-ghost btn-sm" onClick={testCurrentGeminiKey} disabled={testingGeminiKey}>
+                {testingGeminiKey ? 'Đang test...' : 'Test key'}
+              </button>
+              {geminiReady && (
                 <>
                   <span className="ai-ready-badge">🤖 AI sẵn sàng</span>
-                  <button className="btn btn-ghost btn-sm topbar-claude-remove" onClick={removeClaudeKey}>Xóa key</button>
+                  <button className="btn btn-ghost btn-sm topbar-ai-remove" onClick={removeGeminiKey}>Xóa key</button>
                 </>
               )}
             </div>

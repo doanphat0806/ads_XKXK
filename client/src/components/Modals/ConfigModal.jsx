@@ -10,7 +10,7 @@ export default function ConfigModal() {
   const [fbToken, setFbToken] = useState('');
   const [fbApp, setFbApp] = useState({ id: '', secret: '' });
   const [fbOAuthLoading, setFbOAuthLoading] = useState(false);
-  const [claudeKey, setClaudeKey] = useState('');
+  const [geminiKey, setGeminiKey] = useState('');
   const [pancake, setPancake] = useState({ apiKey: '', shopId: '' });
   const [autoRules, setAutoRules] = useState({ start: '00:00', end: '09:00' });
   const [scheduledPauseTime, setScheduledPauseTime] = useState('21:00');
@@ -166,19 +166,19 @@ export default function ConfigModal() {
           </div>
         </section>
 
-        {/* Section: Claude AI */}
+        {/* Section: Gemini AI */}
         <section className="section-gap">
-          <div className="section-title">3. Claude AI API Key (Dùng chung)</div>
+          <div className="section-title">3. Gemini AI API Key (Dùng chung)</div>
           <div className="form-group">
             <input 
               type="password" 
-              placeholder={appConfig.hasClaudeKey ? "Đã lưu key (Nhập mới để ghi đè)" : "sk-ant-api03-..."}
-              value={claudeKey}
-              onChange={e => setClaudeKey(e.target.value)}
+              placeholder={appConfig.hasGeminiKey ? "Đã lưu key (Nhập mới để ghi đè)" : "AIzaSy..."}
+              value={geminiKey}
+              onChange={e => setGeminiKey(e.target.value)}
             />
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
-            <button className="btn btn-p btn-sm" onClick={() => save('/config', { claudeKey }, 'Đã lưu Claude Key')}>Lưu API Key</button>
+            <button className="btn btn-p btn-sm" onClick={() => save('/config', { geminiKey }, 'Đã lưu Gemini Key')}>Lưu API Key</button>
           </div>
         </section>
 

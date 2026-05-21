@@ -3,7 +3,7 @@ import { toast } from 'react-toastify';
 import { api, formatNumber, formatVND, todayString, uploadForm } from '../lib/api';
 import DateRangePicker from '../components/DateRangePicker';
 import { useAppContext } from '../contexts/AppContext';
-import { getClaudeApiKey, removeClaudeApiKeyForUser, requestClaudeMessage } from '../lib/claude';
+import { getGeminiApiKey, removeGeminiApiKeyForUser, requestGeminiMessage } from '../lib/gemini';
 
 const DEFAULT_FROM_DATE = '2026-04-27';
 const EMPTY_ARRAY = [];
@@ -75,7 +75,7 @@ function buildRowsPayload(rows = []) {
   }));
 }
 
-function extractClaudeText(response) {
+function extractAiText(response) {
   const content = Array.isArray(response?.content) ? response.content : [];
   return content
     .map(item => (typeof item?.text === 'string' ? item.text : ''))
@@ -84,7 +84,7 @@ function extractClaudeText(response) {
     .trim();
 }
 
-function parseClaudeJson(text) {
+function parseAiJson(text) {
   const cleaned = String(text || '')
     .trim()
     .replace(/^```(?:json)?/i, '')
@@ -129,7 +129,7 @@ function normalizeAiBudget(data = {}) {
   };
 }
 
-function getClaudeErrorMessage(error) {
+function getAiErrorMessage(error) {
   if (error?.status === 401) return 'API Key không hợp lệ, vui lòng kiểm tra lại';
   if (error?.status === 429) return 'Đã vượt rate limit, thử lại sau 60 giây';
   if (error?.status === 504 || /timeout|request qua lau|quá lâu|chậm/i.test(String(error?.message || ''))) {
@@ -247,15 +247,15 @@ export default function ShopeeCommission() {
       .slice(0, 8)
   ), [commissionBySubId]);
 
-  const callClaude = async ({ system = '', messages = [] }) => {
-    const apiKey = getClaudeApiKey(currentUser);
+  const callAi = async ({ system = '', messages = [] }) => {
+    const apiKey = getGeminiApiKey(currentUser);
     if (!apiKey) {
-      toast.error('Vui lòng nhập Claude API Key');
+      toast.error('Vui lòng nhập Gemini API Key');
       return null;
     }
 
     try {
-      return await requestClaudeMessage({
+      return await requestGeminiMessage({
         apiKey,
         system,
         messages,
@@ -263,17 +263,17 @@ export default function ShopeeCommission() {
         timeoutMs: 30000
       });
     } catch (error) {
-      console.error('Claude API error:', error);
+      console.error('Gemini API error:', error);
       if (error?.status === 401) {
-        removeClaudeApiKeyForUser(currentUser);
+        removeGeminiApiKeyForUser(currentUser);
       }
-      toast.error(getClaudeErrorMessage(error));
+      toast.error(getAiErrorMessage(error));
       throw error;
     }
   };
 
-  const clearInvalidClaudeKey = () => {
-    removeClaudeApiKeyForUser(currentUser);
+  const clearInvalidAiKey = () => {
+    removeGeminiApiKeyForUser(currentUser);
     setAiError('');
     setAiBudgetError('');
     setChatError('');
@@ -306,13 +306,13 @@ Hãy phân tích ngắn gọn bằng tiếng Việt, trả về JSON:
   "khuyen_nghi": "1 khuyến nghị chiến lược tổng thể"
 }
 Chỉ trả về JSON, không giải thích thêm.`;
-      const response = await callClaude({ messages: [{ role: 'user', content: prompt }] });
+      const response = await callAi({ messages: [{ role: 'user', content: prompt }] });
       if (!response) return;
-      const parsed = parseClaudeJson(extractClaudeText(response));
+      const parsed = parseAiJson(extractAiText(response));
       setAiAnalysis(normalizeAiAnalysis(parsed));
     } catch (error) {
       console.error('AI analysis error:', error);
-      setAiError(getClaudeErrorMessage(error));
+      setAiError(getAiErrorMessage(error));
       if (error?.status === 429 && retryOnRateLimit) {
         window.setTimeout(() => runAiAnalysis(sourceSummary, false), 60000);
       }
@@ -347,13 +347,13 @@ Hãy đề xuất phân bổ ngân sách tối ưu để maximize tổng hoa h�
   "chien_luoc": "giải thích ngắn về chiến lược phân bổ"
 }
 Chỉ phân bổ cho sub_id2 ROI > 0. Chỉ trả về JSON.`;
-      const response = await callClaude({ messages: [{ role: 'user', content: prompt }] });
+      const response = await callAi({ messages: [{ role: 'user', content: prompt }] });
       if (!response) return;
-      const parsed = parseClaudeJson(extractClaudeText(response));
+      const parsed = parseAiJson(extractAiText(response));
       setAiBudgetPlan(normalizeAiBudget(parsed));
     } catch (error) {
       console.error('AI budget error:', error);
-      setAiBudgetError(getClaudeErrorMessage(error));
+      setAiBudgetError(getAiErrorMessage(error));
       if (error?.status === 429 && retryOnRateLimit) {
         window.setTimeout(() => runAiBudgetPlan(false), 60000);
       }
@@ -385,12 +385,12 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chỉ trả về JSON.`;
     setChatError('');
     setChatRetryRequest({ row, apiMessages, displayMessages });
     try {
-      const response = await callClaude({
+      const response = await callAi({
         system: buildSubIdSystemPrompt(row, summary?.alerts || []),
         messages: apiMessages
       });
       if (!response) return;
-      const answer = extractClaudeText(response) || 'AI chưa có phản hồi.';
+      const answer = extractAiText(response) || 'AI chưa có phản hồi.';
       const nextApiMessages = [...apiMessages, { role: 'assistant', content: answer }];
       const nextDisplayMessages = [...displayMessages, { role: 'assistant', content: answer }];
       setChatApiMessages(nextApiMessages);
@@ -398,7 +398,7 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chỉ trả về JSON.`;
       setChatRetryRequest(null);
     } catch (error) {
       console.error('AI chat error:', error);
-      setChatError(getClaudeErrorMessage(error));
+      setChatError(getAiErrorMessage(error));
       if (error?.status === 429 && retryOnRateLimit) {
         window.setTimeout(() => requestSubIdChat(row, apiMessages, displayMessages, false), 60000);
       }
@@ -481,7 +481,7 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chỉ trả về JSON.`;
               <span>{aiError}</span>
               <div className="shopee-ai-error-actions">
                 {aiError.includes('API Key') && (
-                  <button className="btn btn-ghost btn-sm" onClick={clearInvalidClaudeKey}>Xóa key lỗi</button>
+                  <button className="btn btn-ghost btn-sm" onClick={clearInvalidAiKey}>Xóa key lỗi</button>
                 )}
                 <button className="btn btn-ghost btn-sm" onClick={() => runAiAnalysis()}>Thử lại</button>
               </div>
@@ -614,7 +614,7 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chỉ trả về JSON.`;
                     <span>{aiBudgetError}</span>
                     <div className="shopee-ai-error-actions">
                       {aiBudgetError.includes('API Key') && (
-                        <button className="btn btn-ghost btn-sm" onClick={clearInvalidClaudeKey}>Xóa key lỗi</button>
+                        <button className="btn btn-ghost btn-sm" onClick={clearInvalidAiKey}>Xóa key lỗi</button>
                       )}
                       <button className="btn btn-ghost btn-sm" onClick={() => runAiBudgetPlan()}>Thử lại</button>
                     </div>
@@ -776,7 +776,7 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chỉ trả về JSON.`;
             <div className="shopee-ai-chat-header">
               <div>
                 <div className="card-title">AI phân tích: {chatRow.sub_id2}</div>
-                <div className="shopee-helper">🤖 Claude đang dùng dữ liệu hiệu quả của SUB_ID2 này.</div>
+                <div className="shopee-helper">🤖 Gemini đang dùng dữ liệu hiệu quả của SUB_ID2 này.</div>
               </div>
               <button className="btn btn-ghost btn-sm" onClick={closeSubIdChat}>Đóng</button>
             </div>
@@ -793,7 +793,7 @@ Chỉ phân bổ cho sub_id2 ROI > 0. Chỉ trả về JSON.`;
                   <span>{chatError}</span>
                   <div className="shopee-ai-error-actions">
                     {chatError.includes('API Key') && (
-                      <button className="btn btn-ghost btn-sm" onClick={clearInvalidClaudeKey}>Xóa key lỗi</button>
+                      <button className="btn btn-ghost btn-sm" onClick={clearInvalidAiKey}>Xóa key lỗi</button>
                     )}
                     {chatRetryRequest && (
                       <button

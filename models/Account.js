@@ -7,6 +7,7 @@ const AccountSchema = new mongoose.Schema({
   fbToken: { type: String, default: '' },
   adAccountId: { type: String, required: true },
   claudeKey: { type: String, default: '' },
+  geminiKey: { type: String, default: '' },
   spendThreshold: { type: Number, default: 20000 },
   checkInterval: { type: Number, default: 60 },
   autoEnabled: { type: Boolean, default: false },

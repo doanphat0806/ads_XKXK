@@ -630,14 +630,14 @@
       margin-left: auto;
     }
 
-    .topbar-claude-key {
+    .topbar-ai-key {
       display: inline-flex;
       align-items: center;
       gap: 6px;
       flex-wrap: wrap;
     }
 
-    .topbar-claude-key input {
+    .topbar-ai-key input {
       width: 180px;
       height: 34px;
       border: 1px solid var(--border);
@@ -663,7 +663,7 @@
       white-space: nowrap;
     }
 
-    .topbar-claude-remove {
+    .topbar-ai-remove {
       border-color: rgba(244, 63, 94, 0.3);
       color: var(--r);
     }

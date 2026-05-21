@@ -11,7 +11,7 @@ const emptyFormData = {
   provider: 'facebook',
   fbToken: '',
   adAccountId: '',
-  claudeKey: '',
+  geminiKey: '',
   spendThreshold: 20000,
   checkInterval: 60,
   autoEnabled: false,
@@ -39,7 +39,7 @@ export default function AccountModal({ data }) {
         provider: data.provider || 'facebook',
         fbToken: '', // Don't show token
         adAccountId: data.adAccountId || '',
-        claudeKey: '', // Don't show key
+        geminiKey: '', // Don't show key
         spendThreshold: data.spendThreshold || 20000,
         checkInterval: data.checkInterval || 60,
         autoEnabled: data.autoEnabled || false,
@@ -59,7 +59,7 @@ export default function AccountModal({ data }) {
         provider: formData.provider,
         adAccountId: formData.adAccountId.trim(),
         fbToken: formData.fbToken.trim(),
-        claudeKey: formData.claudeKey.trim()
+        geminiKey: formData.geminiKey.trim()
       };
 
       if (!payload.adAccountId) {
@@ -72,7 +72,7 @@ export default function AccountModal({ data }) {
       }
 
       if (!payload.fbToken) delete payload.fbToken;
-      if (!payload.claudeKey) delete payload.claudeKey;
+      if (!payload.geminiKey) delete payload.geminiKey;
 
       if (isEdit) {
         await api('PUT', `/accounts/${data._id}`, payload);
@@ -153,17 +153,17 @@ export default function AccountModal({ data }) {
           />
         )}
         <div className="form-group">
-          <label>Claude API Key (Tùy chọn)</label>
+          <label>Gemini API Key (Tùy chọn)</label>
           <input 
             type="password" 
-            name="claude-api-key-new"
+            name="gemini-api-key-new"
             autoComplete="new-password"
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="none"
-            value={formData.claudeKey} 
-            onChange={e => setFormData({ ...formData, claudeKey: e.target.value })} 
-            placeholder={isEdit ? "Để trống nếu không đổi" : "sk-ant-api03-..."}
+            value={formData.geminiKey} 
+            onChange={e => setFormData({ ...formData, geminiKey: e.target.value })} 
+            placeholder={isEdit ? "Để trống nếu không đổi" : "AIzaSy..."}
           />
         </div>
         

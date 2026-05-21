@@ -8,6 +8,7 @@ const ConfigSchema = new mongoose.Schema({
   fbTokenLastDebugTime: { type: Date },
   fbTokenLastRefreshError: { type: String, default: '' },
   claudeKey: { type: String, default: '' },
+  geminiKey: { type: String, default: '' },
   fbAppId: { type: String, default: '' },
   fbAppSecret: { type: String, default: '' },
   pancakeApiKey: { type: String, default: '' },
