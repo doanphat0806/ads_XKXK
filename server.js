@@ -227,6 +227,7 @@ const {
   FINAL_SPEND_CRON,
   FINAL_SPEND_TIMEZONE,
   TODAY_CAMPAIGN_SYNC_INTERVAL_MS,
+  TODAY_CAMPAIGN_SYNC_CONCURRENCY,
   REDIS_URL,
   REDIS_QUEUE_ENABLED,
   REDIS_HOST,
@@ -4212,9 +4213,16 @@ async function syncTodayCampaignSpendAllAccounts(source = 'timer') {
     let skipped = 0;
     let failed = 0;
 
-    for (const account of accounts) {
-      if (isShuttingDown) break;
-      const result = await syncTodayCampaignSpendForAccount(account);
+    const results = await mapWithConcurrency(
+      accounts,
+      async (account) => {
+        if (isShuttingDown) return { skipped: true };
+        return await syncTodayCampaignSpendForAccount(account);
+      },
+      TODAY_CAMPAIGN_SYNC_CONCURRENCY
+    );
+
+    for (const result of results) {
       if (result?.ok) synced += 1;
       else if (result?.skipped) skipped += 1;
       else failed += 1;
