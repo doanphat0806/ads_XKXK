@@ -30,6 +30,7 @@ function AppContent() {
   const { isAuthenticated, provider, currentUser } = useAppContext();
   const isOder = provider === 'oder';
   const isKho = provider === 'kho';
+  const isFacebook = provider === 'facebook';
   const isAdmin = currentUser?.username === 'admin';
   const location = useLocation();
 
@@ -94,7 +95,7 @@ function AppContent() {
                 <Route path="/oder-dashboard" element={<OderDashboard />} />
                 <Route path="/purchase-orders" element={<PurchaseOrders />} />
                 <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
-                <Route path="/return-summary" element={<ReturnSummary />} />
+                <Route path="/return-summary" element={<Navigate to="/oder-dashboard" replace />} />
                 <Route path="*" element={<Navigate to="/oder-dashboard" replace />} />
               </>
             ) : isKho ? (
@@ -102,7 +103,7 @@ function AppContent() {
                 <Route path="/purchase-orders" element={<PurchaseOrders />} />
                 <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
                 <Route path="/oder-dashboard" element={<OderDashboard />} />
-                <Route path="/return-summary" element={<ReturnSummary />} />
+                <Route path="/return-summary" element={<Navigate to="/inventory" replace />} />
                 <Route path="/inventory" element={<Inventory />} />
                 <Route path="/inventory-summary" element={<InventorySummary />} />
                 <Route path="/google-sheets" element={<GoogleSheets />} />
@@ -112,7 +113,7 @@ function AppContent() {
               <>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/oder-dashboard" element={<OderDashboard />} />
-                <Route path="/return-summary" element={<ReturnSummary />} />
+                <Route path="/return-summary" element={isFacebook ? <ReturnSummary /> : <Navigate to="/" replace />} />
                 <Route path="/accounts" element={<Accounts />} />
                 <Route path="/campaigns" element={<Campaigns />} />
                 <Route path="/clone-campaigns" element={<CloneCampaigns />} />

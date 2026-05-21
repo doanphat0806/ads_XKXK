@@ -26,6 +26,7 @@ export default function Sidebar() {
   const location = useLocation();
   const isOder = provider === 'oder';
   const isKho = provider === 'kho';
+  const isFacebook = provider === 'facebook';
   const showAdMenu = !isOder && !isKho;
   const showOrders = provider !== 'shopee';
   const showInventory = provider !== 'shopee' && !isOder;
@@ -100,9 +101,11 @@ export default function Sidebar() {
           <NavLink to="/oder-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dashboard Dat Hang">
             <span className="icon"><BarChart3 size={16} strokeWidth={2} /></span><span>Dashboard Đặt Hàng</span>
           </NavLink>
-          <NavLink to="/return-summary" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Tong hoan">
-            <span className="icon"><RotateCcw size={16} strokeWidth={2} /></span><span>Tổng hoàn</span>
-          </NavLink>
+          {isFacebook && (
+            <NavLink to="/return-summary" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Tong hoan">
+              <span className="icon"><RotateCcw size={16} strokeWidth={2} /></span><span>Tổng hoàn</span>
+            </NavLink>
+          )}
         </>
       )}
 

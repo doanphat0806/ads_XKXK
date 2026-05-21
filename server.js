@@ -8009,7 +8009,11 @@ function buildProductReturnSummary(orderRows = []) {
 
 app.get('/api/return-summary', async (req, res) => {
   try {
-    const provider = normalizeProvider(req.query.provider || 'facebook');
+    if (normalizeProvider(req.currentUser?.provider) !== 'facebook') {
+      return res.status(403).json({ error: 'Chi tai khoan Facebook moi duoc xem Tong hoan' });
+    }
+
+    const provider = 'facebook';
     const fromDate = String(req.query.fromDate || '').slice(0, 10);
     const toDate = String(req.query.toDate || '').slice(0, 10);
     const refresh = req.query.refresh === 'true' || req.query.refresh === true;

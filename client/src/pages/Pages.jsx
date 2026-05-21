@@ -527,7 +527,7 @@ export default function CreateCampaign() {
   };
 
   const campaignFormColumns = selectedProvider === 'shopee'
-    ? 'minmax(200px, 0.85fr) minmax(250px, 1fr) minmax(280px, 1.1fr) minmax(145px, 0.55fr) 120px 90px 170px 92px 75px 75px'
+    ? 'minmax(220px, 0.9fr) minmax(260px, 1fr) minmax(300px, 1.1fr) minmax(150px, 0.55fr) 130px 96px 120px minmax(190px, 0.7fr) 84px 84px'
     : 'minmax(260px, 1fr) 120px minmax(340px, 1.4fr) 150px 190px 90px 90px';
 
   return (
@@ -544,7 +544,7 @@ export default function CreateCampaign() {
             className={`campaign-create-controls ${selectedProvider === 'shopee' ? 'shopee' : 'facebook'}`}
             style={{ '--campaign-form-columns': campaignFormColumns }}
           >
-            <div className="form-group campaign-codes-field" style={{ marginBottom: 0 }}>
+            <div className="form-group campaign-codes-field campaign-account-field" style={{ marginBottom: 0 }}>
               <label>Tai khoan quang cao</label>
               <div className="account-combobox">
                 <input
@@ -642,7 +642,7 @@ export default function CreateCampaign() {
               />
             </div>
             {selectedProvider === 'shopee' && (
-              <div className="form-group campaign-codes-field" style={{ marginBottom: 0 }}>
+              <div className="form-group campaign-codes-field campaign-links-field" style={{ marginBottom: 0 }}>
                 <label>Link san pham</label>
                 <textarea
                   rows="3"
@@ -713,7 +713,7 @@ export default function CreateCampaign() {
                 </select>
               </div>
             )}
-            <div className="form-group" style={{ marginBottom: 0 }}>
+            <div className="form-group campaign-datetime-field" style={{ marginBottom: 0 }}>
               <label>Thoi gian bat dau (gio VN)</label>
               <input
                 type="text"
@@ -724,7 +724,7 @@ export default function CreateCampaign() {
                 onChange={e => setCampaignStartTime(normalizeDateTime24Input(e.target.value))}
               />
             </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
+            <div className="form-group campaign-age-field" style={{ marginBottom: 0 }}>
               <label>Tuoi tu</label>
               <input
                 type="number"
@@ -734,7 +734,7 @@ export default function CreateCampaign() {
                 onChange={e => setAgeMin(Number(e.target.value || 0))}
               />
             </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
+            <div className="form-group campaign-age-field" style={{ marginBottom: 0 }}>
               <label>Tuoi den</label>
               <input
                 type="number"

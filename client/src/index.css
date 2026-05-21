@@ -890,6 +890,10 @@
       align-items: start;
     }
 
+    .campaign-create-controls.shopee {
+      grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    }
+
     .create-campaign-layout {
       display: grid;
       grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
@@ -938,6 +942,21 @@
     .campaign-create-controls .form-group {
       min-width: 0;
       margin-bottom: 0;
+    }
+
+    .campaign-create-controls.shopee .campaign-account-field,
+    .campaign-create-controls.shopee .campaign-codes-field,
+    .campaign-create-controls.shopee .campaign-links-field {
+      grid-column: span 2;
+    }
+
+    .campaign-create-controls.shopee .campaign-datetime-field {
+      grid-column: span 2;
+      min-width: 190px;
+    }
+
+    .campaign-create-controls.shopee .campaign-age-field {
+      min-width: 84px;
     }
 
     .campaign-create-controls .campaign-codes-field textarea {
@@ -997,7 +1016,7 @@
     }
 
     @media (max-width: 1700px) {
-      .campaign-create-controls {
+      .campaign-create-controls:not(.shopee) {
         grid-template-columns: repeat(6, minmax(0, 1fr));
       }
 
@@ -1008,11 +1027,13 @@
     }
 
     @media (max-width: 1280px) {
-      .campaign-create-controls {
+      .campaign-create-controls:not(.shopee) {
         grid-template-columns: repeat(3, minmax(0, 1fr));
       }
 
       .campaign-create-controls .campaign-codes-field,
+      .campaign-create-controls .campaign-links-field,
+      .campaign-create-controls .campaign-datetime-field,
       .campaign-create-controls .shopee-cta-field {
         grid-column: span 1;
       }
@@ -1077,6 +1098,8 @@
       }
 
       .campaign-create-controls .campaign-codes-field,
+      .campaign-create-controls .campaign-links-field,
+      .campaign-create-controls .campaign-datetime-field,
       .campaign-create-controls .shopee-cta-field {
         grid-column: auto;
       }
