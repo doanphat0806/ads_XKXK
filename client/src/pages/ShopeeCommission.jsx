@@ -503,7 +503,8 @@ Tổng ngan_sach trong phan_bo phải xấp xỉ ngan_sach_hien_tai trong contex
   const openSubIdChat = (row) => {
     const initialApiMessages = [{
       role: 'user',
-      content: 'Phân tích nhanh SUB_ID2 này dưới 30 từ, nêu lý do thắng/thua và hành động tiếp theo.'
+            content: 'Hãy phân tích bàn đầu sub_id2 này : nên scale,giữ, giảm hay dừng?Nêu lý do và hành động cụ thể,nêu lý do thắng/thua và hành động tiếp theo.'
+
     }];
     setChatRow(row);
     setChatMessages([]);
