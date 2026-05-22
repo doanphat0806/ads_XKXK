@@ -8328,6 +8328,7 @@ function getReturnSummaryDailyRow(dailyMap, dateKey) {
     dailyMap.set(dateKey, {
       date: dateKey,
       categories: createReturnSummaryBucketMap(),
+      totalAmount: 0,
       totalOrderCount: 0,
       totalShippedOrderCount: 0
     });
@@ -8342,16 +8343,13 @@ function finalizeReturnSummaryDailyRow(row = {}) {
       label: bucket.label
     })
   ));
-  const total = finalizeReturnSummaryBucket(categories.reduce((acc, item) => {
-    acc.orderCount += item.orderCount;
-    acc.amount += item.amount;
-    return acc;
-  }, { key: 'total', label: 'Tổng', orderCount: 0, amount: 0 }));
-  const totalOrderCount = Number(row.totalOrderCount);
-  if (Number.isFinite(totalOrderCount) && totalOrderCount >= 0) {
-    total.orderCount = totalOrderCount;
-    total.costPerOrder = total.orderCount > 0 ? total.amount / total.orderCount : 0;
-  }
+  const totalOrderCount = Number(row.totalOrderCount || 0);
+  const total = finalizeReturnSummaryBucket({
+    key: 'total',
+    label: 'Tổng',
+    orderCount: Number.isFinite(totalOrderCount) && totalOrderCount >= 0 ? totalOrderCount : 0,
+    amount: Number(row.totalAmount || 0)
+  });
   total.shippedOrderCount = Number(row.totalShippedOrderCount || 0);
   total.shipRate = total.orderCount > 0 ? total.shippedOrderCount / total.orderCount : 0;
 
@@ -8366,6 +8364,7 @@ function getReturnSummaryMonthlyRow(monthlyMap, monthKey) {
   if (!monthlyMap.has(monthKey)) {
     monthlyMap.set(monthKey, {
       month: monthKey,
+      totalAmount: 0,
       amount: 0,
       orderCount: 0,
       shippedOrderCount: 0,
@@ -8379,7 +8378,7 @@ function getReturnSummaryMonthlyRow(monthlyMap, monthKey) {
 
 function finalizeReturnSummaryMonthlyRow(row = {}) {
   const orderCount = Number(row.orderCount || 0);
-  const amount = Number(row.amount || 0);
+  const amount = Number(row.totalAmount || 0);
   const shippedOrderCount = Number(row.shippedOrderCount || 0);
   const returned = Number(row.returned || 0);
   const returning = Number(row.returning || 0);
@@ -8542,26 +8541,25 @@ app.get('/api/return-summary', async (req, res) => {
     campaignRows.forEach(row => {
       const dateKey = String(row.date || '').slice(0, 10);
       if (!dateKey) return;
+      const monthKey = dateKey.slice(0, 7);
+      const amount = Number(row.amount || 0);
+      getReturnSummaryDailyRow(dailyMap, dateKey).totalAmount += amount;
+      getReturnSummaryMonthlyRow(monthlyMap, monthKey).totalAmount += amount;
+
       const bucketKey = classifyReturnAdNameBucket(row.adName);
       if (!bucketKey || !categories[bucketKey]) return;
-      const monthKey = dateKey.slice(0, 7);
-
-      const amount = Number(row.amount || 0);
       categories[bucketKey].amount += amount;
       getReturnSummaryDailyRow(dailyMap, dateKey).categories[bucketKey].amount += amount;
       getReturnSummaryMonthlyRow(monthlyMap, monthKey).amount += amount;
     });
 
     const categoryRows = RETURN_SUMMARY_BUCKETS.map(bucket => finalizeReturnSummaryBucket(categories[bucket.key]));
-    const total = finalizeReturnSummaryBucket(categoryRows.reduce((acc, item) => {
-      acc.amount += item.amount;
-      return acc;
-    }, {
+    const total = finalizeReturnSummaryBucket({
       key: 'total',
       label: 'Tổng',
       orderCount: Number(orderStats.total?.orderCount || 0),
-      amount: 0
-    }));
+      amount: campaignRows.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+    });
     total.shippedOrderCount = Number(orderStats.total?.shippedOrderCount || 0);
     total.shipRate = total.orderCount > 0 ? total.shippedOrderCount / total.orderCount : 0;
 
