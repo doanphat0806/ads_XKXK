@@ -2478,10 +2478,6 @@ async function fetchCampaignMetaMap(fbToken, campaignIds = []) {
   return campaignMetaById;
 }
 
-async function fetchCampaignBidAmountMap(fbToken, campaignIds = []) {
-  return new Map();
-}
-
 async function fetchCampaignMetaMapBestEffort(fbToken, campaignIds = []) {
   const campaignMetaById = new Map();
   const normalizedIds = [...new Set((campaignIds || []).map(id => String(id || '').trim()).filter(Boolean))];
@@ -3416,13 +3412,12 @@ async function fetchShopeeAccountData(account) {
     }
 
     const campaignMetaById = await fetchCampaignMetaMap(fbToken, [...campaignIds]);
-    const campaignBidAmountById = new Map();
 
     for (const insight of metricInsights) {
       const campaignId = String(insight.campaign_id);
       const meta = campaignMetaById.get(campaignId) || {};
       const existingCampaign = campaigns.find(campaign => String(campaign.campaignId || '').trim() === campaignId) || {};
-      const bidAmount = campaignBidAmountById.get(campaignId) || Number(existingCampaign.bidAmount || 0);
+      const bidAmount = Number(existingCampaign.bidAmount || 0);
       const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || '';
       const campaignUpdate = {
         ...meta,
@@ -3483,7 +3478,6 @@ async function fetchAccountData(account) {
     ...existingCampaigns.map(campaign => String(campaign.campaignId || '').trim()).filter(Boolean)
   ]);
   const campaignMetaById = await fetchCampaignMetaMap(fbToken, [...allCampaignIds]);
-  const campaignBidAmountById = await fetchCampaignBidAmountMap(fbToken, [...allCampaignIds]);
 
   let insightTotalSpend = 0;
   let insightTotalMessages = 0;
@@ -3497,7 +3491,7 @@ async function fetchAccountData(account) {
     insightTotalMessages += messages;
     const meta = campaignMetaById.get(campaignId) || {};
     const existingCampaign = existingCampaigns.find(campaign => String(campaign.campaignId || '').trim() === campaignId) || {};
-    const bidAmount = campaignBidAmountById.get(campaignId) || Number(existingCampaign.bidAmount || 0);
+    const bidAmount = Number(existingCampaign.bidAmount || 0);
     const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || '';
 
     const campaignUpdate = {
@@ -3553,7 +3547,7 @@ async function fetchAccountData(account) {
     if (!campaignId || seenCampaignIds.has(campaignId)) continue;
 
     const meta = campaignMetaById.get(campaignId) || {};
-    const bidAmount = campaignBidAmountById.get(campaignId) || Number(storedCampaign.bidAmount || 0);
+    const bidAmount = Number(storedCampaign.bidAmount || 0);
     const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || storedCampaign.adName || '';
     await upsertDailyCampaign(account._id, campaignId, today, {
       ...meta,
@@ -6599,7 +6593,6 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
   } catch (error) {
     console.warn(`[campaigns:adnames] skip ${account?.name || account?._id} ${fromDate}..${toDate}: ${error.message}`);
   }
-  const campaignBidAmountById = new Map();
   let count = 0;
   const seenByDate = new Map();
 
@@ -6617,11 +6610,10 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
     const costPerMessage = isShopee ? 0 : getMetaCostPerMessageFromInsight(insight);
     const metaOrders = isShopee ? 0 : getMetaOrdersFromInsight(insight);
     const adName = adNamesByDateCampaign.get(`${normalizeCampaignDate(date)}:${String(insight.campaign_id).trim()}`) || '';
-    const bidAmount = campaignBidAmountById.get(String(insight.campaign_id)) || 0;
 
     const campaignUpdate = {
       name: insight.campaign_name,
-      bidAmount,
+      bidAmount: 0,
       spend,
       impressions,
       clicks,
