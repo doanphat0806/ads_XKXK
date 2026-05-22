@@ -160,6 +160,17 @@ function normalizeStatus(status = '') {
   return STATUS_BY_VALUE[value] ? value : '';
 }
 
+function buildStatusEditorMeta(user = {}) {
+  const userId = toText(user?._id);
+  const displayName = toText(user?.displayName || user?.username);
+  if (!userId && !displayName) return {};
+  return {
+    statusUpdatedBy: userId,
+    statusUpdatedByName: displayName,
+    statusUpdatedAt: new Date()
+  };
+}
+
 const STATUS_IMPORT_ALIASES = {
   ve_du: 've_du',
   vedu: 've_du',
@@ -907,6 +918,9 @@ function mapPurchaseOrderApiRow(row = {}, manualByOrderId = new Map()) {
     status,
     statusLabel: statusMeta?.label || '',
     statusClass: statusMeta?.className || '',
+    statusUpdatedBy: toText(manual.statusUpdatedBy),
+    statusUpdatedByName: toText(manual.statusUpdatedByName),
+    statusUpdatedAt: manual.statusUpdatedAt || null,
     receivedQuantity: toText(manual.receivedQuantity),
     supplementalTrackingCode,
     skuManual: toText(manual.skuManual),
@@ -1199,7 +1213,10 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
 
     const pageRows = result.pageRows || [];
     const total = Number(result.totalRows?.[0]?.count || summary.orderCount || 0);
-    const pageManualRows = await findManualPurchaseOrderRows(pageRows.map(row => row.orderId), 'orderId status receivedQuantity supplementalTrackingCode skuManual');
+    const pageManualRows = await findManualPurchaseOrderRows(
+      pageRows.map(row => row.orderId),
+      'orderId status statusUpdatedBy statusUpdatedByName statusUpdatedAt receivedQuantity supplementalTrackingCode skuManual'
+    );
     const pageManualByOrderId = new Map(pageManualRows.map(row => [row.orderId, row]));
 
     return {
@@ -1241,13 +1258,14 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
   };
 }
 
-async function updatePurchaseOrder(orderId, patch = {}) {
+async function updatePurchaseOrder(orderId, patch = {}, options = {}) {
   const cleanOrderId = toText(orderId);
   if (!cleanOrderId) throw new Error('Thiếu mã đơn hàng');
 
   const update = { updatedAt: new Date() };
   if (Object.prototype.hasOwnProperty.call(patch, 'status')) {
     update.status = normalizeStatus(patch.status);
+    Object.assign(update, buildStatusEditorMeta(options.currentUser));
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'receivedQuantity')) {
     update.receivedQuantity = toText(patch.receivedQuantity).slice(0, 200);
@@ -1279,6 +1297,9 @@ async function updatePurchaseOrder(orderId, patch = {}) {
   return {
     orderId: doc.orderId,
     status: doc.status || '',
+    statusUpdatedBy: doc.statusUpdatedBy || '',
+    statusUpdatedByName: doc.statusUpdatedByName || '',
+    statusUpdatedAt: doc.statusUpdatedAt || null,
     receivedQuantity: doc.receivedQuantity || '',
     supplementalTrackingCode: doc.supplementalTrackingCode || '',
     skuManual: doc.skuManual || '',
@@ -1286,7 +1307,7 @@ async function updatePurchaseOrder(orderId, patch = {}) {
   };
 }
 
-async function importPurchaseOrderStatusesFromCsvText(csvText = '') {
+async function importPurchaseOrderStatusesFromCsvText(csvText = '', options = {}) {
   const parsed = buildStatusImportRows(csvText);
   if (!parsed.items.length) {
     throw new Error('Khong co dong trang thai hoac Ma SP hop le de import');
@@ -1337,6 +1358,7 @@ async function importPurchaseOrderStatusesFromCsvText(csvText = '') {
     col3: { $in: orderIds }
   }));
   const now = new Date();
+  const statusEditorMeta = buildStatusEditorMeta(options.currentUser);
   const importItems = orderIds.map(orderId => itemByOrderId.get(orderId)).filter(Boolean);
   const statusImported = importItems.filter(item => item.hasStatusUpdate).length;
   const receivedQuantityImported = importItems.filter(item => item.hasReceivedQuantityUpdate).length;
@@ -1344,7 +1366,13 @@ async function importPurchaseOrderStatusesFromCsvText(csvText = '') {
   const operations = orderIds.map(orderId => {
     const item = itemByOrderId.get(orderId);
     const update = { updatedAt: now };
-    if (item.hasStatusUpdate) update.status = item.status;
+    if (item.hasStatusUpdate) {
+      update.status = item.status;
+      Object.assign(update, {
+        ...statusEditorMeta,
+        statusUpdatedAt: now
+      });
+    }
     if (item.hasReceivedQuantityUpdate) update.receivedQuantity = item.receivedQuantity;
     if (item.hasSkuManualUpdate) update.skuManual = item.skuManual;
 

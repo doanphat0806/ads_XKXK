@@ -29,6 +29,21 @@ function shortText(value = '', maxLength = 42) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }
 
+function formatStatusEditorMeta(name = '', updatedAt = '') {
+  const safeName = String(name || '').trim();
+  if (!safeName) return '';
+
+  const date = updatedAt ? new Date(updatedAt) : null;
+  if (!date || Number.isNaN(date.getTime())) return safeName;
+
+  return `${safeName} • ${date.toLocaleString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit'
+  })}`;
+}
+
 function parseSkuPasteValues(value = '') {
   const text = String(value || '').replace(/\r/g, '');
   if (!/[\n\t]/.test(text)) return [];
@@ -476,7 +491,8 @@ export default function PurchaseOrders() {
                         />
                       </td>
                       <td>
-                        <select
+                        <div className="purchase-status-cell">
+                          <select
                           className={`purchase-status-select ${row.statusClass || ''}`}
                           value={row.status || ''}
                           disabled={statusSaving}
@@ -498,6 +514,10 @@ export default function PurchaseOrders() {
                             <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
                         </select>
+                          <div className="purchase-status-editor" title={formatStatusEditorMeta(row.statusUpdatedByName, row.statusUpdatedAt)}>
+                            {formatStatusEditorMeta(row.statusUpdatedByName, row.statusUpdatedAt) || '\u00A0'}
+                          </div>
+                        </div>
                       </td>
                       <td>
                         <input

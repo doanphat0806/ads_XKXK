@@ -8769,7 +8769,9 @@ app.post('/api/purchase-orders/import-status-csv', async (req, res) => {
       return res.status(400).json({ error: 'CSV rỗng hoặc không đọc được dữ liệu' });
     }
 
-    const result = await importPurchaseOrderStatusesFromCsvText(csvText);
+    const result = await importPurchaseOrderStatusesFromCsvText(csvText, {
+      currentUser: req.currentUser
+    });
     clearPurchaseOrderReadCache();
     res.json(result);
   } catch (error) {
@@ -8779,7 +8781,9 @@ app.post('/api/purchase-orders/import-status-csv', async (req, res) => {
 
 app.patch('/api/purchase-orders/:orderId', async (req, res) => {
   try {
-    const result = await updatePurchaseOrder(req.params.orderId, req.body || {});
+    const result = await updatePurchaseOrder(req.params.orderId, req.body || {}, {
+      currentUser: req.currentUser
+    });
     clearPurchaseOrderReadCache();
     res.json({ ok: true, order: result });
   } catch (error) {

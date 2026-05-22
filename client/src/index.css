@@ -4970,6 +4970,20 @@
       font-weight: 900;
     }
 
+    #page-purchase-orders .purchase-status-cell {
+      min-width: 96px;
+    }
+
+    #page-purchase-orders .purchase-status-editor {
+      min-height: 14px;
+      margin-top: 4px;
+      font-size: 10px;
+      line-height: 1.2;
+      color: #5f738c;
+      white-space: normal;
+      word-break: break-word;
+    }
+
     #page-purchase-orders .purchase-status-select.status-done {
       background: #baf26e;
       border-color: #83cb24;
