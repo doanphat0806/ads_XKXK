@@ -156,11 +156,13 @@ const {
   getOrderItemSku,
   getOrderItemQuantity,
   useSheetOrders,
+  normalizeSkuKey,
   normalizeStatusKey,
   buildOrderSkuStats,
   buildOrderTableStats,
   buildReturnSummaryOrderStats,
   buildReturnProductRateStats,
+  classifyReturnStatus,
   classifyReturnAdNameBucket,
   RETURN_SUMMARY_BUCKETS,
   fetchOrderSheetRows,
@@ -8452,6 +8454,150 @@ function buildProductReturnSummary(orderRows = []) {
   };
 }
 
+function isDealStopUnshippedOrder(order = {}) {
+  const rawStatus = order.status || order.rawData?.status_name || order.rawData?.status || '';
+  const status = normalizeStatusKey(rawStatus);
+  if (!status) return false;
+
+  return status === 'moi' ||
+    status === 'new' ||
+    status.includes('don moi') ||
+    status.includes('cho hang');
+}
+
+function getSkuCodeCandidates(value = '') {
+  const normalized = normalizeSkuKey(value);
+  if (!normalized) return [];
+
+  const base = normalized.startsWith('MS') ? normalized.slice(2) : normalized;
+  const withMs = normalized.startsWith('MS') ? normalized : `MS${normalized}`;
+
+  return [...new Set([normalized, base, withMs].filter(Boolean))];
+}
+
+function buildCampaignSpendBySku(campaignRows = []) {
+  const spendBySku = {};
+
+  campaignRows.forEach(row => {
+    const amount = Number(row.amount || 0);
+    if (!amount) return;
+
+    getCampaignSkuCandidates(row.adName).forEach(candidate => {
+      const normalized = normalizeSkuKey(candidate);
+      if (!normalized) return;
+
+      spendBySku[normalized] = Number(spendBySku[normalized] || 0) + amount;
+
+      if (normalized.startsWith('MS') && normalized.length > 2) {
+        const withoutMs = normalized.slice(2);
+        spendBySku[withoutMs] = Number(spendBySku[withoutMs] || 0) + amount;
+      }
+    });
+  });
+
+  return spendBySku;
+}
+
+function buildSkuCpoByCode(codes = [], skuCounts = {}, campaignRows = []) {
+  const spendBySku = buildCampaignSpendBySku(campaignRows);
+  const result = {};
+
+  codes.forEach(code => {
+    const normalizedCode = normalizeSkuKey(code);
+    if (!normalizedCode) return;
+
+    const candidates = getSkuCodeCandidates(normalizedCode);
+    let orderCount = 0;
+    let amount = 0;
+
+    for (const candidate of candidates) {
+      const candidateCount = Number(skuCounts[candidate] || 0);
+      if (!orderCount && candidateCount > 0) {
+        orderCount = candidateCount;
+      }
+
+      const candidateAmount = Number(spendBySku[candidate] || 0);
+      if (!amount && candidateAmount > 0) {
+        amount = candidateAmount;
+      }
+    }
+
+    result[normalizedCode] = {
+      code: normalizedCode,
+      orderCount,
+      amount,
+      cpo: orderCount > 0 ? amount / orderCount : 0
+    };
+  });
+
+  return result;
+}
+
+function buildDealStopRows(orderRows = [], campaignRows = []) {
+  const rowsByCode = {};
+
+  orderRows.forEach(order => {
+    const returnStatus = classifyReturnStatus(order);
+    const shipped = !isDealStopUnshippedOrder(order);
+
+    getOrderItemsFromRaw(order.rawData || {}).forEach(item => {
+      const code = normalizeSkuKey(getOrderItemSku(item));
+      const quantity = getOrderItemQuantity(item);
+      if (!code || quantity <= 0) return;
+
+      if (!rowsByCode[code]) {
+        rowsByCode[code] = {
+          id: `source-${code}`,
+          ngayKetThuc: 0,
+          ghiChu: '',
+          ma: code,
+          cpo: 0,
+          slKhachDat: 0,
+          slThucDat: 0,
+          slCanDatThem: 0,
+          sizeS: '',
+          sizeM: '',
+          sizeL: '',
+          sizeXL: '',
+          slChenh: 0,
+          tiLeDat: 0,
+          tiLeHoan: 0,
+          daNhan: 0,
+          dangHoan: 0,
+          daHoan: 0,
+          dangGuiHang: 0,
+          tongDaShip: 0,
+          tiLeShip: 0
+        };
+      }
+
+      const row = rowsByCode[code];
+      row.slKhachDat += quantity;
+      if (shipped) row.tongDaShip += quantity;
+      if (returnStatus === 'received') row.daNhan += quantity;
+      if (returnStatus === 'returning') row.dangHoan += quantity;
+      if (returnStatus === 'returned') row.daHoan += quantity;
+    });
+  });
+
+  const skuStats = buildOrderSkuStats(orderRows);
+  const cpoByCode = buildSkuCpoByCode(Object.keys(rowsByCode), skuStats.counts || {}, campaignRows);
+
+  return Object.values(rowsByCode)
+    .map(row => {
+      const returnDenominator = row.daNhan + row.dangHoan + row.daHoan;
+      const cpoMeta = cpoByCode[row.ma] || {};
+
+      return {
+        ...row,
+        cpo: Number(cpoMeta.cpo || 0),
+        tiLeHoan: returnDenominator > 0 ? (row.dangHoan + row.daHoan) / returnDenominator : 0,
+        tiLeShip: row.slKhachDat > 0 ? row.tongDaShip / row.slKhachDat : 0
+      };
+    })
+    .sort((a, b) => a.ma.localeCompare(b.ma));
+}
+
 app.get('/api/return-summary', async (req, res) => {
   try {
     if (normalizeProvider(req.currentUser?.provider) !== 'facebook') {
@@ -8594,6 +8740,132 @@ app.get('/api/return-summary', async (req, res) => {
       orderTotal: Number(orderStats.total?.orderCount || 0),
       campaignRowCount: campaignRows.length
     }));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/orders/sku-cpo', async (req, res) => {
+  try {
+    const rawCodes = Array.isArray(req.body?.codes) ? req.body.codes : [];
+    const codes = [...new Set(rawCodes.map(code => normalizeSkuKey(code)).filter(Boolean))].slice(0, 1000);
+
+    if (!codes.length) {
+      return res.json({ ok: true, cpoByCode: {} });
+    }
+
+    const fromDate = String(req.body?.fromDate || '').slice(0, 10);
+    const toDate = String(req.body?.toDate || '').slice(0, 10);
+    const hasValidFromDate = !fromDate || /^\d{4}-\d{2}-\d{2}$/.test(fromDate);
+    const hasValidToDate = !toDate || /^\d{4}-\d{2}-\d{2}$/.test(toDate);
+    if (!hasValidFromDate || !hasValidToDate || (fromDate && toDate && fromDate > toDate)) {
+      return res.status(400).json({ error: 'Khoang ngay khong hop le' });
+    }
+
+    const facebookAccounts = await Account.find(withUserFilter(req, buildAccountProviderFilter('facebook')))
+      .select('_id')
+      .lean();
+    const accountIds = facebookAccounts.map(account => account._id);
+
+    const campaignMatch = {
+      accountId: { $in: accountIds }
+    };
+    if (fromDate || toDate) {
+      campaignMatch.date = {};
+      if (fromDate) campaignMatch.date.$gte = fromDate;
+      if (toDate) campaignMatch.date.$lte = toDate;
+    }
+
+    const [orderRows, campaignRows] = await Promise.all([
+      useSheetOrders()
+        ? getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
+        : Order.find(buildOrderQuery({ fromDate, toDate }))
+          .select('orderId status rawData createdAt')
+          .limit(200000)
+          .lean(),
+      accountIds.length ? Campaign.aggregate([
+        {
+          $match: campaignMatch
+        },
+        {
+          $group: {
+            _id: '$adName',
+            adName: { $first: '$adName' },
+            amount: { $sum: '$spend' }
+          }
+        },
+        { $project: { _id: 0, adName: 1, amount: 1 } }
+      ]).allowDiskUse(true) : Promise.resolve([])
+    ]);
+
+    const skuStats = buildOrderSkuStats(orderRows);
+    const cpoByCode = buildSkuCpoByCode(codes, skuStats.counts || {}, campaignRows);
+
+    res.json({
+      ok: true,
+      fromDate,
+      toDate,
+      cpoByCode
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/orders/deal-stop-rows', async (req, res) => {
+  try {
+    const fromDate = String(req.query.fromDate || '').slice(0, 10);
+    const toDate = String(req.query.toDate || '').slice(0, 10);
+    const hasValidFromDate = !fromDate || /^\d{4}-\d{2}-\d{2}$/.test(fromDate);
+    const hasValidToDate = !toDate || /^\d{4}-\d{2}-\d{2}$/.test(toDate);
+    if (!hasValidFromDate || !hasValidToDate || (fromDate && toDate && fromDate > toDate)) {
+      return res.status(400).json({ error: 'Khoang ngay khong hop le' });
+    }
+
+    const facebookAccounts = await Account.find(withUserFilter(req, buildAccountProviderFilter('facebook')))
+      .select('_id')
+      .lean();
+    const accountIds = facebookAccounts.map(account => account._id);
+
+    const campaignMatch = {
+      accountId: { $in: accountIds }
+    };
+    if (fromDate || toDate) {
+      campaignMatch.date = {};
+      if (fromDate) campaignMatch.date.$gte = fromDate;
+      if (toDate) campaignMatch.date.$lte = toDate;
+    }
+
+    const [orderRows, campaignRows] = await Promise.all([
+      useSheetOrders()
+        ? getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
+        : Order.find(buildOrderQuery({ fromDate, toDate }))
+          .select('orderId status rawData createdAt')
+          .limit(200000)
+          .lean(),
+      accountIds.length ? Campaign.aggregate([
+        {
+          $match: campaignMatch
+        },
+        {
+          $group: {
+            _id: '$adName',
+            adName: { $first: '$adName' },
+            amount: { $sum: '$spend' }
+          }
+        },
+        { $project: { _id: 0, adName: 1, amount: 1 } }
+      ]).allowDiskUse(true) : Promise.resolve([])
+    ]);
+
+    const rows = buildDealStopRows(orderRows, campaignRows);
+
+    res.json({
+      ok: true,
+      fromDate,
+      toDate,
+      rows
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

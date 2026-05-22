@@ -5469,3 +5469,678 @@
         grid-template-columns: 1fr;
       }
     }
+
+    #page-deal-stop-orders {
+      min-width: 0;
+      padding-bottom: 24px;
+      color: #0f172a;
+    }
+
+    #page-deal-stop-orders .deal-page-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 24px;
+      margin-bottom: 16px;
+      border-radius: 24px;
+      background: linear-gradient(135deg, #0e7490 0%, #1d4ed8 100%);
+      color: #fff;
+      box-shadow: 0 18px 46px rgba(8, 47, 73, 0.24);
+    }
+
+    #page-deal-stop-orders .deal-page-title {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+
+    #page-deal-stop-orders .deal-page-subtitle,
+    #page-deal-stop-orders .deal-page-date {
+      margin-top: 4px;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.82);
+    }
+
+    #page-deal-stop-orders .deal-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    #page-deal-stop-orders .deal-stat-card {
+      background: #fff;
+      border-radius: 18px;
+      padding: 16px 18px;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+      border-left: 4px solid transparent;
+    }
+
+    #page-deal-stop-orders .deal-stat-card.accent-blue { border-left-color: #2563eb; }
+    #page-deal-stop-orders .deal-stat-card.accent-green { border-left-color: #16a34a; }
+    #page-deal-stop-orders .deal-stat-card.accent-orange { border-left-color: #ea580c; }
+    #page-deal-stop-orders .deal-stat-card.accent-purple { border-left-color: #7c3aed; }
+
+    #page-deal-stop-orders .deal-stat-label {
+      font-size: 13px;
+      font-weight: 700;
+      color: #475569;
+    }
+
+    #page-deal-stop-orders .deal-stat-value {
+      margin-top: 10px;
+      font-size: 24px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    #page-deal-stop-orders .deal-toolbar-card {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) repeat(5, auto);
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 16px;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid #dbe4ef;
+      border-radius: 20px;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+      backdrop-filter: blur(10px);
+    }
+
+    #page-deal-stop-orders .deal-search-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 42px;
+      padding: 0 14px;
+      border-radius: 14px;
+      border: 1px solid #cbd5e1;
+      background: #fff;
+    }
+
+    #page-deal-stop-orders .deal-search-bar input {
+      width: 100%;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: #0f172a;
+      font-family: var(--display);
+      font-size: 14px;
+    }
+
+    #page-deal-stop-orders .deal-btn {
+      min-height: 40px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      padding: 0 14px;
+      background: #fff;
+      color: #0f172a;
+      font-family: var(--display);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+    }
+
+    #page-deal-stop-orders .deal-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+    }
+
+    #page-deal-stop-orders .deal-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    #page-deal-stop-orders .deal-btn-primary {
+      border-color: #0891b2;
+      background: linear-gradient(135deg, #06b6d4 0%, #2563eb 100%);
+      color: #fff;
+    }
+
+    #page-deal-stop-orders .deal-btn-danger {
+      border-color: #dc2626;
+      background: #dc2626;
+      color: #fff;
+    }
+
+    #page-deal-stop-orders .deal-btn-ghost {
+      background: #fff;
+    }
+
+    #page-deal-stop-orders .deal-dropdown {
+      position: relative;
+    }
+
+    #page-deal-stop-orders .deal-dropdown-menu {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 0;
+      z-index: 40;
+      width: 240px;
+      max-height: 320px;
+      overflow: auto;
+      padding: 10px;
+      border-radius: 16px;
+      border: 1px solid #dbe4ef;
+      background: #fff;
+      box-shadow: 0 20px 40px rgba(15, 23, 42, 0.14);
+    }
+
+    #page-deal-stop-orders .deal-dropdown-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 6px;
+      font-size: 13px;
+      color: #334155;
+    }
+
+    #page-deal-stop-orders .deal-table-shell {
+      overflow: hidden;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid #dbe4ef;
+      box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
+    }
+
+    #page-deal-stop-orders .deal-table-scroll {
+      max-height: calc(100vh - 310px);
+      overflow: auto;
+    }
+
+    #page-deal-stop-orders .deal-table {
+      width: max-content;
+      min-width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      table-layout: fixed;
+      font-size: 12px;
+    }
+
+    #page-deal-stop-orders .deal-table th,
+    #page-deal-stop-orders .deal-table td {
+      height: 34px;
+      padding: 4px 8px;
+      border-right: 1px solid #e5e7eb;
+      border-bottom: 1px solid #e5e7eb;
+      background: inherit;
+      vertical-align: middle;
+    }
+
+    #page-deal-stop-orders .deal-header-groups th {
+      position: sticky;
+      top: 0;
+      z-index: 6;
+      height: 30px;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    #page-deal-stop-orders .deal-header-columns th {
+      position: sticky;
+      top: 30px;
+      z-index: 5;
+      height: 38px;
+      background: #1f2937;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    #page-deal-stop-orders .group-cyan { background: #0891b2; }
+    #page-deal-stop-orders .group-orange { background: #ea580c; }
+    #page-deal-stop-orders .group-green { background: #16a34a; }
+    #page-deal-stop-orders .group-purple { background: #7c3aed; }
+
+    #page-deal-stop-orders .deal-header-cell {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    #page-deal-stop-orders .deal-sort-icon {
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+
+    #page-deal-stop-orders .deal-group-header-row td {
+      padding: 0;
+      border-top: 2px solid #0891b2;
+      background: #f0f9ff;
+    }
+
+    #page-deal-stop-orders .deal-group-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 10px 12px;
+      border: 0;
+      background: transparent;
+      font-size: 13px;
+      font-weight: 700;
+      color: #0f172a;
+      cursor: pointer;
+      text-align: left;
+      flex-wrap: wrap;
+    }
+
+    #page-deal-stop-orders .deal-group-meta {
+      color: #334155;
+    }
+
+    #page-deal-stop-orders .deal-staff-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 38px;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    #page-deal-stop-orders .badge-cyan { background: #06b6d4; color: #083344; }
+    #page-deal-stop-orders .badge-red { background: #ef4444; }
+    #page-deal-stop-orders .badge-pink { background: #ec4899; }
+    #page-deal-stop-orders .badge-indigo { background: #6366f1; }
+    #page-deal-stop-orders .badge-orange { background: #f97316; }
+    #page-deal-stop-orders .badge-yellow { background: #eab308; color: #422006; }
+    #page-deal-stop-orders .badge-purple { background: #8b5cf6; }
+    #page-deal-stop-orders .badge-green { background: #16a34a; }
+    #page-deal-stop-orders .badge-slate { background: #475569; }
+
+    #page-deal-stop-orders .deal-data-row:nth-child(odd) td {
+      background: #ffffff;
+    }
+
+    #page-deal-stop-orders .deal-data-row:nth-child(even) td {
+      background: #f9fafb;
+    }
+
+    #page-deal-stop-orders .deal-data-row:hover td {
+      background: #eff6ff;
+    }
+
+    #page-deal-stop-orders .deal-group-summary-row td {
+      background: #e5e7eb;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    #page-deal-stop-orders .deal-summary-footer {
+      position: sticky;
+      bottom: 0;
+      z-index: 4;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      padding: 14px 16px;
+      background: #1f2937;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    #page-deal-stop-orders .deal-cell-button {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      min-height: 26px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: inherit;
+      cursor: default;
+    }
+
+    #page-deal-stop-orders .deal-cell-button.is-editable {
+      cursor: pointer;
+    }
+
+    #page-deal-stop-orders .deal-edit-icon {
+      margin-left: auto;
+      opacity: 0;
+      transition: opacity 120ms ease;
+    }
+
+    #page-deal-stop-orders .deal-cell-button.is-editable:hover .deal-edit-icon {
+      opacity: 1;
+    }
+
+    #page-deal-stop-orders .deal-delete-btn {
+      min-height: 28px;
+      padding: 0 10px;
+      border: 1px solid #fecaca;
+      border-radius: 999px;
+      background: #fff1f2;
+      color: #dc2626;
+      font-family: var(--display);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    #page-deal-stop-orders .deal-delete-btn:hover {
+      background: #ffe4e6;
+    }
+
+    #page-deal-stop-orders .deal-inline-input,
+    #page-deal-stop-orders .deal-tier-field input,
+    #page-deal-stop-orders .deal-form-field input,
+    #page-deal-stop-orders .deal-staff-table input,
+    #page-deal-stop-orders .deal-staff-table select {
+      width: 100%;
+      min-height: 30px;
+      padding: 0 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      background: #fff;
+      font-family: var(--display);
+      font-size: 12px;
+      color: #0f172a;
+      outline: none;
+    }
+
+    #page-deal-stop-orders .deal-note-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #2563eb;
+      flex: 0 0 auto;
+    }
+
+    #page-deal-stop-orders .deal-cell-content,
+    #page-deal-stop-orders .deal-tone-pill {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #page-deal-stop-orders .deal-tone-pill {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      min-height: 24px;
+      padding: 0 8px;
+      border-radius: 8px;
+    }
+
+    #page-deal-stop-orders .tone-danger { background: #f87171; color: #fff; }
+    #page-deal-stop-orders .tone-danger-strong { background: #ef4444; color: #fff; font-weight: 700; }
+    #page-deal-stop-orders .tone-warning { background: #facc15; color: #111827; }
+    #page-deal-stop-orders .tone-warning-soft { background: #fde68a; color: #111827; }
+    #page-deal-stop-orders .tone-orange { background: #fb923c; color: #fff; }
+    #page-deal-stop-orders .tone-success { background: #22c55e; color: #fff; }
+    #page-deal-stop-orders .tone-success-strong { background: #16a34a; color: #fff; font-weight: 700; }
+    #page-deal-stop-orders .tone-success-soft { background: #bbf7d0; color: #14532d; }
+    #page-deal-stop-orders .tone-neutral-soft { background: #f3f4f6; color: #374151; }
+    #page-deal-stop-orders .tone-slate { background: #94a3b8; color: #fff; }
+
+    #page-deal-stop-orders .row-danger td {
+      background: #fee2e2 !important;
+    }
+
+    #page-deal-stop-orders .row-warning td {
+      background: #fff7ed !important;
+    }
+
+    #page-deal-stop-orders .is-sticky-col {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+    }
+
+    #page-deal-stop-orders .sticky-shadow {
+      box-shadow: 8px 0 18px rgba(15, 23, 42, 0.08);
+    }
+
+    #page-deal-stop-orders .align-left { text-align: left; }
+    #page-deal-stop-orders .align-center { text-align: center; }
+    #page-deal-stop-orders .align-right { text-align: right; }
+
+    #page-deal-stop-orders mark {
+      padding: 0 2px;
+      border-radius: 4px;
+      background: #fde68a;
+      font-weight: 800;
+    }
+
+    .deal-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(15, 23, 42, 0.42);
+      backdrop-filter: blur(6px);
+    }
+
+    .deal-modal {
+      width: min(920px, 100%);
+      max-height: min(88vh, 860px);
+      overflow: hidden;
+      border-radius: 20px;
+      background: #fff;
+      box-shadow: 0 24px 64px rgba(15, 23, 42, 0.24);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .deal-settings-modal {
+      width: min(860px, 100%);
+    }
+
+    .deal-staff-modal {
+      width: min(760px, 100%);
+    }
+
+    .deal-add-order-modal {
+      width: min(860px, 100%);
+    }
+
+    .deal-modal-header,
+    .deal-modal-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 16px 18px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .deal-modal-footer {
+      justify-content: flex-end;
+      border-top: 1px solid #e5e7eb;
+      border-bottom: 0;
+    }
+
+    .deal-modal-body {
+      overflow: auto;
+      padding: 18px;
+    }
+
+    .deal-modal-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .deal-modal-close {
+      width: 36px;
+      height: 36px;
+      border: 0;
+      border-radius: 999px;
+      background: #f1f5f9;
+      color: #334155;
+      font-size: 24px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .deal-settings-section + .deal-settings-section {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid #e5e7eb;
+    }
+
+    .deal-settings-label {
+      margin-bottom: 10px;
+      font-size: 14px;
+      font-weight: 800;
+      color: #1e293b;
+    }
+
+    .deal-tier-table,
+    .deal-staff-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 12px;
+    }
+
+    .deal-tier-table th,
+    .deal-tier-table td,
+    .deal-staff-table th,
+    .deal-staff-table td {
+      border: 1px solid #e5e7eb;
+      padding: 10px;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    .deal-tier-table th,
+    .deal-staff-table th {
+      background: #f8fafc;
+      font-weight: 800;
+      color: #334155;
+    }
+
+    .deal-tier-field {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+    }
+
+    .deal-tier-static {
+      color: #475569;
+      font-weight: 700;
+    }
+
+    .deal-preview-box {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .deal-preview-chip {
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: #f1f5f9;
+      font-size: 13px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .deal-preview-chip.is-changed {
+      background: #fef08a;
+    }
+
+    .deal-preview-note {
+      width: 100%;
+      font-size: 12px;
+      color: #64748b;
+    }
+
+    .deal-form-errors {
+      margin-bottom: 12px;
+      color: #dc2626;
+      font-size: 13px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .deal-icon-btn {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 8px;
+      background: #f1f5f9;
+      cursor: pointer;
+    }
+
+    .deal-confirm-message {
+      font-size: 14px;
+      line-height: 1.5;
+      color: #334155;
+    }
+
+    .deal-add-order-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .deal-form-field {
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #334155;
+    }
+
+    .deal-form-field-full {
+      grid-column: 1 / -1;
+    }
+
+    .deal-form-field small {
+      font-size: 12px;
+      font-weight: 500;
+      color: #64748b;
+    }
+
+    @media (max-width: 1200px) {
+      #page-deal-stop-orders .deal-toolbar-card {
+        grid-template-columns: 1fr repeat(2, auto);
+      }
+
+      #page-deal-stop-orders .deal-stats-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 900px) {
+      #page-deal-stop-orders .deal-page-header,
+      #page-deal-stop-orders .deal-toolbar-card {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
+
+      #page-deal-stop-orders .deal-stats-grid {
+        grid-template-columns: 1fr;
+      }
+
+      #page-deal-stop-orders .deal-summary-footer {
+        position: static;
+      }
+
+      .deal-add-order-grid {
+        grid-template-columns: 1fr;
+      }
+
+    }

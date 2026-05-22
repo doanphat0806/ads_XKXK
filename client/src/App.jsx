@@ -1,30 +1,32 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
 import { AppProvider, useAppContext } from './contexts/AppContext';
 import AuthScreen from './components/AuthScreen';
+import ModalContainer from './components/ModalContainer';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
-import Dashboard from './pages/Dashboard';
 import Accounts from './pages/Accounts';
 import Campaigns from './pages/Campaigns';
 import CloneCampaigns from './pages/CloneCampaigns';
-import Orders from './pages/Orders';
-import PurchaseOrders from './pages/PurchaseOrders';
+import CreaterPage from './pages/CreaterPage';
+import Dashboard from './pages/Dashboard';
 import DataPurchaseOrders from './pages/DataPurchaseOrders';
-import Logs from './pages/Logs';
+import DealStopOrders from './pages/DealStopOrders';
+import GoogleSheets from './pages/GoogleSheets';
 import Inventory from './pages/Inventory';
 import InventorySummary from './pages/InventorySummary';
-import GoogleSheets from './pages/GoogleSheets';
-import CreaterPage from './pages/CreaterPage';
-import CreateCampaign from './pages/Pages';
-import ShopeeCommission from './pages/ShopeeCommission';
+import Logs from './pages/Logs';
 import OderDashboard from './pages/OderDashboard';
+import Orders from './pages/Orders';
+import CreateCampaign from './pages/Pages';
+import PurchaseOrders from './pages/PurchaseOrders';
 import ReturnSummary from './pages/ReturnSummary';
+import ShopeeCommission from './pages/ShopeeCommission';
 import UserManagement from './pages/UserManagement';
-import ModalContainer from './components/ModalContainer';
 
 function AppContent() {
   const { isAuthenticated, provider, currentUser } = useAppContext();
@@ -49,29 +51,31 @@ function AppContent() {
       case '/user-management':
         return isAdmin ? 'Quản lý tài khoản' : 'Dashboard';
       case '/accounts':
-        return 'Tai khoan';
+        return 'Tài khoản';
       case '/campaigns':
-        return 'Chien dich';
+        return 'Chiến dịch';
       case '/clone-campaigns':
-        return 'Nhan Camp';
+        return 'Nhân Camp';
       case '/orders':
-        return 'Don hang';
+        return 'Đơn hàng';
       case '/purchase-orders':
         return 'Đặt Hàng';
+      case '/deal-stop-orders':
+        return 'Đóng Deal Dừng Order';
       case '/data-purchase-orders':
         return 'DATA ĐẶT HÀNG';
       case '/logs':
-        return 'Nhat ky';
+        return 'Nhật ký';
       case '/inventory':
         return 'Kho';
       case '/inventory-summary':
-        return 'Thong ke kho';
+        return 'Thống kê kho';
       case '/shopee-commission':
-        return 'Hoa hong Shopee';
+        return 'Hoa hồng Shopee';
       case '/google-sheets':
         return 'Google Sheets';
       case '/creater-page':
-        return 'Dang bai';
+        return 'Đăng bài';
       case '/create-campaign':
         return 'Page';
       default:
@@ -94,6 +98,7 @@ function AppContent() {
               <>
                 <Route path="/oder-dashboard" element={<OderDashboard />} />
                 <Route path="/purchase-orders" element={<PurchaseOrders />} />
+                <Route path="/deal-stop-orders" element={<DealStopOrders />} />
                 <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
                 <Route path="/return-summary" element={<Navigate to="/oder-dashboard" replace />} />
                 <Route path="*" element={<Navigate to="/oder-dashboard" replace />} />
@@ -101,6 +106,7 @@ function AppContent() {
             ) : isKho ? (
               <>
                 <Route path="/purchase-orders" element={<PurchaseOrders />} />
+                <Route path="/deal-stop-orders" element={<DealStopOrders />} />
                 <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
                 <Route path="/oder-dashboard" element={<OderDashboard />} />
                 <Route path="/return-summary" element={<Navigate to="/inventory" replace />} />
@@ -119,6 +125,7 @@ function AppContent() {
                 <Route path="/clone-campaigns" element={<CloneCampaigns />} />
                 <Route path="/orders" element={<Orders />} />
                 <Route path="/purchase-orders" element={<PurchaseOrders />} />
+                <Route path="/deal-stop-orders" element={<DealStopOrders />} />
                 <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
                 <Route path="/inventory" element={<Inventory />} />
                 <Route path="/inventory-summary" element={<InventorySummary />} />
@@ -146,6 +153,7 @@ export default function App() {
         <AppContent />
       </Router>
       <ToastContainer position="bottom-right" autoClose={3000} hideProgressBar theme="dark" />
+      <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
     </AppProvider>
   );
 }

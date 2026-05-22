@@ -98,6 +98,9 @@ export default function Sidebar() {
           <NavLink to="/purchase-orders" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dat Hang">
             <span className="icon"><ShoppingCart size={16} strokeWidth={2} /></span><span>Đặt Hàng</span>
           </NavLink>
+          <NavLink to="/deal-stop-orders" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dong Deal Dung Order">
+            <span className="icon"><ShoppingCart size={16} strokeWidth={2} /></span><span>Đóng Deal Dừng Order</span>
+          </NavLink>
           <NavLink to="/oder-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dashboard Dat Hang">
             <span className="icon"><BarChart3 size={16} strokeWidth={2} /></span><span>Dashboard Đặt Hàng</span>
           </NavLink>
