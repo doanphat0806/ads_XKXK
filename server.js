@@ -227,7 +227,6 @@ const {
   FINAL_SPEND_CRON,
   FINAL_SPEND_TIMEZONE,
   TODAY_CAMPAIGN_SYNC_INTERVAL_MS,
-  TODAY_CAMPAIGN_SYNC_CONCURRENCY,
   REDIS_URL,
   REDIS_QUEUE_ENABLED,
   REDIS_HOST,
@@ -2565,7 +2564,7 @@ async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toD
   const includeAccountInfo = options.includeAccountInfo === true;
   const persist = options.persist === true;
   const concurrency = parseBoundedInt(options.concurrency, 2, 1, 5);
-  const facebookAccounts = (accounts || []);
+  const facebookAccounts = (accounts || []).filter(account => account?.provider !== 'shopee');
   if (!facebookAccounts.length) return [];
 
   const accountResults = await mapWithConcurrency(facebookAccounts, async (account) => {
@@ -4148,26 +4147,15 @@ async function syncTodayCampaignSpendForAccount(account) {
 
   accountRuns[accountId] = true;
   try {
-    const result = account.provider === 'shopee'
-      ? await fetchShopeeAccountData(account)
-      : await fetchAccountData(account);
-
+    if (account.provider === 'shopee') {
+      await fetchShopeeAccountData(account);
+    } else {
+      await fetchAccountData(account);
+    }
     await Account.findByIdAndUpdate(account._id, {
       lastChecked: new Date(),
       status: 'connected'
     });
-
-    if (account.provider === 'shopee') {
-      const campaignCount = result.campaigns ? result.campaigns.length : 0;
-      const spendText = (result.totalSpend || 0).toLocaleString() + 'đ';
-      await addLog(
-        account._id,
-        account.name,
-        'success',
-        `Tự động đồng bộ thành công: cập nhật ${campaignCount} chiến dịch, tổng chi tiêu hôm nay ${spendText}`
-      );
-    }
-
     return { ok: true };
   } catch (error) {
     if (!isMongoReady()) return { skipped: true, error: error.message };
@@ -4207,16 +4195,9 @@ async function syncTodayCampaignSpendAllAccounts(source = 'timer') {
     let skipped = 0;
     let failed = 0;
 
-    const results = await mapWithConcurrency(
-      accounts,
-      async (account) => {
-        if (isShuttingDown) return { skipped: true };
-        return await syncTodayCampaignSpendForAccount(account);
-      },
-      TODAY_CAMPAIGN_SYNC_CONCURRENCY
-    );
-
-    for (const result of results) {
+    for (const account of accounts) {
+      if (isShuttingDown) break;
+      const result = await syncTodayCampaignSpendForAccount(account);
       if (result?.ok) synced += 1;
       else if (result?.skipped) skipped += 1;
       else failed += 1;
@@ -5583,15 +5564,6 @@ app.post('/api/accounts/:id/refresh', async (req, res) => {
       status: 'connected'
     });
 
-    const campaignCount = result.campaigns ? result.campaigns.length : 0;
-    const spendText = (result.totalSpend || 0).toLocaleString() + 'đ';
-    await addLog(
-      account._id,
-      account.name,
-      'success',
-      `Làm mới dữ liệu thành công: cập nhật ${campaignCount} chiến dịch, tổng chi tiêu hôm nay ${spendText}`
-    );
-
     res.json({ ok: true, ...result });
   } catch (error) {
     const account = await Account.findOne(withUserFilter(req, { _id: req.params.id })).catch(() => null);
@@ -6268,12 +6240,8 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
     const includeScheduledNoSpend = req.query.includeScheduledNoSpend === 'true' || req.query.includeScheduledNoSpend === true;
     const includeLiveCreated = req.query.includeLiveCreated === 'true' || req.query.includeLiveCreated === true;
     const includeLiveCampaigns = includeScheduledNoSpend && includeLiveCreated && dateRangeTouchesTodayOrFuture(fDate, tDate);
-    const includeMetaInsights = req.query.includeMetaInsights === 'true' || req.query.includeMetaInsights === true;
-    const today = todayStr();
-    const shouldFetchMetaInsights = includeMetaInsights && String(fDate) <= today;
-    const metaInsightsToDate = String(tDate) > today ? today : tDate;
-    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}:${shouldFetchMetaInsights ? 'meta-insights' : 'stored-insights'}`);
-    const cached = includeLiveCampaigns || shouldFetchMetaInsights ? null : getReadCache(cacheKey);
+    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}`);
+    const cached = includeLiveCampaigns ? null : getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
     const ownedAccount = await Account.findOne(withUserFilter(req, { _id: req.params.id }))
@@ -6379,13 +6347,8 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
       }
     }
 
-    if (shouldFetchMetaInsights) {
-      const metaRows = await fetchMetaCampaignMetricRowsForReport([ownedAccount], fDate, metaInsightsToDate, { includeAccountInfo: false, persist: true });
-      result = applyMetaCampaignMetricRows(result, metaRows);
-    }
-
-    console.log(`[campaigns:account] account=${req.params.id} ${fDate}..${tDate} rows=${result.length} meta=${shouldFetchMetaInsights ? 'yes' : 'no'} ${Date.now() - startedAt}ms`);
-    res.json(includeLiveCampaigns || shouldFetchMetaInsights ? result : setReadCache(cacheKey, result));
+    console.log(`[campaigns:account] account=${req.params.id} ${fDate}..${tDate} rows=${result.length} ${Date.now() - startedAt}ms`);
+    res.json(includeLiveCampaigns ? result : setReadCache(cacheKey, result));
   } catch (error) {
     console.error(`[campaigns:account] failed after ${Date.now() - startedAt}ms: ${error.message}`);
     res.status(500).json({ error: error.message });
@@ -6403,7 +6366,7 @@ app.get('/api/campaigns/today', async (req, res) => {
     const includeMetaInsights = req.query.includeMetaInsights === 'true' || req.query.includeMetaInsights === true;
     const includeLiveCampaigns = includeScheduledNoSpend && includeLiveCreated && dateRangeTouchesTodayOrFuture(fDate, tDate);
     const today = todayStr();
-    const shouldFetchMetaInsights = includeMetaInsights && String(fDate) <= today;
+    const shouldFetchMetaInsights = includeMetaInsights && provider !== 'shopee' && String(fDate) <= today;
     const metaInsightsToDate = String(tDate) > today ? today : tDate;
     const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}:${shouldFetchMetaInsights ? 'meta-insights' : 'stored-insights'}`);
     const cached = includeLiveCampaigns || shouldFetchMetaInsights ? null : getReadCache(cacheKey);

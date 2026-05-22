@@ -29,8 +29,7 @@ module.exports = {
   FACEBOOK_GRAPH_API_VERSION: process.env.FB_GRAPH_API_VERSION || 'v24.0',
   FINAL_SPEND_CRON: process.env.FINAL_SPEND_CRON || '20 0 * * *',
   FINAL_SPEND_TIMEZONE: process.env.FINAL_SPEND_TIMEZONE || 'Asia/Ho_Chi_Minh',
-  TODAY_CAMPAIGN_SYNC_INTERVAL_MS: parseBoundedInt(process.env.TODAY_CAMPAIGN_SYNC_INTERVAL_MS, 2 * 60 * 1000, 2 * 60 * 1000, 60 * 60 * 1000),
-  TODAY_CAMPAIGN_SYNC_CONCURRENCY: parseBoundedInt(process.env.TODAY_CAMPAIGN_SYNC_CONCURRENCY, 10, 1, 100),
+  TODAY_CAMPAIGN_SYNC_INTERVAL_MS: parseBoundedInt(process.env.TODAY_CAMPAIGN_SYNC_INTERVAL_MS, 10 * 60 * 1000, 2 * 60 * 1000, 60 * 60 * 1000),
   REDIS_URL: String(process.env.REDIS_URL || process.env.BULLMQ_REDIS_URL || '').trim(),
   REDIS_QUEUE_ENABLED: ['1', 'true', 'yes'].includes(String(process.env.REDIS_QUEUE_ENABLED || '').trim().toLowerCase()) ||
     Boolean(String(process.env.REDIS_URL || process.env.BULLMQ_REDIS_URL || '').trim()),

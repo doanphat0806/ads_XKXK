@@ -275,14 +275,13 @@ export default function Dashboard() {
     });
   };
 
-  const loadDashboardData = useCallback(async (from, to, options = {}) => {
-    const { forceRefresh = false } = options;
+  const loadDashboardData = useCallback(async (from, to) => {
     const loadSeq = dashboardLoadSeqRef.current + 1;
     dashboardLoadSeqRef.current = loadSeq;
     const statsUrl = `/stats?provider=${provider}&fromDate=${from}&toDate=${to}&includeOrders=false`;
-    const campaignsUrl = `/campaigns/today?provider=${provider}&fromDate=${from}&toDate=${to}${forceRefresh ? '&includeMetaInsights=true' : ''}`;
+    const campaignsUrl = `/campaigns/today?provider=${provider}&fromDate=${from}&toDate=${to}`;
     const cachedStats = readResponseCache(`GET:${statsUrl}`);
-    const cachedCampaigns = forceRefresh ? null : readResponseCache(`GET:${campaignsUrl}`);
+    const cachedCampaigns = readResponseCache(`GET:${campaignsUrl}`);
     if (cachedStats) setLocalStats(cachedStats);
     if (cachedCampaigns) setLocalCampaigns(cachedCampaigns.map(keepCurrentSortStatus));
 
@@ -333,7 +332,7 @@ export default function Dashboard() {
       window.clearTimeout(toggleReloadTimerRef.current);
       toggleReloadTimerRef.current = null;
     }
-    loadDashboardData(reportFromDate, reportToDate, { forceRefresh: true });
+    loadDashboardData(reportFromDate, reportToDate);
   }, [loadDashboardData, reportFromDate, reportToDate]);
 
   const scheduleToggleReload = useCallback(() => {
