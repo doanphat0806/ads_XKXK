@@ -42,6 +42,14 @@ function formatCampaignDateTime(value) {
   });
 }
 
+function getCampaignAccount(campaign, accounts = []) {
+  const account = campaign?.accountId;
+  if (account && typeof account === 'object') return account;
+
+  const accountId = String(account || '').trim();
+  return accounts.find(item => String(item._id || '') === accountId) || null;
+}
+
 export default function Campaigns() {
   const { provider, allAccounts } = useAppContext();
   const [campaigns, setCampaigns] = useState([]);
@@ -264,15 +272,18 @@ export default function Campaigns() {
         const campaignName = String(campaign.name || '').toLowerCase();
         const adName = String(campaign.adName || '').toLowerCase();
         const campaignId = String(campaign.campaignId || '').toLowerCase();
-        const accountName = String(campaign.accountId?.name || '').toLowerCase();
+        const account = getCampaignAccount(campaign, allAccounts);
+        const accountName = String(account?.name || '').toLowerCase();
+        const adAccountId = String(account?.adAccountId || '').toLowerCase();
         return campaignName.includes(normalizedSearch)
           || adName.includes(normalizedSearch)
           || campaignId.includes(normalizedSearch)
-          || accountName.includes(normalizedSearch);
+          || accountName.includes(normalizedSearch)
+          || adAccountId.includes(normalizedSearch);
       });
     }
     return [...result].sort((a, b) => b.spend - a.spend);
-  }, [campaigns, filterStatus, searchTerm]);
+  }, [allAccounts, campaigns, filterStatus, searchTerm]);
 
   const totalPages = Math.max(1, Math.ceil(filteredCampaigns.length / CAMPAIGNS_PER_PAGE));
   const visibleCampaigns = useMemo(() => {
@@ -441,6 +452,7 @@ export default function Campaigns() {
                 <tr>
                   <th style={{ width: '72px' }}>STT</th>
                   <th style={{ width: '160px' }}>Ngày Tạo</th>
+                  <th style={{ width: '190px' }}>Tài khoản quảng cáo</th>
                   <th style={{ width: '240px' }}>Tên Campaign</th>
                   <th>Trạng thái</th>
                   <th>Ngân sách</th>
@@ -459,12 +471,21 @@ export default function Campaigns() {
                   const pct = Math.min(100, (campaign.spend / 30000) * 100);
                   const pColor = pct >= 100 ? 'var(--r)' : pct >= 70 ? 'var(--o)' : 'var(--g)';
                   const rowIndex = (currentPage - 1) * CAMPAIGNS_PER_PAGE + index;
+                  const account = getCampaignAccount(campaign, allAccounts);
 
                   return (
                     <tr key={`${campaign.accountId?._id || campaign.accountId || rowIndex}:${campaign.campaignId || rowIndex}`}>
                       <td className="mono-sm" style={{ color: 'var(--muted2)' }}>{rowIndex + 1}</td>
                       <td className="mono-sm" style={{ color: 'var(--muted2)' }}>
                         {formatCampaignDateTime(campaign.createdTime || campaign.scheduledStartTimeUtc)}
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: 600, marginBottom: '2px' }}>{account?.name || '-'}</div>
+                        {account?.adAccountId ? (
+                          <div className="mono-sm" style={{ fontSize: '11px', color: 'var(--muted2)' }}>
+                            {account.adAccountId}
+                          </div>
+                        ) : null}
                       </td>
                       <td>
                         <div style={{ fontWeight: 600, marginBottom: '2px' }}>{campaign.name}</div>
