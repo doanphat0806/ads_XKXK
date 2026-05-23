@@ -35,13 +35,9 @@ import {
   loadStaffList
 } from '../utils/configStorage';
 import { exportOrdersToExcel } from '../utils/excelExport';
-import { formatCompactInt, formatCurrency, formatPercent } from '../utils/formatters';
 
 const DEAL_STOP_STATE_API = '/deal-stop/state';
 const DEAL_STOP_DATA_VERSION = 4;
-const CAMP_ALERT_CPO_LIMIT = 100000;
-const CAMP_ALERT_RETURN_LIMIT = 0.37;
-const CAMP_ALERT_VISIBLE_LIMIT = 12;
 const LOCAL_OVERRIDE_FIELDS = [
   'id',
   'ghiChu',
@@ -225,26 +221,6 @@ function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, ac
     });
 
   return mergedSourceRows;
-}
-
-function isCampAlertRow(row = {}) {
-  const hasCampaignSignal = (
-    Object.prototype.hasOwnProperty.call(row, 'campaignAmount') ||
-    Object.prototype.hasOwnProperty.call(row, 'hasCampaign')
-  );
-
-  return (
-    hasCampaignSignal &&
-    Boolean(String(row.ma || '').trim()) &&
-    Number(row.campaignAmount || 0) <= 0 &&
-    Number(row.cpo || 0) < CAMP_ALERT_CPO_LIMIT &&
-    Number(row.tiLeHoan || 0) <= CAMP_ALERT_RETURN_LIMIT
-  );
-}
-
-function formatCampAlertCpo(value) {
-  const cpo = Number(value || 0);
-  return cpo > 0 ? formatCurrency(cpo) : 'Chưa có CPO';
 }
 
 function migrateDealStopRows(rows = [], currentVersion = 1) {
@@ -493,24 +469,6 @@ export default function DealStopOrders() {
     () => Object.keys(actualQtyByCode || {}).length,
     [actualQtyByCode]
   );
-  const campAlertRows = React.useMemo(
-    () => rows
-      .filter(isCampAlertRow)
-      .sort((a, b) => {
-        const returnDiff = Number(a.tiLeHoan || 0) - Number(b.tiLeHoan || 0);
-        if (returnDiff !== 0) return returnDiff;
-
-        const cpoDiff = Number(a.cpo || 0) - Number(b.cpo || 0);
-        if (cpoDiff !== 0) return cpoDiff;
-
-        return Number(b.slKhachDat || 0) - Number(a.slKhachDat || 0);
-      }),
-    [rows]
-  );
-  const visibleCampAlertRows = React.useMemo(
-    () => campAlertRows.slice(0, CAMP_ALERT_VISIBLE_LIMIT),
-    [campAlertRows]
-  );
 
   const {
     table,
@@ -747,12 +705,6 @@ export default function DealStopOrders() {
     toast('Đã làm mới bộ lọc');
   };
 
-  const handleFilterCampAlertCode = React.useCallback((code) => {
-    const nextSearch = String(code || '').trim();
-    setSearchInput(nextSearch);
-    setSearchTerm(nextSearch);
-  }, []);
-
   const handleExport = async () => {
     setExporting(true);
     setExportDone(false);
@@ -829,36 +781,6 @@ export default function DealStopOrders() {
         </button>
         <ExportButton loading={exporting} done={exportDone} onClick={handleExport} />
       </div>
-
-      {campAlertRows.length > 0 ? (
-        <section className="deal-camp-alert" aria-label="Thong bao ma nen len camp">
-          <div className="deal-camp-alert-copy">
-            <div className="deal-camp-alert-title">Mã nên lên camp ({campAlertRows.length})</div>
-            <div className="deal-camp-alert-subtitle">Hoàn thấp hoặc chưa có hoàn, CPO dưới 100k, chưa có chi tiêu camp.</div>
-          </div>
-          <div className="deal-camp-alert-list">
-            {visibleCampAlertRows.map(row => (
-              <button
-                key={row.id || row.ma}
-                type="button"
-                className="deal-camp-alert-chip"
-                onClick={() => handleFilterCampAlertCode(row.ma)}
-                title={`Lọc mã ${row.ma}`}
-              >
-                <span className="deal-camp-alert-code">{row.ma}</span>
-                <span>{formatCampAlertCpo(row.cpo)}</span>
-                <span>Hoàn {formatPercent(row.tiLeHoan)}</span>
-                <span>KĐ {formatCompactInt(row.slKhachDat)}</span>
-              </button>
-            ))}
-            {campAlertRows.length > visibleCampAlertRows.length ? (
-              <span className="deal-camp-alert-more">
-                +{formatCompactInt(campAlertRows.length - visibleCampAlertRows.length)} mã
-              </span>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
 
       <OrderTable
         groupedRows={groupedRows}
