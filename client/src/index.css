@@ -5555,6 +5555,87 @@
       backdrop-filter: blur(10px);
     }
 
+    #page-deal-stop-orders .deal-camp-alert {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 0 0 10px;
+      padding: 10px 12px;
+      border: 1px solid #f59e0b;
+      border-left-width: 4px;
+      border-radius: 8px;
+      background: #fffbeb;
+      color: #0f172a;
+    }
+
+    #page-deal-stop-orders .deal-camp-alert-copy {
+      min-width: 220px;
+      flex: 0 0 auto;
+    }
+
+    #page-deal-stop-orders .deal-camp-alert-title {
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1.25;
+    }
+
+    #page-deal-stop-orders .deal-camp-alert-subtitle {
+      margin-top: 2px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #92400e;
+    }
+
+    #page-deal-stop-orders .deal-camp-alert-list {
+      display: flex;
+      flex: 1 1 auto;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    #page-deal-stop-orders .deal-camp-alert-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 30px;
+      max-width: 100%;
+      padding: 0 10px;
+      border: 1px solid #fbbf24;
+      border-radius: 8px;
+      background: #fff;
+      color: #1f2937;
+      font-family: var(--display);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+    }
+
+    #page-deal-stop-orders .deal-camp-alert-chip:hover {
+      border-color: #d97706;
+      box-shadow: 0 6px 14px rgba(146, 64, 14, 0.14);
+      transform: translateY(-1px);
+    }
+
+    #page-deal-stop-orders .deal-camp-alert-code {
+      color: #b91c1c;
+      font-weight: 900;
+    }
+
+    #page-deal-stop-orders .deal-camp-alert-more {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 0 8px;
+      color: #92400e;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
     #page-deal-stop-orders .deal-search-bar {
       display: flex;
       align-items: center;
@@ -6253,6 +6334,22 @@
       #page-deal-stop-orders .deal-toolbar-card {
         grid-template-columns: 1fr;
         display: grid;
+      }
+
+      #page-deal-stop-orders .deal-camp-alert {
+        flex-direction: column;
+      }
+
+      #page-deal-stop-orders .deal-camp-alert-list {
+        justify-content: flex-start;
+        width: 100%;
+      }
+
+      #page-deal-stop-orders .deal-camp-alert-chip {
+        flex-wrap: wrap;
+        height: auto;
+        min-height: 32px;
+        white-space: normal;
       }
 
       #page-deal-stop-orders .deal-stats-grid {

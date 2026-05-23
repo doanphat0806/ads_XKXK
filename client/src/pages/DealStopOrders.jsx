@@ -15,39 +15,45 @@ import { useColorRules } from '../hooks/useColorRules';
 import { useOrderTable } from '../hooks/useOrderTable';
 import { api } from '../lib/api';
 import {
+  DEFAULT_COLUMN_VISIBILITY,
+  DEFAULT_STAFF_LIST,
   EDITABLE_COLUMNS,
   NUMERIC_COLUMNS,
   ORDER_COLUMN_CONFIG,
   PERCENT_COLUMNS,
   TAB_OPTIONS
 } from '../types/order.types';
+import { DEFAULT_CONFIG } from '../types/chuaCoConfig.types';
 import { parsePercentInput, recalculateRow, toSafeNumber } from '../utils/calculations';
 import {
+  loadChuaCoConfig,
   loadColumnVisibility,
   loadDealStopActualQtyByCode,
   loadDealStopDataVersion,
   loadHiddenCodes,
   loadRowsByTab,
-  loadStaffList,
-  saveColumnVisibility,
-  saveDealStopActualQtyByCode,
-  saveDealStopDataVersion,
-  saveHiddenCodes,
-  saveRowsByTab,
-  saveStaffList
+  loadStaffList
 } from '../utils/configStorage';
 import { exportOrdersToExcel } from '../utils/excelExport';
+import { formatCompactInt, formatCurrency, formatPercent } from '../utils/formatters';
 
+const DEAL_STOP_STATE_API = '/deal-stop/state';
 const DEAL_STOP_DATA_VERSION = 4;
+const CAMP_ALERT_CPO_LIMIT = 100000;
+const CAMP_ALERT_RETURN_LIMIT = 0.37;
+const CAMP_ALERT_VISIBLE_LIMIT = 12;
 const LOCAL_OVERRIDE_FIELDS = [
   'id',
   'ghiChu',
+  'slKhachDat',
+  'tiLeHoan',
   'orderSizeS',
   'orderSizeM',
   'orderSizeL',
   'orderSizeXL',
   'orderSizeFZ',
-  'dangGuiHang'
+  'dangGuiHang',
+  'tongDaShip'
 ];
 
 function getDefaultExpanded(staffList) {
@@ -189,19 +195,27 @@ function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, ac
         }
         return acc;
       }, {});
+      const overrideNumber = (field, fallback) => (
+        Object.prototype.hasOwnProperty.call(overrides, field)
+          ? toSafeNumber(overrides[field])
+          : Number(fallback || 0)
+      );
 
       return recalculateRow({
         ...sourceRow,
         ...overrides,
         ma: sourceRow.ma,
         cpo: Number(sourceRow.cpo || 0),
-        slKhachDat: Number(sourceRow.slKhachDat || 0),
+        campaignAmount: Number(sourceRow.campaignAmount || 0),
+        hasCampaign: Boolean(sourceRow.hasCampaign),
+        slKhachDat: overrideNumber('slKhachDat', sourceRow.slKhachDat),
         slThucDat: getRowActualQty(sourceRow, actualQtyByCode),
-        tiLeHoan: Number(sourceRow.tiLeHoan || 0),
+        tiLeHoan: overrideNumber('tiLeHoan', sourceRow.tiLeHoan),
         daNhan: Number(sourceRow.daNhan || 0),
         dangHoan: Number(sourceRow.dangHoan || 0),
         daHoan: Number(sourceRow.daHoan || 0),
-        tongDaShip: Number(sourceRow.tongDaShip || 0),
+        dangGuiHang: overrideNumber('dangGuiHang', sourceRow.dangGuiHang),
+        tongDaShip: overrideNumber('tongDaShip', sourceRow.tongDaShip),
         orderSizeS: overrides.orderSizeS ?? '',
         orderSizeM: overrides.orderSizeM ?? '',
         orderSizeL: overrides.orderSizeL ?? '',
@@ -211,6 +225,26 @@ function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, ac
     });
 
   return mergedSourceRows;
+}
+
+function isCampAlertRow(row = {}) {
+  const hasCampaignSignal = (
+    Object.prototype.hasOwnProperty.call(row, 'campaignAmount') ||
+    Object.prototype.hasOwnProperty.call(row, 'hasCampaign')
+  );
+
+  return (
+    hasCampaignSignal &&
+    Boolean(String(row.ma || '').trim()) &&
+    Number(row.campaignAmount || 0) <= 0 &&
+    Number(row.cpo || 0) < CAMP_ALERT_CPO_LIMIT &&
+    Number(row.tiLeHoan || 0) <= CAMP_ALERT_RETURN_LIMIT
+  );
+}
+
+function formatCampAlertCpo(value) {
+  const cpo = Number(value || 0);
+  return cpo > 0 ? formatCurrency(cpo) : 'Chưa có CPO';
 }
 
 function migrateDealStopRows(rows = [], currentVersion = 1) {
@@ -226,25 +260,72 @@ function migrateDealStopRows(rows = [], currentVersion = 1) {
   }));
 }
 
+function getLocalDealStopState(activeTab) {
+  const storedDataVersion = loadDealStopDataVersion();
+  return {
+    dataVersion: DEAL_STOP_DATA_VERSION,
+    config: loadChuaCoConfig(),
+    columnVisibility: loadColumnVisibility(),
+    staffList: loadStaffList(),
+    hiddenCodes: loadHiddenCodes(),
+    actualQtyByCode: loadDealStopActualQtyByCode(),
+    rowsByTab: {
+      [activeTab]: migrateDealStopRows(
+        loadRowsByTab(activeTab, []).filter(row => Number(row.slKhachDat || 0) >= 2),
+        storedDataVersion
+      )
+    }
+  };
+}
+
+function normalizeRowsByTab(value, activeTab) {
+  const rowsByTab = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const rows = Array.isArray(rowsByTab[activeTab]) ? rowsByTab[activeTab] : [];
+  return {
+    ...rowsByTab,
+    [activeTab]: rows.filter(row => Number(row.slKhachDat || 0) >= 2)
+  };
+}
+
+function normalizeDealStopState(state = {}, activeTab) {
+  return {
+    dataVersion: Number(state.dataVersion || DEAL_STOP_DATA_VERSION) || DEAL_STOP_DATA_VERSION,
+    config: state.config && typeof state.config === 'object' ? state.config : DEFAULT_CONFIG,
+    columnVisibility: { ...DEFAULT_COLUMN_VISIBILITY, ...(state.columnVisibility || {}) },
+    staffList: Array.isArray(state.staffList) && state.staffList.length ? state.staffList : DEFAULT_STAFF_LIST,
+    hiddenCodes: Array.isArray(state.hiddenCodes) ? state.hiddenCodes : [],
+    actualQtyByCode: state.actualQtyByCode && typeof state.actualQtyByCode === 'object' && !Array.isArray(state.actualQtyByCode)
+      ? state.actualQtyByCode
+      : {},
+    rowsByTab: normalizeRowsByTab(state.rowsByTab, activeTab)
+  };
+}
+
+function hasPersistedDealStopState(state = {}, activeTab) {
+  return Boolean(
+    state?.config?.tiers ||
+    Object.keys(state?.columnVisibility || {}).length ||
+    (Array.isArray(state?.staffList) && state.staffList.length) ||
+    (Array.isArray(state?.hiddenCodes) && state.hiddenCodes.length) ||
+    Object.keys(state?.actualQtyByCode || {}).length ||
+    (Array.isArray(state?.rowsByTab?.[activeTab]) && state.rowsByTab[activeTab].length)
+  );
+}
+
 export default function DealStopOrders() {
-  const { config, setConfig } = useChuaCoConfig();
+  const { config, replaceConfig } = useChuaCoConfig();
   const colorRules = useColorRules();
   const activeTab = TAB_OPTIONS[0].id;
-  const storedDataVersion = loadDealStopDataVersion();
+  const initialState = React.useMemo(() => getLocalDealStopState(activeTab), [activeTab]);
 
-  const [staffList, setStaffList] = React.useState(() => loadStaffList());
-  const [actualQtyByCode, setActualQtyByCode] = React.useState(() => loadDealStopActualQtyByCode());
-  const [rowsByTab, setRowsByTab] = React.useState(() => ({
-    [activeTab]: migrateDealStopRows(
-      loadRowsByTab(activeTab, []).filter(row => Number(row.slKhachDat || 0) >= 2),
-      storedDataVersion
-    )
-  }));
-  const [hiddenCodes, setHiddenCodes] = React.useState(() => loadHiddenCodes());
+  const [staffList, setStaffList] = React.useState(() => initialState.staffList);
+  const [actualQtyByCode, setActualQtyByCode] = React.useState(() => initialState.actualQtyByCode);
+  const [rowsByTab, setRowsByTab] = React.useState(() => initialState.rowsByTab);
+  const [hiddenCodes, setHiddenCodes] = React.useState(() => initialState.hiddenCodes);
   const [searchInput, setSearchInput] = React.useState('');
   const [searchTerm, setSearchTerm] = React.useState('');
   const [sorting, setSorting] = React.useState([]);
-  const [columnVisibility, setColumnVisibility] = React.useState(() => loadColumnVisibility());
+  const [columnVisibility, setColumnVisibility] = React.useState(() => initialState.columnVisibility);
   const [groupExpanded, setGroupExpanded] = React.useState(() => getDefaultExpanded(staffList));
   const [editingCell, setEditingCell] = React.useState(null);
   const [editValue, setEditValue] = React.useState('');
@@ -256,7 +337,11 @@ export default function DealStopOrders() {
   const [exportDone, setExportDone] = React.useState(false);
   const [importingActualQty, setImportingActualQty] = React.useState(false);
   const [sourceRows, setSourceRows] = React.useState([]);
+  const [stateReady, setStateReady] = React.useState(false);
   const actualQtyInputRef = React.useRef(null);
+  const latestStateRef = React.useRef(initialState);
+  const saveTimerRef = React.useRef(null);
+  const saveStateRequestRef = React.useRef(Promise.resolve());
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -266,31 +351,92 @@ export default function DealStopOrders() {
   }, [searchInput]);
 
   React.useEffect(() => {
-    saveColumnVisibility(columnVisibility);
-  }, [columnVisibility]);
+    let cancelled = false;
 
-  React.useEffect(() => {
-    saveStaffList(staffList);
-  }, [staffList]);
+    async function loadSharedState() {
+      try {
+        const data = await api('GET', DEAL_STOP_STATE_API, null, { timeoutMs: 60000 });
+        const remoteState = data?.state || {};
+        const nextState = normalizeDealStopState(
+          hasPersistedDealStopState(remoteState, activeTab) ? remoteState : initialState,
+          activeTab
+        );
+        if (cancelled) return;
 
-  React.useEffect(() => {
-    saveHiddenCodes(hiddenCodes);
-  }, [hiddenCodes]);
+        replaceConfig(nextState.config);
+        setStaffList(nextState.staffList);
+        setActualQtyByCode(nextState.actualQtyByCode);
+        setRowsByTab(nextState.rowsByTab);
+        setHiddenCodes(nextState.hiddenCodes);
+        setColumnVisibility(nextState.columnVisibility);
+        latestStateRef.current = nextState;
+        setStateReady(true);
 
-  React.useEffect(() => {
-    saveDealStopActualQtyByCode(actualQtyByCode);
-  }, [actualQtyByCode]);
-
-  React.useEffect(() => {
-    if (storedDataVersion < DEAL_STOP_DATA_VERSION) {
-      saveDealStopDataVersion(DEAL_STOP_DATA_VERSION);
-      Object.entries(rowsByTab).forEach(([tabId, tabRows]) => {
-        saveRowsByTab(tabId, tabRows);
-      });
+        if (!hasPersistedDealStopState(remoteState, activeTab) && hasPersistedDealStopState(initialState, activeTab)) {
+          await api('PUT', DEAL_STOP_STATE_API, { state: nextState }, { timeoutMs: 60000 });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(`Không tải được dữ liệu Đóng deal dùng chung: ${error.message}`);
+          setStateReady(false);
+        }
+      }
     }
-  }, [rowsByTab, storedDataVersion]);
+
+    loadSharedState();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, initialState, replaceConfig]);
 
   React.useEffect(() => {
+    latestStateRef.current = normalizeDealStopState({
+      dataVersion: DEAL_STOP_DATA_VERSION,
+      config,
+      columnVisibility,
+      staffList,
+      hiddenCodes,
+      actualQtyByCode,
+      rowsByTab
+    }, activeTab);
+  }, [activeTab, actualQtyByCode, columnVisibility, config, hiddenCodes, rowsByTab, staffList]);
+
+  const saveSharedState = React.useCallback((state, { silent = false } = {}) => {
+    const nextState = normalizeDealStopState(state, activeTab);
+    latestStateRef.current = nextState;
+    saveStateRequestRef.current = saveStateRequestRef.current
+      .catch(() => {})
+      .then(() => api('PUT', DEAL_STOP_STATE_API, { state: nextState }, { timeoutMs: 60000 }))
+      .catch(error => {
+        if (!silent) toast.error(`Lưu dữ liệu Đóng deal lỗi: ${error.message}`);
+      });
+    return saveStateRequestRef.current;
+  }, [activeTab]);
+
+  const scheduleSaveSharedState = React.useCallback(() => {
+    if (!stateReady) return;
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      saveSharedState(latestStateRef.current, { silent: true });
+    }, 600);
+  }, [saveSharedState, stateReady]);
+
+  React.useEffect(() => {
+    scheduleSaveSharedState();
+    return () => {
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    };
+  }, [actualQtyByCode, columnVisibility, config, hiddenCodes, rowsByTab, scheduleSaveSharedState, staffList]);
+
+  React.useEffect(() => () => {
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+      saveSharedState(latestStateRef.current, { silent: true });
+    }
+  }, [saveSharedState]);
+
+  React.useEffect(() => {
+    if (!stateReady) return;
     setRowsByTab(current => {
       const { nextRowsByTab, changed } = pruneRowsByStaffList(current, staffList);
       const filteredByQtyRows = Object.fromEntries(
@@ -305,15 +451,12 @@ export default function DealStopOrders() {
 
       if (!changed && !qtyChanged) return current;
 
-      Object.entries(filteredByQtyRows).forEach(([tabId, tabRows]) => {
-        saveRowsByTab(tabId, tabRows);
-      });
-
       return filteredByQtyRows;
     });
-  }, [staffList]);
+  }, [staffList, stateReady]);
 
   const loadSourceRows = React.useCallback(async () => {
+    if (!stateReady) return;
     try {
       const result = await api('GET', '/orders/deal-stop-rows', null, { timeoutMs: 180000 });
       const sourceRows = Array.isArray(result.rows) ? result.rows : [];
@@ -321,14 +464,12 @@ export default function DealStopOrders() {
 
       setRowsByTab(current => {
         const mergedRows = mergeSourceRowsWithLocal(sourceRows, current[activeTab] || [], hiddenCodes, config, actualQtyByCode);
-        const next = { ...current, [activeTab]: mergedRows };
-        saveRowsByTab(activeTab, mergedRows);
-        return next;
+        return { ...current, [activeTab]: mergedRows };
       });
     } catch (error) {
       toast.error(`Không lấy được dữ liệu Đơn Hàng: ${error.message}`);
     }
-  }, [activeTab, actualQtyByCode, config, hiddenCodes]);
+  }, [activeTab, actualQtyByCode, config, hiddenCodes, stateReady]);
 
   React.useEffect(() => {
     loadSourceRows();
@@ -351,6 +492,24 @@ export default function DealStopOrders() {
   const actualQtyImportCount = React.useMemo(
     () => Object.keys(actualQtyByCode || {}).length,
     [actualQtyByCode]
+  );
+  const campAlertRows = React.useMemo(
+    () => rows
+      .filter(isCampAlertRow)
+      .sort((a, b) => {
+        const returnDiff = Number(a.tiLeHoan || 0) - Number(b.tiLeHoan || 0);
+        if (returnDiff !== 0) return returnDiff;
+
+        const cpoDiff = Number(a.cpo || 0) - Number(b.cpo || 0);
+        if (cpoDiff !== 0) return cpoDiff;
+
+        return Number(b.slKhachDat || 0) - Number(a.slKhachDat || 0);
+      }),
+    [rows]
+  );
+  const visibleCampAlertRows = React.useMemo(
+    () => campAlertRows.slice(0, CAMP_ALERT_VISIBLE_LIMIT),
+    [campAlertRows]
   );
 
   const {
@@ -383,15 +542,12 @@ export default function DealStopOrders() {
   const updateRows = React.useCallback((updater) => {
     setRowsByTab(current => {
       const nextRows = typeof updater === 'function' ? updater(current[activeTab] || []) : updater;
-      const next = { ...current, [activeTab]: nextRows };
-      saveRowsByTab(activeTab, nextRows);
-      return next;
+      return { ...current, [activeTab]: nextRows };
     });
   }, [activeTab]);
 
   const applyActualQtyByCode = React.useCallback((nextActualQtyByCode) => {
     setActualQtyByCode(nextActualQtyByCode);
-    saveDealStopActualQtyByCode(nextActualQtyByCode);
 
     setRowsByTab(current => {
       const currentRows = current[activeTab] || [];
@@ -409,9 +565,7 @@ export default function DealStopOrders() {
             }, config);
           });
 
-      const next = { ...current, [activeTab]: nextRows };
-      saveRowsByTab(activeTab, nextRows);
-      return next;
+      return { ...current, [activeTab]: nextRows };
     });
   }, [activeTab, config, hiddenCodes, sourceRows]);
 
@@ -518,7 +672,7 @@ export default function DealStopOrders() {
   };
 
   const handleSaveConfig = (nextConfig) => {
-    setConfig(nextConfig);
+    replaceConfig(nextConfig);
     setRowsByTab(current => {
       const next = Object.fromEntries(
         Object.entries(current).map(([tabId, tabRows]) => [
@@ -526,7 +680,6 @@ export default function DealStopOrders() {
           tabRows.map(row => recalculateRow(row, nextConfig))
         ])
       );
-      Object.entries(next).forEach(([tabId, tabRows]) => saveRowsByTab(tabId, tabRows));
       return next;
     });
     toast.success('Đã lưu cấu hình và cập nhật bảng');
@@ -537,9 +690,6 @@ export default function DealStopOrders() {
 
     setStaffList(nextStaffList);
     setRowsByTab(nextRowsByTab);
-    Object.entries(nextRowsByTab).forEach(([tabId, tabRows]) => {
-      saveRowsByTab(tabId, tabRows);
-    });
 
     if (removedCount > 0) {
       toast.success(`Đã lưu danh sách nhân viên và xóa ${removedCount} mã không còn prefix hợp lệ`);
@@ -597,6 +747,12 @@ export default function DealStopOrders() {
     toast('Đã làm mới bộ lọc');
   };
 
+  const handleFilterCampAlertCode = React.useCallback((code) => {
+    const nextSearch = String(code || '').trim();
+    setSearchInput(nextSearch);
+    setSearchTerm(nextSearch);
+  }, []);
+
   const handleExport = async () => {
     setExporting(true);
     setExportDone(false);
@@ -627,20 +783,20 @@ export default function DealStopOrders() {
           visibility={columnVisibility}
           onToggle={handleToggleColumn}
         />
-        <button type="button" className="deal-btn deal-btn-ghost" onClick={() => setSettingsOpen(true)}>
+        <button type="button" className="deal-btn deal-btn-ghost" onClick={() => setSettingsOpen(true)} disabled={!stateReady}>
           Cấu hình tỉ lệ
         </button>
-        <button type="button" className="deal-btn deal-btn-ghost" onClick={() => setStaffOpen(true)}>
+        <button type="button" className="deal-btn deal-btn-ghost" onClick={() => setStaffOpen(true)} disabled={!stateReady}>
           Nhân viên
         </button>
-        <button type="button" className="deal-btn deal-btn-ghost" onClick={() => setAddOrderOpen(true)}>
+        <button type="button" className="deal-btn deal-btn-ghost" onClick={() => setAddOrderOpen(true)} disabled={!stateReady}>
           Thêm mã mới
         </button>
         <button
           type="button"
           className="deal-btn deal-btn-ghost"
           onClick={() => actualQtyInputRef.current?.click()}
-          disabled={importingActualQty}
+          disabled={importingActualQty || !stateReady}
           title="File Excel/CSV 2 cột: mã SP và số lượng thực đặt"
         >
           {importingActualQty ? 'Đang import SL TĐ' : 'Import SL TĐ'}
@@ -662,17 +818,47 @@ export default function DealStopOrders() {
             type="button"
             className="deal-btn deal-btn-ghost"
             onClick={clearActualQtyImport}
-            disabled={importingActualQty}
+            disabled={importingActualQty || !stateReady}
             title="Xóa dữ liệu import và quay lại SL Thực Đặt từ Đặt Hàng"
           >
             Xóa SL TĐ ({actualQtyImportCount.toLocaleString('vi-VN')})
           </button>
         ) : null}
-        <button type="button" className="deal-btn deal-btn-ghost" onClick={handleRefreshFilters}>
+        <button type="button" className="deal-btn deal-btn-ghost" onClick={handleRefreshFilters} disabled={!stateReady}>
           Làm mới
         </button>
         <ExportButton loading={exporting} done={exportDone} onClick={handleExport} />
       </div>
+
+      {campAlertRows.length > 0 ? (
+        <section className="deal-camp-alert" aria-label="Thong bao ma nen len camp">
+          <div className="deal-camp-alert-copy">
+            <div className="deal-camp-alert-title">Mã nên lên camp ({campAlertRows.length})</div>
+            <div className="deal-camp-alert-subtitle">Hoàn thấp hoặc chưa có hoàn, CPO dưới 100k, chưa có chi tiêu camp.</div>
+          </div>
+          <div className="deal-camp-alert-list">
+            {visibleCampAlertRows.map(row => (
+              <button
+                key={row.id || row.ma}
+                type="button"
+                className="deal-camp-alert-chip"
+                onClick={() => handleFilterCampAlertCode(row.ma)}
+                title={`Lọc mã ${row.ma}`}
+              >
+                <span className="deal-camp-alert-code">{row.ma}</span>
+                <span>{formatCampAlertCpo(row.cpo)}</span>
+                <span>Hoàn {formatPercent(row.tiLeHoan)}</span>
+                <span>KĐ {formatCompactInt(row.slKhachDat)}</span>
+              </button>
+            ))}
+            {campAlertRows.length > visibleCampAlertRows.length ? (
+              <span className="deal-camp-alert-more">
+                +{formatCompactInt(campAlertRows.length - visibleCampAlertRows.length)} mã
+              </span>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <OrderTable
         groupedRows={groupedRows}

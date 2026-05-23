@@ -37,6 +37,7 @@ const ConfigSchema = new mongoose.Schema({
   dataPurchaseOrderMeta: { type: mongoose.Schema.Types.Mixed, default: {} },
   purchaseOrderDashboardCancellations: { type: mongoose.Schema.Types.Mixed, default: {} },
   purchaseOrderDashboardNotes: { type: mongoose.Schema.Types.Mixed, default: {} },
+  dealStopOrderState: { type: mongoose.Schema.Types.Mixed, default: {} },
 
   updatedAt: { type: Date, default: Date.now }
 });

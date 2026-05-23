@@ -8,6 +8,10 @@ export function useChuaCoConfig() {
 
   const previewSamples = useMemo(() => getPreviewSamples(config), [config]);
 
+  const replaceConfig = useCallback((nextConfig) => {
+    setConfig(nextConfig);
+  }, []);
+
   const persistConfig = useCallback((nextConfig) => {
     setConfig(nextConfig);
     saveChuaCoConfig(nextConfig);
@@ -21,6 +25,7 @@ export function useChuaCoConfig() {
 
   return {
     config,
+    replaceConfig,
     setConfig: persistConfig,
     resetConfig,
     previewSamples

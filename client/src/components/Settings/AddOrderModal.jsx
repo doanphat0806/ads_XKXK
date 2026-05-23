@@ -136,23 +136,23 @@ export default function AddOrderModal({ open, staffList, config, orderLookupByCo
               <div className="deal-size-grid">
                 <label className="deal-form-field">
                   <span>ĐH S</span>
-                  <input type="number" min="0" step="1" inputMode="numeric" value={draft.orderSizeS} onChange={event => handleChange('orderSizeS', event.target.value)} />
+                  <input type="text" value={draft.orderSizeS} onChange={event => handleChange('orderSizeS', event.target.value)} />
                 </label>
                 <label className="deal-form-field">
                   <span>ĐH M</span>
-                  <input type="number" min="0" step="1" inputMode="numeric" value={draft.orderSizeM} onChange={event => handleChange('orderSizeM', event.target.value)} />
+                  <input type="text" value={draft.orderSizeM} onChange={event => handleChange('orderSizeM', event.target.value)} />
                 </label>
                 <label className="deal-form-field">
                   <span>ĐH L</span>
-                  <input type="number" min="0" step="1" inputMode="numeric" value={draft.orderSizeL} onChange={event => handleChange('orderSizeL', event.target.value)} />
+                  <input type="text" value={draft.orderSizeL} onChange={event => handleChange('orderSizeL', event.target.value)} />
                 </label>
                 <label className="deal-form-field">
                   <span>ĐH XL</span>
-                  <input type="number" min="0" step="1" inputMode="numeric" value={draft.orderSizeXL} onChange={event => handleChange('orderSizeXL', event.target.value)} />
+                  <input type="text" value={draft.orderSizeXL} onChange={event => handleChange('orderSizeXL', event.target.value)} />
                 </label>
                 <label className="deal-form-field">
                   <span>ĐH FZ</span>
-                  <input type="number" min="0" step="1" inputMode="numeric" value={draft.orderSizeFZ} onChange={event => handleChange('orderSizeFZ', event.target.value)} />
+                  <input type="text" value={draft.orderSizeFZ} onChange={event => handleChange('orderSizeFZ', event.target.value)} />
                 </label>
               </div>
               <div className="deal-inline-note">SL Thực Đặt lấy từ Đặt Hàng: {formatCompactInt(matchedOrderRow.slThucDat || 0)}. Size chỉ để ghi tay.</div>

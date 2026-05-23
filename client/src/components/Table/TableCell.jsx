@@ -3,6 +3,8 @@ import toast from 'react-hot-toast';
 import ColorCell from './ColorCell';
 import { formatCurrency, formatInt, formatPercent } from '../../utils/formatters';
 
+const CPO_CODE_WARNING_LIMIT = 140000;
+
 function renderDisplayValue(value, type) {
   if (type === 'currency') return formatCurrency(Number(value || 0));
   if (type === 'percent') return formatPercent(Number(value || 0));
@@ -57,7 +59,7 @@ function CellInner({
   }
 
   let toneClass = '';
-  if (id === 'ma' && Number(row.tiLeHoan || 0) >= 0.39) toneClass = 'tone-danger-strong';
+  if (id === 'ma' && (Number(row.tiLeHoan || 0) >= 0.39 || Number(row.cpo || 0) > CPO_CODE_WARNING_LIMIT)) toneClass = 'tone-danger-strong';
   if (id === 'slCanDatThem') toneClass = colorRules.getSLCanDatThemColor(value);
   if (id === 'tiLeDat') toneClass = colorRules.getTiLeDatColor(value);
   if (id === 'tiLeHoan') toneClass = colorRules.getTiLeHoanColor(value);
@@ -75,10 +77,8 @@ function CellInner({
         <input
           className="deal-inline-grid-input"
           value={value === '' || value === null || value === undefined ? '' : String(value)}
-          onChange={event => onDirectInputChange?.(row.id, id, event.target.value.replace(/[^\d]/g, ''))}
+          onChange={event => onDirectInputChange?.(row.id, id, event.target.value)}
           type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
         />
       </td>
     );

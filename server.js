@@ -757,6 +757,45 @@ function clearPurchaseOrderReadCache() {
   purchaseOrderReadCache.clear();
 }
 
+function toPlainObject(value, fallback = {}) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
+}
+
+function normalizeDealStopStateRowsByTab(value = {}) {
+  const rowsByTab = toPlainObject(value);
+  return Object.fromEntries(
+    Object.entries(rowsByTab).map(([tabId, rows]) => [
+      String(tabId || '').slice(0, 100),
+      Array.isArray(rows) ? rows.slice(0, 5000) : []
+    ]).filter(([tabId]) => Boolean(tabId))
+  );
+}
+
+function normalizeDealStopOrderState(value = {}) {
+  const state = toPlainObject(value);
+  const actualQtyByCode = toPlainObject(state.actualQtyByCode);
+  const cleanActualQtyByCode = Object.fromEntries(
+    Object.entries(actualQtyByCode)
+      .map(([code, qty]) => [String(code || '').trim().toUpperCase().replace(/\s+/g, ''), Number(qty || 0)])
+      .filter(([code, qty]) => Boolean(code) && Number.isFinite(qty) && qty >= 0)
+      .slice(0, 10000)
+  );
+
+  return {
+    dataVersion: Number(state.dataVersion || 0) || 0,
+    config: toPlainObject(state.config),
+    columnVisibility: toPlainObject(state.columnVisibility),
+    staffList: Array.isArray(state.staffList) ? state.staffList.slice(0, 200) : [],
+    hiddenCodes: Array.isArray(state.hiddenCodes)
+      ? [...new Set(state.hiddenCodes.map(code => String(code || '').trim().toUpperCase().replace(/\s+/g, '')).filter(Boolean))].slice(0, 10000)
+      : [],
+    actualQtyByCode: cleanActualQtyByCode,
+    rowsByTab: normalizeDealStopStateRowsByTab(state.rowsByTab),
+    updatedAt: state.updatedAt || '',
+    updatedBy: state.updatedBy || ''
+  };
+}
+
 async function authenticateApiRequest(req, res, next) {
   if (req.path === '/auth/login' || req.path === '/facebook/oauth/callback' || req.path === '/google/oauth/callback' || req.path === '/webhooks/pancake') {
     return next();
@@ -4361,6 +4400,44 @@ app.delete('/api/ai/gemini/key', async (req, res) => {
     res.json({ ok: true, hasGeminiKey: false });
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/deal-stop/state', async (req, res) => {
+  try {
+    const config = await getAppConfig();
+    res.json({
+      ok: true,
+      state: normalizeDealStopOrderState(config?.dealStopOrderState || {})
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/deal-stop/state', async (req, res) => {
+  try {
+    const now = new Date();
+    const state = normalizeDealStopOrderState({
+      ...(req.body?.state || {}),
+      updatedAt: now.toISOString(),
+      updatedBy: String(req.currentUser?.displayName || req.currentUser?.username || '').trim()
+    });
+
+    await Config.findOneAndUpdate(
+      { key: 'app' },
+      {
+        $set: {
+          dealStopOrderState: state,
+          updatedAt: now
+        }
+      },
+      { upsert: true, new: true }
+    ).lean();
+
+    res.json({ ok: true, state });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -8482,10 +8559,12 @@ function isDealStopUnshippedOrder(order = {}) {
 }
 
 function normalizeDealStopCode(value = '') {
-  const normalized = normalizeSkuKey(value);
+  const extracted = extractInventoryProductCode(value);
+  const normalized = normalizeSkuKey(extracted || value);
   if (!normalized) return '';
 
   const compact = normalized.replace(/\s+/g, '');
+  if (/^\d{1,4}[/-]\d{1,2}[/-]\d{1,4}$/.test(compact)) return '';
   if (compact.startsWith('MS') && compact.length > 2) {
     return compact.slice(2);
   }
@@ -8554,6 +8633,8 @@ function buildSkuCpoByCode(codes = [], skuCounts = {}, campaignRows = []) {
       code: normalizedCode,
       orderCount,
       amount,
+      campaignAmount: amount,
+      hasCampaign: amount > 0,
       cpo: orderCount > 0 ? amount / orderCount : 0
     };
   });
@@ -8587,7 +8668,6 @@ async function buildPurchasePlacedQtyByCode() {
       $group: {
         _id: '$col3',
         orderId: { $last: '$col3' },
-        skuRaw: { $last: '$col4' },
         quantityRaw: { $last: '$productQuantity' }
       }
     }
@@ -8600,7 +8680,7 @@ async function buildPurchasePlacedQtyByCode() {
         sourceName: dataPurchaseSheetName,
         orderId: { $in: orderIds }
       })
-        .select('orderId skuManual receivedQuantity')
+        .select('orderId skuManual')
         .lean()
     : [];
 
@@ -8611,7 +8691,8 @@ async function buildPurchasePlacedQtyByCode() {
 
   groupedRows.forEach(row => {
     const manual = manualByOrderId.get(String(row.orderId || '').trim()) || {};
-    const code = normalizeDealStopCode(manual.skuManual || row.skuRaw);
+    // In this sheet, `col4` is the order date, so only the manually mapped SKU is reliable here.
+    const code = normalizeDealStopCode(manual.skuManual);
     if (!code) return;
 
     const qty = parseDealStopManualQty(row.quantityRaw);
@@ -8760,6 +8841,8 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
         ...cleanRow,
         firstOrderTime: Number(row._firstOrderMeta?.time || 0),
         cpo: Number(cpoMeta.cpo || 0),
+        campaignAmount: Number(cpoMeta.campaignAmount ?? cpoMeta.amount ?? 0),
+        hasCampaign: Boolean(cpoMeta.hasCampaign),
         orderSizeS: '',
         orderSizeM: '',
         orderSizeL: '',
