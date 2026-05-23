@@ -1,4 +1,5 @@
 import React from 'react';
+import * as XLSX from 'xlsx';
 import toast from 'react-hot-toast';
 import ConfirmDialog from '../components/Common/ConfirmDialog';
 import AddOrderModal from '../components/Settings/AddOrderModal';
@@ -23,31 +24,35 @@ import {
 import { parsePercentInput, recalculateRow, toSafeNumber } from '../utils/calculations';
 import {
   loadColumnVisibility,
+  loadDealStopActualQtyByCode,
+  loadDealStopDataVersion,
   loadHiddenCodes,
   loadRowsByTab,
   loadStaffList,
   saveColumnVisibility,
+  saveDealStopActualQtyByCode,
+  saveDealStopDataVersion,
   saveHiddenCodes,
   saveRowsByTab,
   saveStaffList
 } from '../utils/configStorage';
 import { exportOrdersToExcel } from '../utils/excelExport';
-import { formatDate } from '../utils/formatters';
 
+const DEAL_STOP_DATA_VERSION = 4;
 const LOCAL_OVERRIDE_FIELDS = [
   'id',
   'ghiChu',
-  'slThucDat',
-  'sizeS',
-  'sizeM',
-  'sizeL',
-  'sizeXL',
+  'orderSizeS',
+  'orderSizeM',
+  'orderSizeL',
+  'orderSizeXL',
+  'orderSizeFZ',
   'dangGuiHang'
 ];
 
 function getDefaultExpanded(staffList) {
   return staffList.reduce((acc, staff) => {
-    acc[staff.prefix] = true;
+    acc[staff.prefix] = false;
     return acc;
   }, {});
 }
@@ -67,8 +72,74 @@ function getNextEditableCell(visibleColumns, rows, currentRowId, currentColumnId
   return null;
 }
 
+const DIRECT_INPUT_COLUMNS = new Set(['orderSizeS', 'orderSizeM', 'orderSizeL', 'orderSizeXL', 'orderSizeFZ']);
+
 function normalizeCode(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+function normalizeImportHeader(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[đĐ]/g, 'd')
+    .toLowerCase()
+    .trim();
+}
+
+function isActualQtyImportHeader(row = []) {
+  const first = normalizeImportHeader(row[0]);
+  const second = normalizeImportHeader(row[1]);
+  return (
+    (first.includes('ma') || first.includes('sku') || first.includes('code')) &&
+    (second.includes('sl') || second.includes('so luong') || second.includes('thuc dat'))
+  );
+}
+
+function parseActualQtyRows(rows = []) {
+  const qtyByCode = {};
+
+  rows.forEach((row, rowIndex) => {
+    if (!Array.isArray(row) || row.length < 2) return;
+    if (rowIndex === 0 && isActualQtyImportHeader(row)) return;
+
+    const code = normalizeCode(row[0]);
+    const rawQty = row[1];
+    if (!code || rawQty === '' || rawQty === null || rawQty === undefined) return;
+
+    const qty = toSafeNumber(rawQty);
+    if (!Number.isFinite(qty) || qty < 0) return;
+
+    qtyByCode[code] = Number(qtyByCode[code] || 0) + qty;
+  });
+
+  return qtyByCode;
+}
+
+async function readActualQtyImportFile(file) {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  if (!sheet) return {};
+
+  const rows = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: '',
+    blankrows: false
+  });
+
+  return parseActualQtyRows(rows);
+}
+
+function hasImportedActualQty(actualQtyByCode = {}, code = '') {
+  return Object.prototype.hasOwnProperty.call(actualQtyByCode, normalizeCode(code));
+}
+
+function getRowActualQty(sourceRow = {}, actualQtyByCode = {}) {
+  const code = normalizeCode(sourceRow.ma);
+  return hasImportedActualQty(actualQtyByCode, code)
+    ? toSafeNumber(actualQtyByCode[code])
+    : Number(sourceRow.slThucDat || 0);
 }
 
 function getAllowedPrefixes(staffList) {
@@ -104,10 +175,9 @@ function pruneRowsByStaffList(rowsByTab, staffList) {
   return { nextRowsByTab, removedCount, changed };
 }
 
-function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config) {
+function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, actualQtyByCode = {}) {
   const hidden = new Set(hiddenCodes.map(normalizeCode));
   const localByCode = new Map(localRows.map(row => [normalizeCode(row.ma), row]));
-  const sourceCodes = new Set(sourceRows.map(row => normalizeCode(row.ma)));
 
   const mergedSourceRows = sourceRows
     .filter(row => !hidden.has(normalizeCode(row.ma)))
@@ -126,32 +196,49 @@ function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config) {
         ma: sourceRow.ma,
         cpo: Number(sourceRow.cpo || 0),
         slKhachDat: Number(sourceRow.slKhachDat || 0),
+        slThucDat: getRowActualQty(sourceRow, actualQtyByCode),
         tiLeHoan: Number(sourceRow.tiLeHoan || 0),
         daNhan: Number(sourceRow.daNhan || 0),
         dangHoan: Number(sourceRow.dangHoan || 0),
         daHoan: Number(sourceRow.daHoan || 0),
-        tongDaShip: Number(sourceRow.tongDaShip || 0)
+        tongDaShip: Number(sourceRow.tongDaShip || 0),
+        orderSizeS: overrides.orderSizeS ?? '',
+        orderSizeM: overrides.orderSizeM ?? '',
+        orderSizeL: overrides.orderSizeL ?? '',
+        orderSizeXL: overrides.orderSizeXL ?? '',
+        orderSizeFZ: overrides.orderSizeFZ ?? ''
       }, config);
     });
 
-  const localOnlyRows = localRows
-    .filter(row => {
-      const code = normalizeCode(row.ma);
-      return code && !sourceCodes.has(code) && !hidden.has(code);
-    })
-    .map(row => recalculateRow(row, config));
+  return mergedSourceRows;
+}
 
-  return [...mergedSourceRows, ...localOnlyRows];
+function migrateDealStopRows(rows = [], currentVersion = 1) {
+  if (currentVersion >= DEAL_STOP_DATA_VERSION) return rows;
+
+  return rows.map(row => ({
+    ...row,
+    orderSizeS: '',
+    orderSizeM: '',
+    orderSizeL: '',
+    orderSizeXL: '',
+    orderSizeFZ: ''
+  }));
 }
 
 export default function DealStopOrders() {
   const { config, setConfig } = useChuaCoConfig();
   const colorRules = useColorRules();
   const activeTab = TAB_OPTIONS[0].id;
+  const storedDataVersion = loadDealStopDataVersion();
 
   const [staffList, setStaffList] = React.useState(() => loadStaffList());
+  const [actualQtyByCode, setActualQtyByCode] = React.useState(() => loadDealStopActualQtyByCode());
   const [rowsByTab, setRowsByTab] = React.useState(() => ({
-    [activeTab]: loadRowsByTab(activeTab, [])
+    [activeTab]: migrateDealStopRows(
+      loadRowsByTab(activeTab, []).filter(row => Number(row.slKhachDat || 0) >= 2),
+      storedDataVersion
+    )
   }));
   const [hiddenCodes, setHiddenCodes] = React.useState(() => loadHiddenCodes());
   const [searchInput, setSearchInput] = React.useState('');
@@ -167,6 +254,9 @@ export default function DealStopOrders() {
   const [deleteTargetRow, setDeleteTargetRow] = React.useState(null);
   const [exporting, setExporting] = React.useState(false);
   const [exportDone, setExportDone] = React.useState(false);
+  const [importingActualQty, setImportingActualQty] = React.useState(false);
+  const [sourceRows, setSourceRows] = React.useState([]);
+  const actualQtyInputRef = React.useRef(null);
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -188,15 +278,38 @@ export default function DealStopOrders() {
   }, [hiddenCodes]);
 
   React.useEffect(() => {
+    saveDealStopActualQtyByCode(actualQtyByCode);
+  }, [actualQtyByCode]);
+
+  React.useEffect(() => {
+    if (storedDataVersion < DEAL_STOP_DATA_VERSION) {
+      saveDealStopDataVersion(DEAL_STOP_DATA_VERSION);
+      Object.entries(rowsByTab).forEach(([tabId, tabRows]) => {
+        saveRowsByTab(tabId, tabRows);
+      });
+    }
+  }, [rowsByTab, storedDataVersion]);
+
+  React.useEffect(() => {
     setRowsByTab(current => {
       const { nextRowsByTab, changed } = pruneRowsByStaffList(current, staffList);
-      if (!changed) return current;
+      const filteredByQtyRows = Object.fromEntries(
+        Object.entries(nextRowsByTab).map(([tabId, tabRows]) => [
+          tabId,
+          tabRows.filter(row => Number(row.slKhachDat || 0) >= 2)
+        ])
+      );
+      const qtyChanged = Object.entries(filteredByQtyRows).some(([tabId, tabRows]) => (
+        tabRows.length !== (nextRowsByTab[tabId] || []).length
+      ));
 
-      Object.entries(nextRowsByTab).forEach(([tabId, tabRows]) => {
+      if (!changed && !qtyChanged) return current;
+
+      Object.entries(filteredByQtyRows).forEach(([tabId, tabRows]) => {
         saveRowsByTab(tabId, tabRows);
       });
 
-      return nextRowsByTab;
+      return filteredByQtyRows;
     });
   }, [staffList]);
 
@@ -204,9 +317,10 @@ export default function DealStopOrders() {
     try {
       const result = await api('GET', '/orders/deal-stop-rows', null, { timeoutMs: 180000 });
       const sourceRows = Array.isArray(result.rows) ? result.rows : [];
+      setSourceRows(sourceRows);
 
       setRowsByTab(current => {
-        const mergedRows = mergeSourceRowsWithLocal(sourceRows, current[activeTab] || [], hiddenCodes, config);
+        const mergedRows = mergeSourceRowsWithLocal(sourceRows, current[activeTab] || [], hiddenCodes, config, actualQtyByCode);
         const next = { ...current, [activeTab]: mergedRows };
         saveRowsByTab(activeTab, mergedRows);
         return next;
@@ -214,7 +328,7 @@ export default function DealStopOrders() {
     } catch (error) {
       toast.error(`Không lấy được dữ liệu Đơn Hàng: ${error.message}`);
     }
-  }, [activeTab, config, hiddenCodes]);
+  }, [activeTab, actualQtyByCode, config, hiddenCodes]);
 
   React.useEffect(() => {
     loadSourceRows();
@@ -223,6 +337,20 @@ export default function DealStopOrders() {
   const rows = React.useMemo(
     () => rowsByTab[activeTab] || [],
     [rowsByTab, activeTab]
+  );
+  const orderLookupByCode = React.useMemo(
+    () => Object.fromEntries(sourceRows.map(row => [
+      normalizeCode(row.ma),
+      {
+        ...row,
+        slThucDat: getRowActualQty(row, actualQtyByCode)
+      }
+    ])),
+    [actualQtyByCode, sourceRows]
+  );
+  const actualQtyImportCount = React.useMemo(
+    () => Object.keys(actualQtyByCode || {}).length,
+    [actualQtyByCode]
   );
 
   const {
@@ -246,7 +374,7 @@ export default function DealStopOrders() {
     setGroupExpanded(current => {
       const next = {};
       staffList.forEach(staff => {
-        next[staff.prefix] = typeof current[staff.prefix] === 'undefined' ? true : current[staff.prefix];
+        next[staff.prefix] = typeof current[staff.prefix] === 'undefined' ? false : current[staff.prefix];
       });
       return next;
     });
@@ -260,6 +388,69 @@ export default function DealStopOrders() {
       return next;
     });
   }, [activeTab]);
+
+  const applyActualQtyByCode = React.useCallback((nextActualQtyByCode) => {
+    setActualQtyByCode(nextActualQtyByCode);
+    saveDealStopActualQtyByCode(nextActualQtyByCode);
+
+    setRowsByTab(current => {
+      const currentRows = current[activeTab] || [];
+      const nextRows = sourceRows.length
+        ? mergeSourceRowsWithLocal(sourceRows, currentRows, hiddenCodes, config, nextActualQtyByCode)
+        : currentRows.map(row => {
+            const code = normalizeCode(row.ma);
+            if (!hasImportedActualQty(nextActualQtyByCode, code)) {
+              return recalculateRow(row, config);
+            }
+
+            return recalculateRow({
+              ...row,
+              slThucDat: toSafeNumber(nextActualQtyByCode[code])
+            }, config);
+          });
+
+      const next = { ...current, [activeTab]: nextRows };
+      saveRowsByTab(activeTab, nextRows);
+      return next;
+    });
+  }, [activeTab, config, hiddenCodes, sourceRows]);
+
+  const importActualQtyFile = React.useCallback(async (file) => {
+    if (!file || importingActualQty) return;
+    setImportingActualQty(true);
+
+    try {
+      const nextActualQtyByCode = await readActualQtyImportFile(file);
+      const importedCount = Object.keys(nextActualQtyByCode).length;
+      if (!importedCount) {
+        toast.error('File không có dòng hợp lệ. Cần 2 cột: mã SP và số lượng thực đặt.');
+        return;
+      }
+
+      applyActualQtyByCode(nextActualQtyByCode);
+      toast.success(`Đã import SL Thực Đặt cho ${importedCount.toLocaleString('vi-VN')} mã SP`);
+    } catch (error) {
+      toast.error(`Import SL Thực Đặt lỗi: ${error.message}`);
+    } finally {
+      setImportingActualQty(false);
+    }
+  }, [applyActualQtyByCode, importingActualQty]);
+
+  const clearActualQtyImport = React.useCallback(() => {
+    applyActualQtyByCode({});
+    toast.success('Đã xóa dữ liệu import SL Thực Đặt');
+  }, [applyActualQtyByCode]);
+
+  const handleDirectInputChange = React.useCallback((rowId, columnId, nextValue) => {
+    updateRows(currentRows => currentRows.map(row => (
+      row.id !== rowId
+        ? row
+        : recalculateRow({
+            ...row,
+            [columnId]: String(nextValue ?? '')
+          }, config)
+    )));
+  }, [config, updateRows]);
 
   const startEdit = (rowId, columnId, currentValue) => {
     setEditingCell({ rowId, columnId });
@@ -277,7 +468,9 @@ export default function DealStopOrders() {
       if (row.id !== editingCell.rowId) return row;
 
       let nextValue = editValue;
-      if (NUMERIC_COLUMNS.includes(editingCell.columnId)) {
+      if (DIRECT_INPUT_COLUMNS.has(editingCell.columnId)) {
+        nextValue = String(editValue ?? '');
+      } else if (NUMERIC_COLUMNS.includes(editingCell.columnId)) {
         nextValue = toSafeNumber(editValue);
       } else if (editingCell.columnId === 'tiLeHoan') {
         nextValue = parsePercentInput(editValue);
@@ -425,14 +618,6 @@ export default function DealStopOrders() {
 
   return (
     <div id="page-deal-stop-orders">
-      <div className="deal-page-header">
-        <div>
-          <div className="deal-page-title">Đóng Deal Dừng Order</div>
-          <div className="deal-page-subtitle">Năm 2026</div>
-        </div>
-        <div className="deal-page-date">{formatDate(new Date())}</div>
-      </div>
-
       <StatsCards stats={stats} />
 
       <div className="deal-toolbar-card">
@@ -451,6 +636,38 @@ export default function DealStopOrders() {
         <button type="button" className="deal-btn deal-btn-ghost" onClick={() => setAddOrderOpen(true)}>
           Thêm mã mới
         </button>
+        <button
+          type="button"
+          className="deal-btn deal-btn-ghost"
+          onClick={() => actualQtyInputRef.current?.click()}
+          disabled={importingActualQty}
+          title="File Excel/CSV 2 cột: mã SP và số lượng thực đặt"
+        >
+          {importingActualQty ? 'Đang import SL TĐ' : 'Import SL TĐ'}
+        </button>
+        <input
+          ref={actualQtyInputRef}
+          type="file"
+          accept=".xlsx,.xls,.csv,text/csv"
+          disabled={importingActualQty}
+          style={{ display: 'none' }}
+          onChange={event => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            importActualQtyFile(file);
+          }}
+        />
+        {actualQtyImportCount > 0 ? (
+          <button
+            type="button"
+            className="deal-btn deal-btn-ghost"
+            onClick={clearActualQtyImport}
+            disabled={importingActualQty}
+            title="Xóa dữ liệu import và quay lại SL Thực Đặt từ Đặt Hàng"
+          >
+            Xóa SL TĐ ({actualQtyImportCount.toLocaleString('vi-VN')})
+          </button>
+        ) : null}
         <button type="button" className="deal-btn deal-btn-ghost" onClick={handleRefreshFilters}>
           Làm mới
         </button>
@@ -473,6 +690,7 @@ export default function DealStopOrders() {
         colorRules={colorRules}
         summary={filteredSummary}
         onDeleteRow={handleDeleteRow}
+        onDirectInputChange={handleDirectInputChange}
       />
 
       <ChuaCoSettings
@@ -493,6 +711,7 @@ export default function DealStopOrders() {
         open={addOrderOpen}
         staffList={staffList}
         config={config}
+        orderLookupByCode={orderLookupByCode}
         onClose={() => setAddOrderOpen(false)}
         onAdd={handleAddOrder}
       />

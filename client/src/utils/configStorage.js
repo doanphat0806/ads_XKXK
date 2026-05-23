@@ -8,7 +8,9 @@ const STORAGE_KEYS = {
   chuaCoConfig: 'chuaCoConfig',
   colVisibility: 'colVisibility',
   staffList: 'dealStopOrderStaffList',
-  hiddenCodes: 'dealStopOrderHiddenCodes'
+  hiddenCodes: 'dealStopOrderHiddenCodes',
+  actualQtyByCode: 'dealStopOrderActualQtyByCode',
+  dataVersion: 'dealStopOrderDataVersion'
 };
 
 function safeParse(raw, fallback) {
@@ -75,6 +77,23 @@ export function loadHiddenCodes() {
 
 export function saveHiddenCodes(codes) {
   writeJson(STORAGE_KEYS.hiddenCodes, codes);
+}
+
+export function loadDealStopActualQtyByCode() {
+  const stored = readJson(STORAGE_KEYS.actualQtyByCode, {});
+  return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+}
+
+export function saveDealStopActualQtyByCode(qtyByCode) {
+  writeJson(STORAGE_KEYS.actualQtyByCode, qtyByCode && typeof qtyByCode === 'object' ? qtyByCode : {});
+}
+
+export function loadDealStopDataVersion() {
+  return Number(readJson(STORAGE_KEYS.dataVersion, 1) || 1);
+}
+
+export function saveDealStopDataVersion(version) {
+  writeJson(STORAGE_KEYS.dataVersion, version);
 }
 
 export { STORAGE_KEYS };

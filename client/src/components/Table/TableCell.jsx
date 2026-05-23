@@ -1,4 +1,5 @@
 import React from 'react';
+import toast from 'react-hot-toast';
 import ColorCell from './ColorCell';
 import { formatCurrency, formatInt, formatPercent } from '../../utils/formatters';
 
@@ -37,11 +38,13 @@ function CellInner({
   onEditKeyDown,
   onEditBlur,
   colorRules,
-  onDeleteRow
+  onDeleteRow,
+  onDirectInputChange
 }) {
   const { id, type, sticky, align } = column;
   const classes = [`align-${align || 'left'}`];
   if (sticky) classes.push('is-sticky-col');
+  const isDirectInputColumn = ['orderSizeS', 'orderSizeM', 'orderSizeL', 'orderSizeXL', 'orderSizeFZ'].includes(id);
 
   if (type === 'action') {
     return (
@@ -54,37 +57,88 @@ function CellInner({
   }
 
   let toneClass = '';
+  if (id === 'ma' && Number(row.tiLeHoan || 0) >= 0.39) toneClass = 'tone-danger-strong';
   if (id === 'slCanDatThem') toneClass = colorRules.getSLCanDatThemColor(value);
   if (id === 'tiLeDat') toneClass = colorRules.getTiLeDatColor(value);
   if (id === 'tiLeHoan') toneClass = colorRules.getTiLeHoanColor(value);
   if (id === 'tiLeShip') toneClass = colorRules.getTiLeShipColor(value);
 
+  const isCodeColumn = id === 'ma';
   const editable = column.editable;
+  const isNoteColumn = id === 'ghiChu';
   const noteDot = id === 'ghiChu' && String(value || '').trim();
   const displayValue = renderDisplayValue(value, type);
+
+  if (isDirectInputColumn) {
+    return (
+      <td className={classes.join(' ')} style={{ width: column.width, minWidth: column.width }}>
+        <input
+          className="deal-inline-grid-input"
+          value={value === '' || value === null || value === undefined ? '' : String(value)}
+          onChange={event => onDirectInputChange?.(row.id, id, event.target.value.replace(/[^\d]/g, ''))}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+        />
+      </td>
+    );
+  }
+
+  const handleCellClick = async () => {
+    if (isCodeColumn) {
+      const text = String(value || '').trim();
+      if (!text) return;
+
+      try {
+        await navigator.clipboard.writeText(text);
+        toast.success(`Đã copy mã ${text}`);
+      } catch {
+        toast.error('Không copy được mã');
+      }
+      return;
+    }
+
+    if (editable) {
+      onStartEdit(row.id, id, value);
+    }
+  };
 
   return (
     <td className={classes.join(' ')} style={{ width: column.width, minWidth: column.width }}>
       {isEditing ? (
-        <input
-          autoFocus
-          className="deal-inline-input"
-          value={editValue}
-          onChange={event => onEditChange(event.target.value)}
-          onKeyDown={onEditKeyDown}
-          onBlur={onEditBlur}
-        />
+        isNoteColumn ? (
+          <textarea
+            autoFocus
+            className="deal-inline-textarea"
+            value={editValue}
+            onChange={event => onEditChange(event.target.value)}
+            onKeyDown={onEditKeyDown}
+            onBlur={onEditBlur}
+            rows={2}
+          />
+        ) : (
+          <input
+            autoFocus
+            className="deal-inline-input"
+            value={editValue}
+            onChange={event => onEditChange(event.target.value)}
+            onKeyDown={onEditKeyDown}
+            onBlur={onEditBlur}
+          />
+        )
       ) : (
         <button
           type="button"
-          className={`deal-cell-button ${editable ? 'is-editable' : ''}`}
-          onClick={editable ? () => onStartEdit(row.id, id, value) : undefined}
+          className={`deal-cell-button ${editable ? 'is-editable' : ''} ${isCodeColumn ? 'is-copyable' : ''}`.trim()}
+          onClick={editable || isCodeColumn ? handleCellClick : undefined}
         >
           {noteDot ? <span className="deal-note-dot" /> : null}
           {toneClass ? (
             <ColorCell className={toneClass}>{buildSearchMarkup(displayValue, id === 'ma' || id === 'ghiChu' ? searchTerm : '')}</ColorCell>
           ) : (
-            <span className="deal-cell-content">{buildSearchMarkup(displayValue, id === 'ma' || id === 'ghiChu' ? searchTerm : '')}</span>
+            <span className={`deal-cell-content ${isNoteColumn ? 'is-note' : ''}`.trim()}>
+              {buildSearchMarkup(displayValue, id === 'ma' || id === 'ghiChu' ? searchTerm : '')}
+            </span>
           )}
           {editable ? <span className="deal-edit-icon">✏️</span> : null}
         </button>

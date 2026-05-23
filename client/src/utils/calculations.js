@@ -65,10 +65,26 @@ export function calcSLChenh(slKhachDat, slThucDat) {
 }
 
 export function recalculateRow(row, config = DEFAULT_CONFIG) {
+  const normalizeManualSize = (value) => {
+    if (value === '' || value === null || value === undefined) return '';
+    return toSafeNumber(value);
+  };
+
+  const manualOrderSizeS = normalizeManualSize(row.orderSizeS);
+  const manualOrderSizeM = normalizeManualSize(row.orderSizeM);
+  const manualOrderSizeL = normalizeManualSize(row.orderSizeL);
+  const manualOrderSizeXL = normalizeManualSize(row.orderSizeXL);
+  const manualOrderSizeFZ = normalizeManualSize(row.orderSizeFZ);
+
   const normalized = {
     ...row,
     slKhachDat: toSafeNumber(row.slKhachDat),
     slThucDat: toSafeNumber(row.slThucDat),
+    orderSizeS: manualOrderSizeS,
+    orderSizeM: manualOrderSizeM,
+    orderSizeL: manualOrderSizeL,
+    orderSizeXL: manualOrderSizeXL,
+    orderSizeFZ: manualOrderSizeFZ,
     tiLeHoan: clampPercent(toSafeNumber(row.tiLeHoan)),
     daNhan: toSafeNumber(row.daNhan),
     dangHoan: toSafeNumber(row.dangHoan),

@@ -4376,6 +4376,11 @@
       font-weight: 800;
     }
 
+    #page-return-summary .return-ship-warn {
+      color: var(--r);
+      font-weight: 800;
+    }
+
     #page-orders {
       min-width: 0;
     }
@@ -5505,16 +5510,16 @@
     #page-deal-stop-orders .deal-stats-grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 16px;
+      gap: 8px;
+      margin-bottom: 10px;
     }
 
     #page-deal-stop-orders .deal-stat-card {
       background: #fff;
-      border-radius: 18px;
-      padding: 16px 18px;
-      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
-      border-left: 4px solid transparent;
+      border-radius: 14px;
+      padding: 10px 12px;
+      box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+      border-left: 3px solid transparent;
     }
 
     #page-deal-stop-orders .deal-stat-card.accent-blue { border-left-color: #2563eb; }
@@ -5523,39 +5528,40 @@
     #page-deal-stop-orders .deal-stat-card.accent-purple { border-left-color: #7c3aed; }
 
     #page-deal-stop-orders .deal-stat-label {
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
       color: #475569;
     }
 
     #page-deal-stop-orders .deal-stat-value {
-      margin-top: 10px;
-      font-size: 24px;
+      margin-top: 6px;
+      font-size: 18px;
       font-weight: 800;
       color: #0f172a;
+      line-height: 1.15;
     }
 
     #page-deal-stop-orders .deal-toolbar-card {
       display: grid;
-      grid-template-columns: minmax(260px, 1fr) repeat(5, auto);
-      gap: 10px;
+      grid-template-columns: minmax(260px, 1fr) repeat(8, auto);
+      gap: 8px;
       align-items: center;
-      margin-bottom: 16px;
-      padding: 16px;
+      margin-bottom: 10px;
+      padding: 10px 12px;
       background: rgba(255, 255, 255, 0.92);
       border: 1px solid #dbe4ef;
-      border-radius: 20px;
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+      border-radius: 16px;
+      box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
       backdrop-filter: blur(10px);
     }
 
     #page-deal-stop-orders .deal-search-bar {
       display: flex;
       align-items: center;
-      gap: 10px;
-      min-height: 42px;
-      padding: 0 14px;
-      border-radius: 14px;
+      gap: 8px;
+      min-height: 36px;
+      padding: 0 12px;
+      border-radius: 12px;
       border: 1px solid #cbd5e1;
       background: #fff;
     }
@@ -5567,18 +5573,18 @@
       background: transparent;
       color: #0f172a;
       font-family: var(--display);
-      font-size: 14px;
+      font-size: 13px;
     }
 
     #page-deal-stop-orders .deal-btn {
-      min-height: 40px;
+      min-height: 36px;
       border: 1px solid #cbd5e1;
-      border-radius: 12px;
-      padding: 0 14px;
+      border-radius: 10px;
+      padding: 0 12px;
       background: #fff;
       color: #0f172a;
       font-family: var(--display);
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
       cursor: pointer;
       white-space: nowrap;
@@ -5658,13 +5664,13 @@
       border-collapse: separate;
       border-spacing: 0;
       table-layout: fixed;
-      font-size: 12px;
+      font-size: 11px;
     }
 
     #page-deal-stop-orders .deal-table th,
     #page-deal-stop-orders .deal-table td {
-      height: 34px;
-      padding: 4px 8px;
+      height: 28px;
+      padding: 2px 5px;
       border-right: 1px solid #e5e7eb;
       border-bottom: 1px solid #e5e7eb;
       background: inherit;
@@ -5676,35 +5682,46 @@
       top: 0;
       z-index: 6;
       height: 30px;
+      padding-top: 0;
+      padding-bottom: 0;
       color: #fff;
       font-size: 11px;
       font-weight: 700;
+      line-height: 30px;
       letter-spacing: 0.08em;
       text-transform: uppercase;
+      white-space: normal;
     }
 
     #page-deal-stop-orders .deal-header-columns th {
       position: sticky;
       top: 30px;
       z-index: 5;
-      height: 38px;
+      height: 32px;
+      padding-top: 0;
+      padding-bottom: 0;
       background: #1f2937;
       color: #fff;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 600;
       cursor: pointer;
     }
 
-    #page-deal-stop-orders .group-cyan { background: #0891b2; }
-    #page-deal-stop-orders .group-orange { background: #ea580c; }
-    #page-deal-stop-orders .group-green { background: #16a34a; }
-    #page-deal-stop-orders .group-purple { background: #7c3aed; }
+    #page-deal-stop-orders .deal-header-groups th.group-cyan { background: #0891b2; }
+    #page-deal-stop-orders .deal-header-groups th.group-orange { background: #ea580c; }
+    #page-deal-stop-orders .deal-header-groups th.group-green { background: #16a34a; }
+    #page-deal-stop-orders .deal-header-groups th.group-purple { background: #7c3aed; }
 
     #page-deal-stop-orders .deal-header-cell {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 6px;
+      justify-content: center;
+      min-height: 32px;
+      gap: 4px;
+      line-height: 1.15;
+      white-space: normal;
+      word-break: break-word;
+      text-align: center;
     }
 
     #page-deal-stop-orders .deal-sort-icon {
@@ -5796,19 +5813,24 @@
     #page-deal-stop-orders .deal-cell-button {
       display: flex;
       align-items: center;
+      justify-content: center;
       gap: 6px;
       width: 100%;
-      min-height: 26px;
+      min-height: 20px;
       padding: 0;
       border: 0;
       background: transparent;
       color: inherit;
-      text-align: inherit;
+      text-align: center;
       cursor: default;
     }
 
     #page-deal-stop-orders .deal-cell-button.is-editable {
       cursor: pointer;
+    }
+
+    #page-deal-stop-orders .deal-cell-button.is-copyable {
+      cursor: copy;
     }
 
     #page-deal-stop-orders .deal-edit-icon {
@@ -5822,14 +5844,14 @@
     }
 
     #page-deal-stop-orders .deal-delete-btn {
-      min-height: 28px;
-      padding: 0 10px;
+      min-height: 24px;
+      padding: 0 8px;
       border: 1px solid #fecaca;
       border-radius: 999px;
       background: #fff1f2;
       color: #dc2626;
       font-family: var(--display);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       cursor: pointer;
     }
@@ -5855,6 +5877,35 @@
       outline: none;
     }
 
+    #page-deal-stop-orders .deal-inline-textarea {
+      width: 100%;
+      min-height: 42px;
+      padding: 6px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      background: #fff;
+      font-family: var(--display);
+      font-size: 12px;
+      color: #0f172a;
+      outline: none;
+      resize: vertical;
+      line-height: 1.35;
+    }
+
+    #page-deal-stop-orders .deal-inline-grid-input {
+      width: 100%;
+      min-height: 24px;
+      padding: 0 6px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      background: #fff;
+      font-family: var(--display);
+      font-size: 11px;
+      color: #0f172a;
+      outline: none;
+      text-align: center;
+    }
+
     #page-deal-stop-orders .deal-note-dot {
       width: 8px;
       height: 8px;
@@ -5865,17 +5916,29 @@
 
     #page-deal-stop-orders .deal-cell-content,
     #page-deal-stop-orders .deal-tone-pill {
+      display: block;
+      width: 100%;
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
+      line-height: 1.15;
+      word-break: break-word;
+      text-align: center;
+    }
+
+    #page-deal-stop-orders .deal-cell-content.is-note {
+      white-space: pre-wrap;
+      line-height: 1.3;
     }
 
     #page-deal-stop-orders .deal-tone-pill {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       max-width: 100%;
-      min-height: 24px;
-      padding: 0 8px;
+      min-height: 20px;
+      padding: 1px 6px;
       border-radius: 8px;
     }
 
@@ -5908,9 +5971,9 @@
       box-shadow: 8px 0 18px rgba(15, 23, 42, 0.08);
     }
 
-    #page-deal-stop-orders .align-left { text-align: left; }
+    #page-deal-stop-orders .align-left { text-align: center; }
     #page-deal-stop-orders .align-center { text-align: center; }
-    #page-deal-stop-orders .align-right { text-align: right; }
+    #page-deal-stop-orders .align-right { text-align: center; }
 
     #page-deal-stop-orders mark {
       padding: 0 2px;
@@ -6096,6 +6159,10 @@
       gap: 12px;
     }
 
+    .deal-add-order-grid-compact {
+      grid-template-columns: 1fr;
+    }
+
     .deal-form-field {
       display: grid;
       gap: 6px;
@@ -6112,6 +6179,63 @@
       font-size: 12px;
       font-weight: 500;
       color: #64748b;
+    }
+
+    .deal-inline-note {
+      font-size: 13px;
+      font-weight: 600;
+      color: #64748b;
+    }
+
+    .deal-order-preview {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid #dbe4ef;
+      border-radius: 16px;
+      background: #f8fbff;
+    }
+
+    .deal-order-preview-item {
+      font-size: 13px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .deal-size-section {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid #dbe4ef;
+      border-radius: 16px;
+      background: #ffffff;
+    }
+
+    .deal-size-section-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .deal-size-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .deal-size-readonly {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 10px;
+      border: 1px solid #dbe4ef;
+      border-radius: 12px;
+      background: #f8fbff;
+      font-size: 13px;
+      font-weight: 700;
+      color: #0f172a;
     }
 
     @media (max-width: 1200px) {
@@ -6141,6 +6265,14 @@
 
       .deal-add-order-grid {
         grid-template-columns: 1fr;
+      }
+
+      .deal-order-preview {
+        grid-template-columns: 1fr;
+      }
+
+      .deal-size-grid {
+        grid-template-columns: 1fr 1fr;
       }
 
     }

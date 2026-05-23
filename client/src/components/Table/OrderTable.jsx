@@ -47,7 +47,8 @@ export default function OrderTable({
   searchTerm,
   colorRules,
   summary,
-  onDeleteRow
+  onDeleteRow,
+  onDirectInputChange
 }) {
   const useVirtual = groupedRows.reduce((count, group) => count + group.rows.length, 0) > 80;
   const scrollRef = React.useRef(null);
@@ -108,6 +109,7 @@ export default function OrderTable({
               onEditBlur={onEditBlur}
               colorRules={colorRules}
               onDeleteRow={onDeleteRow}
+              onDirectInputChange={onDirectInputChange}
             />
           );
         })}

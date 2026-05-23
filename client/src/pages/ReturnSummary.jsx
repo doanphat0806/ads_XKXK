@@ -6,6 +6,7 @@ import { api, formatNumber, formatVND } from '../lib/api';
 const EMPTY_ARRAY = [];
 const BUCKET_KEYS = ['san', 'sale', 'sale119', 'od'];
 const CPO_WARNING_LIMIT = 120000;
+const SHIP_RATE_WARNING_LIMIT = 0.95;
 const PRODUCT_RETURN_RATE_BOXES = [
   { key: 'total', label: 'Tổng' },
   { key: 'sale', label: 'Sale' },
@@ -46,6 +47,11 @@ function formatCpo(value) {
 
 function getCpoClassName(value) {
   return `text-right mono-sm${Number(value || 0) > CPO_WARNING_LIMIT ? ' return-cpo-warn' : ''}`;
+}
+
+function getShipRateClassName(value, orderCount, baseClassName = 'text-right mono-sm') {
+  const isLowShipRate = Number(orderCount || 0) > 0 && Number(value || 0) < SHIP_RATE_WARNING_LIMIT;
+  return `${baseClassName}${isLowShipRate ? ' return-ship-warn' : ''}`;
 }
 
 export default function ReturnSummary() {
@@ -111,7 +117,7 @@ export default function ReturnSummary() {
         </div>
         <div className="stat teal">
           <div className="stat-label">Tỉ lệ ship</div>
-          <div className="stat-value">{formatPercent(total.shipRate || 0)}</div>
+          <div className={getShipRateClassName(total.shipRate, total.orderCount, 'stat-value')}>{formatPercent(total.shipRate || 0)}</div>
           <div className="stat-sub">
             {formatNumber(total.shippedOrderCount || 0)} / {formatNumber(total.orderCount || 0)}
           </div>
@@ -185,7 +191,7 @@ export default function ReturnSummary() {
                       {formatNumber(row.returnCount || 0)} / {formatNumber(row.returnDenominator || 0)}
                     </td>
                     <td className="text-right mono-sm">{formatPercent(row.returnRate || 0)}</td>
-                    <td className="text-right mono-sm">{formatPercent(row.shipRate || 0)}</td>
+                    <td className={getShipRateClassName(row.shipRate, row.orderCount)}>{formatPercent(row.shipRate || 0)}</td>
                     <td className="text-right mono-sm">{formatVND(row.amount || 0)}</td>
                     <td className={getCpoClassName(row.costPerOrder)}>{formatCpo(row.costPerOrder)}</td>
                   </tr>
@@ -281,7 +287,7 @@ export default function ReturnSummary() {
                       );
                     })}
                     <td className="text-right mono-sm">{formatNumber(row.total?.orderCount || 0)}</td>
-                    <td className="text-right mono-sm">{formatPercent(row.total?.shipRate || 0)}</td>
+                    <td className={getShipRateClassName(row.total?.shipRate, row.total?.orderCount)}>{formatPercent(row.total?.shipRate || 0)}</td>
                     <td className="text-right mono-sm">{formatVND(row.total?.amount || 0)}</td>
                     <td className={getCpoClassName(row.total?.costPerOrder)}>{formatCpo(row.total?.costPerOrder)}</td>
                   </tr>

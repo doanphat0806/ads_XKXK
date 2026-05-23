@@ -91,10 +91,7 @@ export function useOrderTable({
     getSortedRowModel: getSortedRowModel()
   });
 
-  const sortedRows = useMemo(
-    () => table.getRowModel().rows.map(row => row.original),
-    [table]
-  );
+  const sortedRows = table.getRowModel().rows.map(row => row.original);
 
   const groupedRows = useMemo(() => {
     const groups = staffList.map(staff => ({

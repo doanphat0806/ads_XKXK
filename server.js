@@ -155,6 +155,7 @@ const {
   getOrderItemsFromRaw,
   getOrderItemSku,
   getOrderItemQuantity,
+  getOrderTagText,
   useSheetOrders,
   normalizeSkuKey,
   normalizeStatusKey,
@@ -2014,9 +2015,24 @@ function getCampaignSkuCandidates(campaignName) {
   const compactName = rawName.replace(/\s+/g, '');
   const firstNineChars = rawName.slice(0, 9).replace(/\s+/g, '');
   const firstToken = rawName.split(/\s+/)[0]?.replace(/\s+/g, '') || '';
+  const tokenMatches = rawName.match(/[A-Z]{1,3}\d{5,}/g) || [];
+  const compactMatches = compactName.match(/[A-Z]{1,3}\d{5,}/g) || [];
 
-  return [...new Set([firstNineChars, firstToken, compactName].filter(Boolean))]
-    .map(code => `MS${code}`);
+  return [...new Set([
+    firstNineChars,
+    firstToken,
+    compactName,
+    ...tokenMatches,
+    ...compactMatches
+  ].filter(Boolean))]
+    .flatMap(code => {
+      const normalized = String(code).replace(/\s+/g, '');
+      if (!normalized) return [];
+      if (normalized.startsWith('MS')) {
+        return [normalized, normalized.slice(2)].filter(Boolean);
+      }
+      return [`MS${normalized}`, normalized];
+    });
 }
 
 function getOrderCountForCampaignName(campaignName, skuCounts = {}) {
@@ -8465,12 +8481,24 @@ function isDealStopUnshippedOrder(order = {}) {
     status.includes('cho hang');
 }
 
-function getSkuCodeCandidates(value = '') {
+function normalizeDealStopCode(value = '') {
   const normalized = normalizeSkuKey(value);
+  if (!normalized) return '';
+
+  const compact = normalized.replace(/\s+/g, '');
+  if (compact.startsWith('MS') && compact.length > 2) {
+    return compact.slice(2);
+  }
+
+  return compact;
+}
+
+function getSkuCodeCandidates(value = '') {
+  const normalized = normalizeDealStopCode(value);
   if (!normalized) return [];
 
-  const base = normalized.startsWith('MS') ? normalized.slice(2) : normalized;
-  const withMs = normalized.startsWith('MS') ? normalized : `MS${normalized}`;
+  const base = normalized;
+  const withMs = `MS${normalized}`;
 
   return [...new Set([normalized, base, withMs].filter(Boolean))];
 }
@@ -8503,7 +8531,7 @@ function buildSkuCpoByCode(codes = [], skuCounts = {}, campaignRows = []) {
   const result = {};
 
   codes.forEach(code => {
-    const normalizedCode = normalizeSkuKey(code);
+    const normalizedCode = normalizeDealStopCode(code);
     if (!normalizedCode) return;
 
     const candidates = getSkuCodeCandidates(normalizedCode);
@@ -8533,15 +8561,126 @@ function buildSkuCpoByCode(codes = [], skuCounts = {}, campaignRows = []) {
   return result;
 }
 
+function parseDealStopManualQty(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  const match = text.match(/\d+(?:[.,]\d+)?/);
+  if (!match) return 0;
+  const parsed = Number(match[0].replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function buildPurchasePlacedQtyByCode() {
+  const dataPurchaseSheetId = process.env.DATA_PURCHASE_ORDERS_SHEET_ID || '1Btx1zA2X19t0Ta7hZzTfBu8PJypMf8Extoe4s9qk7MM';
+  const dataPurchaseSheetName = process.env.DATA_PURCHASE_ORDERS_SHEET_NAME || 'Data';
+
+  const groupedRows = await DataPurchaseOrder.aggregate([
+    {
+      $match: {
+        sourceId: dataPurchaseSheetId,
+        sourceName: dataPurchaseSheetName,
+        col3: { $nin: ['', null] }
+      }
+    },
+    { $sort: { rowNumber: 1 } },
+    {
+      $group: {
+        _id: '$col3',
+        orderId: { $last: '$col3' },
+        skuRaw: { $last: '$col4' },
+        quantityRaw: { $last: '$productQuantity' }
+      }
+    }
+  ]).allowDiskUse(true);
+
+  const orderIds = groupedRows.map(row => String(row.orderId || '').trim()).filter(Boolean);
+  const manualRows = orderIds.length
+    ? await PurchaseOrder.find({
+        sourceId: dataPurchaseSheetId,
+        sourceName: dataPurchaseSheetName,
+        orderId: { $in: orderIds }
+      })
+        .select('orderId skuManual receivedQuantity')
+        .lean()
+    : [];
+
+  const manualByOrderId = new Map(
+    manualRows.map(row => [String(row.orderId || '').trim(), row])
+  );
+  const qtyByCode = {};
+
+  groupedRows.forEach(row => {
+    const manual = manualByOrderId.get(String(row.orderId || '').trim()) || {};
+    const code = normalizeDealStopCode(manual.skuManual || row.skuRaw);
+    if (!code) return;
+
+    const qty = parseDealStopManualQty(row.quantityRaw);
+    if (qty <= 0) return;
+
+    qtyByCode[code] = Number(qtyByCode[code] || 0) + qty;
+  });
+
+  return qtyByCode;
+}
+
 function buildDealStopRows(orderRows = [], campaignRows = []) {
   const rowsByCode = {};
+
+  const getOrderSortKey = (order = {}) => ({
+    time: Number.isFinite(new Date(order.createdAt || 0).getTime()) ? new Date(order.createdAt || 0).getTime() : Number.MAX_SAFE_INTEGER,
+    rowNumber: Number(order.rawData?.rowNumber || 0) || Number.MAX_SAFE_INTEGER
+  });
+
+  const isEarlierOrder = (nextOrder = {}, currentMeta = {}) => {
+    const nextKey = getOrderSortKey(nextOrder);
+    const currentKey = {
+      time: Number(currentMeta.time || Number.MAX_SAFE_INTEGER),
+      rowNumber: Number(currentMeta.rowNumber || Number.MAX_SAFE_INTEGER)
+    };
+
+    if (nextKey.time !== currentKey.time) return nextKey.time < currentKey.time;
+    return nextKey.rowNumber < currentKey.rowNumber;
+  };
+
+  const hasAllowedFirstTag = (order = {}) => {
+    const normalizedTag = String(getOrderTagText(order) || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[đĐ]/g, 'd')
+      .toLowerCase()
+      .replace(/[^a-z0-9+]+/g, ' ')
+      .trim();
+
+    if (!normalizedTag) return true;
+    return normalizedTag.includes('oder') || normalizedTag.includes('order');
+  };
+
+  const getSizeFieldKey = (item = {}) => {
+    const raw = [
+      item.size,
+      item.variation_value,
+      item.variation_info?.detail,
+      item.variation_info?.name
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toUpperCase();
+
+    if (!raw) return '';
+    if (/(^|[^A-Z])FZ([^A-Z]|$)|FREE|FREESIZE/.test(raw)) return 'orderSizeFZ';
+    if (/(^|[^A-Z])XL([^A-Z]|$)/.test(raw)) return 'sizeXL';
+    if (/(^|[^A-Z])L([^A-Z]|$)/.test(raw)) return 'sizeL';
+    if (/(^|[^A-Z])M([^A-Z]|$)/.test(raw)) return 'sizeM';
+    if (/(^|[^A-Z])S([^A-Z]|$)/.test(raw)) return 'sizeS';
+    return '';
+  };
 
   orderRows.forEach(order => {
     const returnStatus = classifyReturnStatus(order);
     const shipped = !isDealStopUnshippedOrder(order);
 
     getOrderItemsFromRaw(order.rawData || {}).forEach(item => {
-      const code = normalizeSkuKey(getOrderItemSku(item));
+      const code = normalizeDealStopCode(getOrderItemSku(item));
       const quantity = getOrderItemQuantity(item);
       if (!code || quantity <= 0) return;
 
@@ -8555,6 +8694,11 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
           slKhachDat: 0,
           slThucDat: 0,
           slCanDatThem: 0,
+          orderSizeS: '',
+          orderSizeM: '',
+          orderSizeL: '',
+          orderSizeXL: '',
+          orderSizeFZ: '',
           sizeS: '',
           sizeM: '',
           sizeL: '',
@@ -8567,7 +8711,16 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
           daHoan: 0,
           dangGuiHang: 0,
           tongDaShip: 0,
-          tiLeShip: 0
+          tiLeShip: 0,
+          _sizeBuckets: {
+            sizeS: 0,
+            sizeM: 0,
+            sizeL: 0,
+            sizeXL: 0,
+            orderSizeFZ: 0
+          },
+          _firstOrderMeta: null,
+          _firstOrderAllowed: false
         };
       }
 
@@ -8577,6 +8730,17 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
       if (returnStatus === 'received') row.daNhan += quantity;
       if (returnStatus === 'returning') row.dangHoan += quantity;
       if (returnStatus === 'returned') row.daHoan += quantity;
+      if (shipped && !returnStatus) row.dangGuiHang += quantity;
+
+      const sizeFieldKey = getSizeFieldKey(item);
+      if (sizeFieldKey) {
+        row._sizeBuckets[sizeFieldKey] += quantity;
+      }
+
+      if (!row._firstOrderMeta || isEarlierOrder(order, row._firstOrderMeta)) {
+        row._firstOrderMeta = getOrderSortKey(order);
+        row._firstOrderAllowed = hasAllowedFirstTag(order);
+      }
     });
   });
 
@@ -8584,18 +8748,37 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
   const cpoByCode = buildSkuCpoByCode(Object.keys(rowsByCode), skuStats.counts || {}, campaignRows);
 
   return Object.values(rowsByCode)
+    .filter(row => row._firstOrderAllowed === true)
+    .filter(row => Number(row.slKhachDat || 0) >= 2)
     .map(row => {
       const returnDenominator = row.daNhan + row.dangHoan + row.daHoan;
       const cpoMeta = cpoByCode[row.ma] || {};
+      const sizeBuckets = row._sizeBuckets || {};
+      const { _sizeBuckets, _firstOrderMeta, _firstOrderAllowed, ...cleanRow } = row;
 
       return {
-        ...row,
+        ...cleanRow,
+        firstOrderTime: Number(row._firstOrderMeta?.time || 0),
         cpo: Number(cpoMeta.cpo || 0),
+        orderSizeS: '',
+        orderSizeM: '',
+        orderSizeL: '',
+        orderSizeXL: '',
+        orderSizeFZ: '',
+        sizeS: sizeBuckets.sizeS > 0 ? String(sizeBuckets.sizeS) : '',
+        sizeM: sizeBuckets.sizeM > 0 ? String(sizeBuckets.sizeM) : '',
+        sizeL: sizeBuckets.sizeL > 0 ? String(sizeBuckets.sizeL) : '',
+        sizeXL: sizeBuckets.sizeXL > 0 ? String(sizeBuckets.sizeXL) : '',
         tiLeHoan: returnDenominator > 0 ? (row.dangHoan + row.daHoan) / returnDenominator : 0,
         tiLeShip: row.slKhachDat > 0 ? row.tongDaShip / row.slKhachDat : 0
       };
     })
-    .sort((a, b) => a.ma.localeCompare(b.ma));
+    .sort((a, b) => {
+      const timeA = Number(a.firstOrderTime || 0);
+      const timeB = Number(b.firstOrderTime || 0);
+      if (timeA !== timeB) return timeA - timeB;
+      return a.ma.localeCompare(b.ma);
+    });
 }
 
 app.get('/api/return-summary', async (req, res) => {
@@ -8748,7 +8931,7 @@ app.get('/api/return-summary', async (req, res) => {
 app.post('/api/orders/sku-cpo', async (req, res) => {
   try {
     const rawCodes = Array.isArray(req.body?.codes) ? req.body.codes : [];
-    const codes = [...new Set(rawCodes.map(code => normalizeSkuKey(code)).filter(Boolean))].slice(0, 1000);
+    const codes = [...new Set(rawCodes.map(code => normalizeDealStopCode(code)).filter(Boolean))].slice(0, 1000);
 
     if (!codes.length) {
       return res.json({ ok: true, cpoByCode: {} });
@@ -8836,7 +9019,7 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
       if (toDate) campaignMatch.date.$lte = toDate;
     }
 
-    const [orderRows, campaignRows] = await Promise.all([
+    const [orderRows, campaignRows, purchasePlacedQtyByCode] = await Promise.all([
       useSheetOrders()
         ? getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
         : Order.find(buildOrderQuery({ fromDate, toDate }))
@@ -8855,10 +9038,32 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
           }
         },
         { $project: { _id: 0, adName: 1, amount: 1 } }
-      ]).allowDiskUse(true) : Promise.resolve([])
+      ]).allowDiskUse(true) : Promise.resolve([]),
+      buildPurchasePlacedQtyByCode()
     ]);
 
-    const rows = buildDealStopRows(orderRows, campaignRows);
+    const rows = buildDealStopRows(orderRows, campaignRows).map(row => {
+      const slKhachDat = Number(row.slKhachDat || 0);
+      const slThucDat = Number(purchasePlacedQtyByCode[row.ma] || 0);
+      const tiLeHoan = Number(row.tiLeHoan || 0);
+      const tongDaShip = Number(row.tongDaShip || 0);
+      const slCanDatThem = !String(row.ma || '').trim()
+        ? ''
+        : (slThucDat === 0
+            ? 0
+            : (tiLeHoan <= 0.37
+                ? Math.round(slKhachDat - (slThucDat + slThucDat * tiLeHoan))
+                : Math.round((1 - tiLeHoan) * slKhachDat - slThucDat)));
+
+      return {
+        ...row,
+        slThucDat,
+        slCanDatThem,
+        slChenh: slKhachDat - slThucDat,
+        tiLeDat: slKhachDat > 0 ? slThucDat / slKhachDat : 0,
+        tiLeShip: slKhachDat > 0 ? tongDaShip / slKhachDat : 0
+      };
+    });
 
     res.json({
       ok: true,

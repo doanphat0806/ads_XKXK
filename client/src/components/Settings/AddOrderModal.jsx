@@ -2,39 +2,21 @@ import React, { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import Modal from '../Common/Modal';
 import { getStaffByMa } from '../../types/order.types';
-import { parsePercentInput, recalculateRow, toSafeNumber } from '../../utils/calculations';
+import { recalculateRow } from '../../utils/calculations';
+import { formatCompactInt, formatCurrency, formatPercent } from '../../utils/formatters';
 
 function createInitialDraft() {
   return {
     ma: '',
-    ghiChu: '',
-    slKhachDat: '',
-    slThucDat: '',
-    tiLeHoan: '0',
-    sizeS: '',
-    sizeM: '',
-    sizeL: '',
-    sizeXL: '',
-    dangGuiHang: '0',
-    tongDaShip: '0'
+    orderSizeS: '',
+    orderSizeM: '',
+    orderSizeL: '',
+    orderSizeXL: '',
+    orderSizeFZ: ''
   };
 }
 
-function validateDraft(draft, staffList) {
-  const ma = String(draft.ma || '').trim().toUpperCase();
-  if (!ma) return 'Mã sản phẩm không được trống';
-
-  const staff = getStaffByMa(ma, staffList);
-  if (!staff) {
-    return `Chưa có nhân viên cho ký tự đầu "${ma.charAt(0)}". Hãy thêm trong mục Nhân viên`;
-  }
-
-  if (toSafeNumber(draft.slKhachDat) <= 0) return 'SL Khách Đặt phải lớn hơn 0';
-  if (toSafeNumber(draft.slThucDat) < 0) return 'SL Thực Đặt không hợp lệ';
-  return '';
-}
-
-export default function AddOrderModal({ open, staffList, config, onClose, onAdd }) {
+export default function AddOrderModal({ open, staffList, config, orderLookupByCode = {}, onClose, onAdd }) {
   const [draft, setDraft] = useState(createInitialDraft);
 
   React.useEffect(() => {
@@ -43,9 +25,19 @@ export default function AddOrderModal({ open, staffList, config, onClose, onAdd 
     }
   }, [open]);
 
+  const normalizedCode = useMemo(
+    () => String(draft.ma || '').trim().toUpperCase().replace(/\s+/g, ''),
+    [draft.ma]
+  );
+
   const detectedStaff = useMemo(
-    () => getStaffByMa(draft.ma, staffList),
-    [draft.ma, staffList]
+    () => getStaffByMa(normalizedCode, staffList),
+    [normalizedCode, staffList]
+  );
+
+  const matchedOrderRow = useMemo(
+    () => orderLookupByCode[normalizedCode] || null,
+    [normalizedCode, orderLookupByCode]
   );
 
   const handleChange = (field, value) => {
@@ -53,33 +45,35 @@ export default function AddOrderModal({ open, staffList, config, onClose, onAdd 
   };
 
   const handleSubmit = () => {
-    const error = validateDraft(draft, staffList);
-    if (error) {
-      toast.error(error);
+    if (!normalizedCode) {
+      toast.error('Mã sản phẩm không được trống');
       return;
     }
 
-    const baseRow = {
-      id: `manual-${Date.now()}`,
-      ma: String(draft.ma || '').trim().toUpperCase(),
-      ngayKetThuc: 0,
-      cpo: 0,
-      ghiChu: String(draft.ghiChu || '').trim(),
-      slKhachDat: toSafeNumber(draft.slKhachDat),
-      slThucDat: toSafeNumber(draft.slThucDat),
-      tiLeHoan: parsePercentInput(draft.tiLeHoan),
-      sizeS: String(draft.sizeS || '').trim(),
-      sizeM: String(draft.sizeM || '').trim(),
-      sizeL: String(draft.sizeL || '').trim(),
-      sizeXL: String(draft.sizeXL || '').trim(),
-      daNhan: 0,
-      dangHoan: 0,
-      daHoan: 0,
-      dangGuiHang: toSafeNumber(draft.dangGuiHang),
-      tongDaShip: toSafeNumber(draft.tongDaShip)
-    };
+    if (!detectedStaff) {
+      toast.error(`Chưa có nhân viên cho ký tự đầu "${normalizedCode.charAt(0)}"`);
+      return;
+    }
 
-    onAdd(recalculateRow(baseRow, config));
+    if (!matchedOrderRow) {
+      toast.error('Không tìm thấy mã trong Đơn Hàng');
+      return;
+    }
+
+    const nextRow = recalculateRow({
+      ...matchedOrderRow,
+      id: `manual-${Date.now()}`,
+      ma: normalizedCode,
+      ghiChu: '',
+      slThucDat: Number(matchedOrderRow.slThucDat || 0),
+      orderSizeS: String(draft.orderSizeS || '').trim(),
+      orderSizeM: String(draft.orderSizeM || '').trim(),
+      orderSizeL: String(draft.orderSizeL || '').trim(),
+      orderSizeXL: String(draft.orderSizeXL || '').trim(),
+      orderSizeFZ: String(draft.orderSizeFZ || '').trim()
+    }, config);
+
+    onAdd(nextRow);
     onClose();
   };
 
@@ -100,7 +94,7 @@ export default function AddOrderModal({ open, staffList, config, onClose, onAdd 
         </>
       )}
     >
-      <div className="deal-add-order-grid">
+      <div className="deal-add-order-grid deal-add-order-grid-compact">
         <label className="deal-form-field deal-form-field-full">
           <span>Mã</span>
           <input
@@ -109,52 +103,64 @@ export default function AddOrderModal({ open, staffList, config, onClose, onAdd 
             onChange={event => handleChange('ma', event.target.value.toUpperCase())}
             placeholder="VD: PQ9999999"
           />
-          <small>{detectedStaff ? `Nhân viên: ${detectedStaff.name}` : 'Ký tự đầu sẽ tự nhận diện theo danh sách nhân viên'}</small>
         </label>
 
-        <label className="deal-form-field">
-          <span>SL Khách Đặt</span>
-          <input type="number" value={draft.slKhachDat} onChange={event => handleChange('slKhachDat', event.target.value)} />
-        </label>
-        <label className="deal-form-field">
-          <span>SL Thực Đặt</span>
-          <input type="number" value={draft.slThucDat} onChange={event => handleChange('slThucDat', event.target.value)} />
-        </label>
-        <label className="deal-form-field">
-          <span>Tỉ Lệ Hoàn (%)</span>
-          <input type="number" value={draft.tiLeHoan} onChange={event => handleChange('tiLeHoan', event.target.value)} />
-        </label>
+        {detectedStaff ? (
+          <div className="deal-inline-note">Nhân viên: {detectedStaff.name}</div>
+        ) : (
+          <div className="deal-inline-note">Ký tự đầu sẽ tự nhận diện theo danh sách nhân viên</div>
+        )}
 
-        <label className="deal-form-field deal-form-field-full">
-          <span>Ghi chú</span>
-          <input type="text" value={draft.ghiChu} onChange={event => handleChange('ghiChu', event.target.value)} placeholder="Ghi chú thêm nếu cần" />
-        </label>
+        {matchedOrderRow ? (
+          <>
+            <div className="deal-order-preview">
+              <div className="deal-order-preview-item">SL Khách Đặt: {formatCompactInt(matchedOrderRow.slKhachDat)}</div>
+              <div className="deal-order-preview-item">Tỉ Lệ Hoàn: {formatPercent(matchedOrderRow.tiLeHoan)}</div>
+              <div className="deal-order-preview-item">Đang Gửi: {formatCompactInt(matchedOrderRow.dangGuiHang)}</div>
+              <div className="deal-order-preview-item">Đã Ship: {formatCompactInt(matchedOrderRow.tongDaShip)}</div>
+              <div className="deal-order-preview-item">CPO: {formatCurrency(matchedOrderRow.cpo)}</div>
+            </div>
 
-        <label className="deal-form-field">
-          <span>SIZE S</span>
-          <input type="text" value={draft.sizeS} onChange={event => handleChange('sizeS', event.target.value)} />
-        </label>
-        <label className="deal-form-field">
-          <span>SIZE M</span>
-          <input type="text" value={draft.sizeM} onChange={event => handleChange('sizeM', event.target.value)} />
-        </label>
-        <label className="deal-form-field">
-          <span>SIZE L</span>
-          <input type="text" value={draft.sizeL} onChange={event => handleChange('sizeL', event.target.value)} />
-        </label>
-        <label className="deal-form-field">
-          <span>SIZE XL</span>
-          <input type="text" value={draft.sizeXL} onChange={event => handleChange('sizeXL', event.target.value)} />
-        </label>
+            <div className="deal-size-section">
+              <div className="deal-size-section-title">Size từ Đơn Hàng</div>
+              <div className="deal-size-grid">
+                <div className="deal-size-readonly">S: {matchedOrderRow.sizeS || '-'}</div>
+                <div className="deal-size-readonly">M: {matchedOrderRow.sizeM || '-'}</div>
+                <div className="deal-size-readonly">L: {matchedOrderRow.sizeL || '-'}</div>
+                <div className="deal-size-readonly">XL: {matchedOrderRow.sizeXL || '-'}</div>
+              </div>
+            </div>
 
-        <label className="deal-form-field">
-          <span>Đang Gửi Hàng</span>
-          <input type="number" value={draft.dangGuiHang} onChange={event => handleChange('dangGuiHang', event.target.value)} />
-        </label>
-        <label className="deal-form-field">
-          <span>Tổng Đã Ship</span>
-          <input type="number" value={draft.tongDaShip} onChange={event => handleChange('tongDaShip', event.target.value)} />
-        </label>
+            <div className="deal-size-section">
+              <div className="deal-size-section-title">Size từ Đặt Hàng</div>
+              <div className="deal-size-grid">
+                <label className="deal-form-field">
+                  <span>ĐH S</span>
+                  <input type="number" min="0" step="1" inputMode="numeric" value={draft.orderSizeS} onChange={event => handleChange('orderSizeS', event.target.value)} />
+                </label>
+                <label className="deal-form-field">
+                  <span>ĐH M</span>
+                  <input type="number" min="0" step="1" inputMode="numeric" value={draft.orderSizeM} onChange={event => handleChange('orderSizeM', event.target.value)} />
+                </label>
+                <label className="deal-form-field">
+                  <span>ĐH L</span>
+                  <input type="number" min="0" step="1" inputMode="numeric" value={draft.orderSizeL} onChange={event => handleChange('orderSizeL', event.target.value)} />
+                </label>
+                <label className="deal-form-field">
+                  <span>ĐH XL</span>
+                  <input type="number" min="0" step="1" inputMode="numeric" value={draft.orderSizeXL} onChange={event => handleChange('orderSizeXL', event.target.value)} />
+                </label>
+                <label className="deal-form-field">
+                  <span>ĐH FZ</span>
+                  <input type="number" min="0" step="1" inputMode="numeric" value={draft.orderSizeFZ} onChange={event => handleChange('orderSizeFZ', event.target.value)} />
+                </label>
+              </div>
+              <div className="deal-inline-note">SL Thực Đặt lấy từ Đặt Hàng: {formatCompactInt(matchedOrderRow.slThucDat || 0)}. Size chỉ để ghi tay.</div>
+            </div>
+          </>
+        ) : normalizedCode ? (
+          <div className="deal-inline-note">Mã này chưa có trong Đơn Hàng</div>
+        ) : null}
       </div>
     </Modal>
   );

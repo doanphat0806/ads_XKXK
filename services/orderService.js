@@ -846,6 +846,7 @@ module.exports = {
   getOrderItemsFromRaw,
   getOrderItemSku,
   getOrderItemQuantity,
+  getOrderTagText,
   normalizeSkuKey,
   normalizeStatusKey,
   orderMatchesSearch,
