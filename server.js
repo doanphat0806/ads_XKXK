@@ -261,6 +261,8 @@ const SHOPEE_WARN_ROI_PERCENT = 15;
 const SHOPEE_REACTIVATE_ROI_PERCENT = 15;
 const SHOPEE_SCALE_ROI_PERCENT = 40;
 const SHOPEE_STRONG_SCALE_ROI_PERCENT = 80;
+const SHOPEE_LOW_SPEND_WINDOW_DAYS = 3;
+const SHOPEE_LOW_SPEND_AVG_DAILY_LIMIT = 30000;
 const SHOPEE_PERFORMANCE_TOTAL_FROM_DATE = '2026-04-27';
 const SHOPEE_REACTIVATE_CRON = '0 0 * * *';
 const SCHEDULED_DUPLICATE_SCOPE_COOLDOWN_MS = 2 * 60 * 1000;
@@ -2104,6 +2106,36 @@ function normalizeShopeeSubIdKey(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function getRecentShopeeSpendStats(rows = [], referenceDate = dateKeyFromVnOffset(-1)) {
+  const normalizedReferenceDate = normalizeCampaignDate(referenceDate);
+  const spendByDate = new Map();
+  for (const row of rows || []) {
+    const date = String(row?.date || '').trim();
+    if (!date || date > normalizedReferenceDate) continue;
+    spendByDate.set(date, Number(spendByDate.get(date) || 0) + Number(row?.spend || 0));
+  }
+
+  const dates = [];
+  const endTime = new Date(`${normalizedReferenceDate}T00:00:00Z`).getTime();
+  for (let offset = SHOPEE_LOW_SPEND_WINDOW_DAYS - 1; offset >= 0; offset -= 1) {
+    dates.push(new Date(endTime - (offset * 24 * 60 * 60 * 1000)).toISOString().split('T')[0]);
+  }
+
+  const totalSpend = dates.reduce((sum, date) => sum + Number(spendByDate.get(date) || 0), 0);
+  const avgDailySpend = dates.length > 0 ? totalSpend / dates.length : 0;
+  const daysWithData = dates.filter(date => spendByDate.has(date)).length;
+  const daysWithSpend = dates.filter(date => Number(spendByDate.get(date) || 0) > 0).length;
+
+  return {
+    dates,
+    totalSpend,
+    avgDailySpend,
+    daysWithData,
+    daysWithSpend,
+    hasFullWindow: daysWithData >= SHOPEE_LOW_SPEND_WINDOW_DAYS
+  };
+}
+
 async function getShopeePerformanceTotalsForAuto(account, campaigns = []) {
   const campaignKeys = new Set(
     campaigns
@@ -2133,7 +2165,13 @@ async function getShopeePerformanceTotalsForAuto(account, campaigns = []) {
         {
           $group: {
             _id: { $toLower: { $ifNull: ['$name', ''] } },
-            spend: { $sum: '$spend' }
+            spend: { $sum: '$spend' },
+            recentDailyRows: {
+              $push: {
+                date: '$date',
+                spend: '$spend'
+              }
+            }
           }
         }
       ]),
@@ -2159,6 +2197,7 @@ async function getShopeePerformanceTotalsForAuto(account, campaigns = []) {
       if (!campaignKeys.has(key)) continue;
       totals[key] = totals[key] || { spend: 0, commission: 0 };
       totals[key].spend += Number(row.spend || 0);
+      totals[key].recentSpend = getRecentShopeeSpendStats(row.recentDailyRows);
     }
 
     for (const row of commissionRows) {
@@ -3710,6 +3749,7 @@ async function runAutoControl(account, options = {}) {
           const shopeeTotals = isShopee ? (shopeePerformanceTotals[shopeeKey] || {}) : {};
           const ruleSpend = isShopee ? Number(shopeeTotals.spend || spend || 0) : spend;
           const ruleCommission = isShopee ? Number(shopeeTotals.commission || 0) : 0;
+          const shopeeRecentSpend = isShopee ? shopeeTotals.recentSpend : null;
           const isLifetime = !!campaign.lifetimeBudget || !!campaign.lifetime_budget && parseFloat(campaign.lifetime_budget) > 0;
           const budgetType = isLifetime ? 'LIFETIME' : 'DAILY';
           const { pauseReason, orderCount, costPerOrder } = getAutoPauseDecision({
@@ -3725,6 +3765,11 @@ async function runAutoControl(account, options = {}) {
             skuCounts,
             shopeeCommission: ruleCommission
           });
+          const lowRecentSpendReason = isShopee
+            && shopeeRecentSpend?.hasFullWindow
+            && shopeeRecentSpend.avgDailySpend < SHOPEE_LOW_SPEND_AVG_DAILY_LIMIT
+              ? `Tieu TB ${Math.round(shopeeRecentSpend.avgDailySpend).toLocaleString()}d/ngay trong ${SHOPEE_LOW_SPEND_WINDOW_DAYS} ngay da chot gan nhat < ${SHOPEE_LOW_SPEND_AVG_DAILY_LIMIT.toLocaleString()}d`
+              : null;
           const optimizationDecision = isShopee
             ? getShopeeOptimizationDecision({
               spend: ruleSpend,
@@ -3743,7 +3788,8 @@ async function runAutoControl(account, options = {}) {
             costPerClick,
             orderCount,
             costPerOrder,
-            pauseReason,
+            pauseReason: lowRecentSpendReason || pauseReason,
+            shopeeRecentSpend,
             optimizationDecision
           };
         })
@@ -5682,6 +5728,181 @@ app.post('/api/accounts/:id/refresh', async (req, res) => {
   }
 });
 
+async function setCampaignStatusForAccount({
+  account,
+  fbToken,
+  campaignId,
+  currentStatus,
+  targetStatus,
+  fromDate,
+  toDate,
+  fetchLiveStatus = true,
+  skipNoChange = false
+}) {
+  const normalizedCampaignId = String(campaignId || '').trim();
+  if (!normalizedCampaignId) throw new Error('Thieu campaignId');
+
+  const storedCampaign = await Campaign.findOne({
+    accountId: account._id,
+    campaignId: normalizedCampaignId,
+    date: { $gte: fromDate, $lte: toDate }
+  }).sort({ updatedAt: -1, _id: -1 }).lean();
+
+  let effectiveStatus = normalizeCampaignStatus(currentStatus);
+  if (fetchLiveStatus) {
+    try {
+      const liveCampaign = await fbGet(fbToken, normalizedCampaignId, { fields: 'id,status' }, { retries: 2, rateLimitRetries: 2 });
+      effectiveStatus = normalizeCampaignStatus(liveCampaign?.status || effectiveStatus);
+    } catch (error) {
+      effectiveStatus = normalizeCampaignStatus(storedCampaign?.status || effectiveStatus);
+      if (!effectiveStatus) throw error;
+    }
+  } else if (!effectiveStatus) {
+    effectiveStatus = normalizeCampaignStatus(storedCampaign?.status || effectiveStatus);
+  }
+
+  const requestedTargetStatus = normalizeCampaignStatus(targetStatus);
+  const newStatus = requestedTargetStatus === 'PAUSED' || requestedTargetStatus === 'ACTIVE'
+    ? requestedTargetStatus
+    : (isCampaignServingStatus(effectiveStatus) ? 'PAUSED' : 'ACTIVE');
+
+  if (skipNoChange && effectiveStatus) {
+    const alreadyTarget = newStatus === 'PAUSED'
+      ? !isCampaignServingStatus(effectiveStatus)
+      : isCampaignServingStatus(effectiveStatus);
+    if (alreadyTarget) {
+      return {
+        ok: true,
+        skipped: true,
+        previousStatus: effectiveStatus,
+        newStatus,
+        campaignId: normalizedCampaignId
+      };
+    }
+  }
+
+  await fbPost(fbToken, normalizedCampaignId, { status: newStatus });
+  const updateFilter = storedCampaign
+    ? { _id: storedCampaign._id }
+    : { accountId: account._id, campaignId: normalizedCampaignId, date: { $gte: fromDate, $lte: toDate } };
+  await Campaign.findOneAndUpdate(updateFilter, { $set: { status: newStatus, updatedAt: new Date() } }, { new: true });
+
+  return {
+    ok: true,
+    skipped: false,
+    previousStatus: effectiveStatus,
+    newStatus,
+    campaignId: normalizedCampaignId
+  };
+}
+
+app.post('/api/campaigns/bulk-toggle', async (req, res) => {
+  try {
+    const targetStatus = normalizeCampaignStatus(req.body.targetStatus);
+    if (targetStatus !== 'PAUSED' && targetStatus !== 'ACTIVE') {
+      return res.status(400).json({ error: 'targetStatus chi ho tro ACTIVE hoac PAUSED' });
+    }
+
+    const fromDate = normalizeCampaignDate(req.body.fromDate || req.body.date);
+    const toDate = normalizeCampaignDate(req.body.toDate || req.body.date || fromDate);
+    const rawItems = Array.isArray(req.body.items) ? req.body.items : [];
+    const requestedItems = rawItems
+      .map(item => ({
+        accountId: String(item?.accountId || '').trim(),
+        campaignId: String(item?.campaignId || '').trim(),
+        currentStatus: normalizeCampaignStatus(item?.currentStatus)
+      }))
+      .filter(item => item.campaignId && mongoose.Types.ObjectId.isValid(item.accountId));
+
+    const uniqueItems = [];
+    const seen = new Set();
+    for (const item of requestedItems) {
+      const key = `${item.accountId}:${item.campaignId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      uniqueItems.push(item);
+    }
+
+    if (!uniqueItems.length) {
+      return res.status(400).json({ error: 'Chua chon campaign' });
+    }
+    if (uniqueItems.length > 2000) {
+      return res.status(400).json({ error: 'Chi cho phep xu ly toi da 2000 campaign moi lan' });
+    }
+
+    const accountIds = [...new Set(uniqueItems.map(item => item.accountId))];
+    const accounts = await Account.find(withUserFilter(req, { _id: { $in: accountIds } }));
+    const accountsById = new Map(accounts.map(account => [String(account._id), account]));
+    const tokenByAccountId = new Map();
+    const results = [];
+    const errors = [];
+
+    for (const item of uniqueItems) {
+      const account = accountsById.get(item.accountId);
+      if (!account) {
+        errors.push({ ...item, error: 'Account not found' });
+        continue;
+      }
+
+      try {
+        let fbToken = tokenByAccountId.get(item.accountId);
+        if (fbToken === undefined) {
+          const secrets = await getEffectiveSecrets(account);
+          fbToken = secrets.fbToken || '';
+          tokenByAccountId.set(item.accountId, fbToken);
+        }
+        if (!fbToken) throw new Error('Thieu Facebook Access Token');
+
+        const result = await setCampaignStatusForAccount({
+          account,
+          fbToken,
+          campaignId: item.campaignId,
+          currentStatus: item.currentStatus,
+          targetStatus,
+          fromDate,
+          toDate,
+          fetchLiveStatus: false,
+          skipNoChange: false
+        });
+        results.push({
+          ...item,
+          ...result,
+          accountName: account.name
+        });
+      } catch (error) {
+        errors.push({ ...item, accountName: account.name, error: error.message });
+      }
+    }
+
+    const changedCount = results.filter(item => !item.skipped).length;
+    const skippedCount = results.filter(item => item.skipped).length;
+    if (changedCount > 0) clearCampaignReadCache();
+
+    const logLevel = targetStatus === 'ACTIVE' ? 'success' : 'warn';
+    const logMessage = `Thu cong bulk: ${targetStatus} ${changedCount}/${uniqueItems.length} camp${skippedCount ? `, bo qua ${skippedCount}` : ''}${errors.length ? `, loi ${errors.length}` : ''}`;
+    for (const account of accounts) {
+      const accountChangedCount = results.filter(item => String(item.accountId) === String(account._id) && !item.skipped).length;
+      if (accountChangedCount <= 0) continue;
+      await addLog(account._id, account.name, logLevel, `${logMessage} (${accountChangedCount} camp trong tai khoan nay)`);
+    }
+
+    res.json({
+      ok: errors.length === 0,
+      targetStatus,
+      requested: uniqueItems.length,
+      changed: changedCount,
+      skipped: skippedCount,
+      failed: errors.length,
+      results,
+      errors,
+      logLevel,
+      logMessage
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.post('/api/campaigns/:campaignId/toggle', async (req, res) => {
   try {
     const { accountId, currentStatus } = req.body;
@@ -5696,35 +5917,20 @@ app.post('/api/campaigns/:campaignId/toggle', async (req, res) => {
     const campaignId = String(req.params.campaignId || '').trim();
     if (!campaignId) return res.status(400).json({ error: 'Thieu campaignId' });
 
-    const storedCampaign = await Campaign.findOne({
-      accountId,
+    const result = await setCampaignStatusForAccount({
+      account,
+      fbToken,
       campaignId,
-      date: { $gte: fromDate, $lte: toDate }
-    }).sort({ updatedAt: -1, _id: -1 }).lean();
-
-    let effectiveStatus = normalizeCampaignStatus(currentStatus);
-    try {
-      const liveCampaign = await fbGet(fbToken, campaignId, { fields: 'id,status' }, { retries: 2, rateLimitRetries: 2 });
-      effectiveStatus = normalizeCampaignStatus(liveCampaign?.status || effectiveStatus);
-    } catch (error) {
-      effectiveStatus = normalizeCampaignStatus(storedCampaign?.status || effectiveStatus);
-      if (!effectiveStatus) throw error;
-    }
-
-    const requestedTargetStatus = normalizeCampaignStatus(req.body.targetStatus);
-    const newStatus = requestedTargetStatus === 'PAUSED' || requestedTargetStatus === 'ACTIVE'
-      ? requestedTargetStatus
-      : (isCampaignServingStatus(effectiveStatus) ? 'PAUSED' : 'ACTIVE');
-
-    await fbPost(fbToken, req.params.campaignId, { status: newStatus });
-    const updateFilter = storedCampaign
-      ? { _id: storedCampaign._id }
-      : { accountId, campaignId, date: { $gte: fromDate, $lte: toDate } };
-    await Campaign.findOneAndUpdate(updateFilter, { $set: { status: newStatus, updatedAt: new Date() } }, { new: true });
+      currentStatus,
+      targetStatus: req.body.targetStatus,
+      fromDate,
+      toDate,
+      fetchLiveStatus: true
+    });
     clearCampaignReadCache();
 
-    const logLevel = newStatus === 'ACTIVE' ? 'success' : 'warn';
-    const logMessage = `Thu cong: ${effectiveStatus || normalizeCampaignStatus(currentStatus) || 'UNKNOWN'} -> ${newStatus} (${campaignId})`;
+    const logLevel = result.newStatus === 'ACTIVE' ? 'success' : 'warn';
+    const logMessage = `Thu cong: ${result.previousStatus || normalizeCampaignStatus(currentStatus) || 'UNKNOWN'} -> ${result.newStatus} (${campaignId})`;
 
     await addLog(
       account._id,
@@ -5733,7 +5939,7 @@ app.post('/api/campaigns/:campaignId/toggle', async (req, res) => {
       logMessage
     );
 
-    res.json({ ok: true, previousStatus: effectiveStatus, newStatus, logLevel, logMessage });
+    res.json({ ok: true, previousStatus: result.previousStatus, newStatus: result.newStatus, logLevel, logMessage });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -8007,6 +8213,7 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
       const recentRows = daily.slice(-3);
       const recentSpend = recentRows.reduce((sum, row) => sum + Number(row.spend || 0), 0);
       const recentAvgDailySpend = recentRows.length > 0 ? recentSpend / recentRows.length : 0;
+      const recentDaysWithData = recentRows.filter(row => dailyMap.has(row.date)).length;
       const lastDaySpend = Number(daily[daily.length - 1]?.spend || 0);
       const recentSpendRate = avgDailySpend > 0 ? recentAvgDailySpend / avgDailySpend : 1;
       const slowSpend = activeDayCount >= 3 && avgDailySpend > 0 && recentSpendRate < 0.7;
@@ -8015,6 +8222,7 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
         activeDayCount,
         avgDailySpend,
         recentAvgDailySpend,
+        recentDaysWithData,
         lastDaySpend,
         recentSpendRate,
         slowSpend,
@@ -8079,6 +8287,8 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
           commission: item.hoa_hong,
           minSpendLimit: autoConfig.autoPauseShopeeMinSpendLimit
         });
+        const lowRecentSpend = dailySpendStats.recentDaysWithData >= SHOPEE_LOW_SPEND_WINDOW_DAYS
+          && dailySpendStats.recentAvgDailySpend < SHOPEE_LOW_SPEND_AVG_DAILY_LIMIT;
         return {
           sub_id2: item.sub_id2,
           hoa_hong: item.hoa_hong,
@@ -8093,9 +8303,10 @@ app.get('/api/shopee/commission-summary', async (req, res) => {
           spend_ngay_cuoi: dailySpendStats.lastDaySpend,
           ti_le_tieu_gan_day: dailySpendStats.recentSpendRate,
           tieu_cham: dailySpendStats.slowSpend,
+          tieu_3_ngay_thap: lowRecentSpend,
           goi_y_bid: shouldIncreaseBid ? 'TĂNG BID' : 'GIỮ BID',
           roi,
-          danh_gia: labelByAction[optimization.action] || optimization.label || ''
+          danh_gia: lowRecentSpend ? labelByAction.pause : (labelByAction[optimization.action] || optimization.label || '')
         };
       });
     };

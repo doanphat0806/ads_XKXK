@@ -50,6 +50,16 @@ function getCampaignAccount(campaign, accounts = []) {
   return accounts.find(item => String(item._id || '') === accountId) || null;
 }
 
+function getCampaignAccountId(campaign) {
+  return String(campaign?.accountId?._id || campaign?.accountId || '').trim();
+}
+
+function getCampaignSelectionKey(campaign) {
+  const accountId = getCampaignAccountId(campaign);
+  const campaignId = String(campaign?.campaignId || '').trim();
+  return accountId && campaignId ? `${accountId}:${campaignId}` : '';
+}
+
 export default function Campaigns() {
   const { provider, allAccounts } = useAppContext();
   const [campaigns, setCampaigns] = useState([]);
@@ -60,6 +70,8 @@ export default function Campaigns() {
   const [filterStatus, setFilterStatus] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [selectedCampaignKeys, setSelectedCampaignKeys] = useState(() => new Set());
+  const [bulkToggling, setBulkToggling] = useState('');
 
   const [syncFromDate, setSyncFromDate] = useState(yesterdayString());
   const [syncToDate, setSyncToDate] = useState(yesterdayString());
@@ -114,6 +126,13 @@ export default function Campaigns() {
     }, CAMPAIGN_TOGGLE_RELOAD_DELAY_MS);
   }, [loadCampaigns]);
 
+  const updateCampaignStatusLocally = useCallback((campaignKeys, status) => {
+    const keys = campaignKeys instanceof Set ? campaignKeys : new Set(campaignKeys);
+    setCampaigns(items => items.map(item => (
+      keys.has(getCampaignSelectionKey(item)) ? { ...item, status } : item
+    )));
+  }, []);
+
   useEffect(() => {
     setFilterAcc('');
   }, [provider]);
@@ -132,7 +151,9 @@ export default function Campaigns() {
     const nextStatus = isCampaignActiveStatus(currentStatus) ? 'PAUSED' : 'ACTIVE';
     try {
       setCampaigns(items => items.map(item => (
-        item.campaignId === campaignId ? { ...item, status: nextStatus } : item
+        item.campaignId === campaignId && getCampaignAccountId(item) === String(accountId || '').trim()
+          ? { ...item, status: nextStatus }
+          : item
       )));
       const result = await api('POST', `/campaigns/${campaignId}/toggle`, {
         accountId,
@@ -146,7 +167,9 @@ export default function Campaigns() {
       scheduleToggleReload();
     } catch (error) {
       setCampaigns(items => items.map(item => (
-        item.campaignId === campaignId ? { ...item, status: currentStatus } : item
+        item.campaignId === campaignId && getCampaignAccountId(item) === String(accountId || '').trim()
+          ? { ...item, status: currentStatus }
+          : item
       )));
       toast.error('Lỗi: ' + error.message);
     }
@@ -292,6 +315,87 @@ export default function Campaigns() {
     return filteredCampaigns.slice(start, start + CAMPAIGNS_PER_PAGE);
   }, [currentPage, filteredCampaigns, totalPages]);
 
+  const selectableCampaigns = useMemo(() => (
+    filteredCampaigns.filter(campaign => getCampaignSelectionKey(campaign))
+  ), [filteredCampaigns]);
+
+  const selectedCampaigns = useMemo(() => (
+    selectableCampaigns.filter(campaign => selectedCampaignKeys.has(getCampaignSelectionKey(campaign)))
+  ), [selectableCampaigns, selectedCampaignKeys]);
+
+  const allFilteredSelected = selectableCampaigns.length > 0 && selectedCampaigns.length === selectableCampaigns.length;
+  const someFilteredSelected = selectedCampaigns.length > 0 && !allFilteredSelected;
+
+  const toggleSelectCampaign = useCallback((campaign) => {
+    const key = getCampaignSelectionKey(campaign);
+    if (!key) return;
+    setSelectedCampaignKeys(previous => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAllFiltered = useCallback(() => {
+    const keys = selectableCampaigns.map(campaign => getCampaignSelectionKey(campaign)).filter(Boolean);
+    setSelectedCampaignKeys(previous => {
+      const next = new Set(previous);
+      const shouldSelect = keys.some(key => !next.has(key));
+      keys.forEach(key => {
+        if (shouldSelect) next.add(key);
+        else next.delete(key);
+      });
+      return next;
+    });
+  }, [selectableCampaigns]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedCampaignKeys(new Set());
+  }, []);
+
+  const bulkToggleSelectedCampaigns = async (targetStatus) => {
+    const targetLabel = targetStatus === 'PAUSED' ? 'tat' : 'bat';
+    if (!selectedCampaigns.length || bulkToggling) return;
+    if (!window.confirm(`${targetLabel === 'tat' ? 'Tat' : 'Bat'} ${selectedCampaigns.length} camp da chon?`)) return;
+
+    const selectedKeys = new Set(selectedCampaigns.map(campaign => getCampaignSelectionKey(campaign)).filter(Boolean));
+    const previousStatuses = new Map(selectedCampaigns.map(campaign => [getCampaignSelectionKey(campaign), campaign.status]));
+    setBulkToggling(targetStatus);
+    updateCampaignStatusLocally(selectedKeys, targetStatus);
+
+    try {
+      const payload = {
+        targetStatus,
+        fromDate: filterFromDate,
+        toDate: filterToDate,
+        items: selectedCampaigns.map(campaign => ({
+          campaignId: campaign.campaignId,
+          accountId: getCampaignAccountId(campaign),
+          currentStatus: normalizeStatus(campaign.status)
+        }))
+      };
+      const result = await api('POST', '/campaigns/bulk-toggle', payload, { timeoutMs: 10 * 60 * 1000 });
+      if (result?.logMessage) setLastToggleLog(result.logMessage);
+      const changedText = `${formatNumber(result?.changed || 0)}/${formatNumber(result?.requested || selectedCampaigns.length)}`;
+      if (result?.failed > 0) {
+        toast.warn(`Da ${targetLabel} ${changedText} camp, loi ${formatNumber(result.failed)}`);
+      } else {
+        toast.success(`Da ${targetLabel} ${changedText} camp`);
+      }
+      clearSelection();
+      scheduleToggleReload();
+    } catch (error) {
+      setCampaigns(items => items.map(item => {
+        const key = getCampaignSelectionKey(item);
+        return previousStatuses.has(key) ? { ...item, status: previousStatuses.get(key) } : item;
+      }));
+      toast.error('Loi bulk toggle: ' + error.message);
+    } finally {
+      setBulkToggling('');
+    }
+  };
+
   useEffect(() => {
     setCurrentPage(1);
   }, [filterAcc, filterFromDate, filterToDate, filterStatus, provider, searchTerm]);
@@ -299,6 +403,14 @@ export default function Campaigns() {
   useEffect(() => {
     if (currentPage > totalPages) setCurrentPage(totalPages);
   }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    const validKeys = new Set(selectableCampaigns.map(campaign => getCampaignSelectionKey(campaign)).filter(Boolean));
+    setSelectedCampaignKeys(previous => {
+      const next = new Set([...previous].filter(key => validKeys.has(key)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [selectableCampaigns]);
 
   return (
     <div id="page-campaigns">
@@ -435,6 +547,46 @@ export default function Campaigns() {
             <button className="btn btn-ghost btn-sm" onClick={() => reloadCampaignsNow(true)}>↻</button>
           </div>
         </div>
+        <div className="campaign-bulk-bar">
+          <label
+            className="campaign-select-all"
+            title={someFilteredSelected ? 'Dang chon mot phan danh sach da loc' : 'Chon tat ca camp trong danh sach da loc'}
+          >
+            <input
+              type="checkbox"
+              checked={allFilteredSelected}
+              onChange={toggleSelectAllFiltered}
+              disabled={selectableCampaigns.length === 0 || Boolean(bulkToggling)}
+            />
+            <span>Chon tat ca camp dang loc</span>
+          </label>
+          <span className="campaign-selected-count">
+            Da chon {formatNumber(selectedCampaigns.length)} / {formatNumber(selectableCampaigns.length)}
+          </span>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => bulkToggleSelectedCampaigns('PAUSED')}
+            disabled={selectedCampaigns.length === 0 || Boolean(bulkToggling)}
+          >
+            {bulkToggling === 'PAUSED' ? 'Dang tat...' : 'Tat camp da chon'}
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => bulkToggleSelectedCampaigns('ACTIVE')}
+            disabled={selectedCampaigns.length === 0 || Boolean(bulkToggling)}
+          >
+            {bulkToggling === 'ACTIVE' ? 'Dang bat...' : 'Bat camp da chon'}
+          </button>
+          {selectedCampaigns.length > 0 && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={clearSelection}
+              disabled={Boolean(bulkToggling)}
+            >
+              Bo chon
+            </button>
+          )}
+        </div>
         <div className="tbl-wrap">
           {loading && campaigns.length === 0 ? (
             <div className="empty">
@@ -450,6 +602,7 @@ export default function Campaigns() {
             <table className="tbl">
               <thead>
                 <tr>
+                  <th style={{ width: '44px' }}></th>
                   <th style={{ width: '72px' }}>STT</th>
                   <th style={{ width: '160px' }}>Ngày Tạo</th>
                   <th style={{ width: '190px' }}>Tài khoản quảng cáo</th>
@@ -472,9 +625,24 @@ export default function Campaigns() {
                   const pColor = pct >= 100 ? 'var(--r)' : pct >= 70 ? 'var(--o)' : 'var(--g)';
                   const rowIndex = (currentPage - 1) * CAMPAIGNS_PER_PAGE + index;
                   const account = getCampaignAccount(campaign, allAccounts);
+                  const selectionKey = getCampaignSelectionKey(campaign);
+                  const isSelected = selectedCampaignKeys.has(selectionKey);
 
                   return (
-                    <tr key={`${campaign.accountId?._id || campaign.accountId || rowIndex}:${campaign.campaignId || rowIndex}`}>
+                    <tr
+                      key={`${campaign.accountId?._id || campaign.accountId || rowIndex}:${campaign.campaignId || rowIndex}`}
+                      className={isSelected ? 'campaign-row-selected' : ''}
+                    >
+                      <td>
+                        <input
+                          type="checkbox"
+                          className="campaign-row-checkbox"
+                          checked={isSelected}
+                          disabled={!selectionKey || Boolean(bulkToggling)}
+                          onChange={() => toggleSelectCampaign(campaign)}
+                          aria-label={`Chon camp ${campaign.name || campaign.campaignId || rowIndex + 1}`}
+                        />
+                      </td>
                       <td className="mono-sm" style={{ color: 'var(--muted2)' }}>{rowIndex + 1}</td>
                       <td className="mono-sm" style={{ color: 'var(--muted2)' }}>
                         {formatCampaignDateTime(campaign.createdTime || campaign.scheduledStartTimeUtc)}

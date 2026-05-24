@@ -2326,6 +2326,51 @@
       box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
     }
 
+    #page-campaigns .campaign-bulk-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-top: 1px solid #e6edf5;
+      border-bottom: 1px solid #e6edf5;
+      background: #f8fbfd;
+      flex-wrap: wrap;
+    }
+
+    #page-campaigns .campaign-select-all {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    #page-campaigns .campaign-selected-count {
+      color: var(--muted2);
+      font-family: var(--mono);
+      font-size: 11px;
+      margin-right: auto;
+    }
+
+    #page-campaigns .campaign-row-checkbox,
+    #page-campaigns .campaign-select-all input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--g);
+      cursor: pointer;
+    }
+
+    #page-campaigns .campaign-row-checkbox:disabled,
+    #page-campaigns .campaign-select-all input:disabled {
+      cursor: not-allowed;
+    }
+
+    #page-campaigns tbody tr.campaign-row-selected {
+      background: rgba(39, 171, 128, 0.12);
+    }
+
     .badge {
       display: inline-flex;
       align-items: center;

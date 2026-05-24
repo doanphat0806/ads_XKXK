@@ -870,6 +870,7 @@ Tổng ngan_sach trong phan_bo phải xấp xỉ ngan_sach_hien_tai trong contex
                     <td className="text-right mono-sm">{Number(row.bid_amount || 0) > 0 ? formatVND(row.bid_amount || 0) : '-'}</td>
                     <td className="text-right mono-sm">
                       {formatVND(row.spend_3_ngay_tb || 0)}
+                      {row.tieu_3_ngay_thap && <span className="badge paused" style={{ marginLeft: 6 }}>Tat</span>}
                       {row.tieu_cham && <span className="badge warning" style={{ marginLeft: 6 }}>Chậm</span>}
                     </td>
                     <td className="text-right">
