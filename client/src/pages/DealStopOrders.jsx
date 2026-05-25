@@ -38,19 +38,7 @@ import { exportOrdersToExcel } from '../utils/excelExport';
 
 const DEAL_STOP_STATE_API = '/deal-stop/state';
 const DEAL_STOP_DATA_VERSION = 4;
-const LOCAL_OVERRIDE_FIELDS = [
-  'id',
-  'ghiChu',
-  'slKhachDat',
-  'tiLeHoan',
-  'orderSizeS',
-  'orderSizeM',
-  'orderSizeL',
-  'orderSizeXL',
-  'orderSizeFZ',
-  'dangGuiHang',
-  'tongDaShip'
-];
+const SOURCE_OVERRIDE_COLUMNS = new Set(['slKhachDat', 'tiLeHoan', 'dangGuiHang', 'tongDaShip']);
 
 function getDefaultExpanded(staffList) {
   return staffList.reduce((acc, staff) => {
@@ -177,6 +165,33 @@ function pruneRowsByStaffList(rowsByTab, staffList) {
   return { nextRowsByTab, removedCount, changed };
 }
 
+function getManualOverrides(row = {}) {
+  return row._manualOverrides && typeof row._manualOverrides === 'object' && !Array.isArray(row._manualOverrides)
+    ? row._manualOverrides
+    : {};
+}
+
+function cleanManualOverrides(row = {}) {
+  const manualOverrides = getManualOverrides(row);
+  return Object.fromEntries(
+    [...SOURCE_OVERRIDE_COLUMNS]
+      .filter(field => manualOverrides[field] === true)
+      .map(field => [field, true])
+  );
+}
+
+function markManualOverride(row = {}, field = '') {
+  if (!SOURCE_OVERRIDE_COLUMNS.has(field)) return row;
+
+  return {
+    ...row,
+    _manualOverrides: {
+      ...getManualOverrides(row),
+      [field]: true
+    }
+  };
+}
+
 function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, actualQtyByCode = {}) {
   const hidden = new Set(hiddenCodes.map(normalizeCode));
   const localByCode = new Map(localRows.map(row => [normalizeCode(row.ma), row]));
@@ -185,22 +200,22 @@ function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, ac
     .filter(row => !hidden.has(normalizeCode(row.ma)))
     .map(sourceRow => {
       const localRow = localByCode.get(normalizeCode(sourceRow.ma));
-      const overrides = LOCAL_OVERRIDE_FIELDS.reduce((acc, field) => {
-        if (localRow && Object.prototype.hasOwnProperty.call(localRow, field)) {
-          acc[field] = localRow[field];
-        }
-        return acc;
-      }, {});
+      const manualOverrides = cleanManualOverrides(localRow);
+      const getLocalText = (field) => (
+        localRow && Object.prototype.hasOwnProperty.call(localRow, field)
+          ? localRow[field]
+          : ''
+      );
       const overrideNumber = (field, fallback) => (
-        Object.prototype.hasOwnProperty.call(overrides, field)
-          ? toSafeNumber(overrides[field])
+        manualOverrides[field] === true && Object.prototype.hasOwnProperty.call(localRow || {}, field)
+          ? toSafeNumber(localRow[field])
           : Number(fallback || 0)
       );
 
       return recalculateRow({
         ...sourceRow,
-        ...overrides,
         ma: sourceRow.ma,
+        ghiChu: getLocalText('ghiChu'),
         cpo: Number(sourceRow.cpo || 0),
         campaignAmount: Number(sourceRow.campaignAmount || 0),
         hasCampaign: Boolean(sourceRow.hasCampaign),
@@ -212,11 +227,12 @@ function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, ac
         daHoan: Number(sourceRow.daHoan || 0),
         dangGuiHang: overrideNumber('dangGuiHang', sourceRow.dangGuiHang),
         tongDaShip: overrideNumber('tongDaShip', sourceRow.tongDaShip),
-        orderSizeS: overrides.orderSizeS ?? '',
-        orderSizeM: overrides.orderSizeM ?? '',
-        orderSizeL: overrides.orderSizeL ?? '',
-        orderSizeXL: overrides.orderSizeXL ?? '',
-        orderSizeFZ: overrides.orderSizeFZ ?? ''
+        orderSizeS: getLocalText('orderSizeS'),
+        orderSizeM: getLocalText('orderSizeM'),
+        orderSizeL: getLocalText('orderSizeL'),
+        orderSizeXL: getLocalText('orderSizeXL'),
+        orderSizeFZ: getLocalText('orderSizeFZ'),
+        _manualOverrides: manualOverrides
       }, config);
     });
 
@@ -588,10 +604,12 @@ export default function DealStopOrders() {
         nextValue = parsePercentInput(editValue);
       }
 
-      return recalculateRow({
+      const nextRow = recalculateRow({
         ...row,
         [editingCell.columnId]: nextValue
       }, config);
+
+      return markManualOverride(nextRow, editingCell.columnId);
     }));
 
     setEditingCell(targetCell);

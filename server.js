@@ -9343,11 +9343,9 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
       const tongDaShip = Number(row.tongDaShip || 0);
       const slCanDatThem = !String(row.ma || '').trim()
         ? ''
-        : (slThucDat === 0
-            ? 0
-            : (tiLeHoan <= 0.37
-                ? Math.round(slKhachDat - (slThucDat + slThucDat * tiLeHoan))
-                : Math.round((1 - tiLeHoan) * slKhachDat - slThucDat)));
+        : (tiLeHoan <= 0.37
+            ? Math.round(slKhachDat - (slThucDat + slThucDat * tiLeHoan))
+            : Math.round((1 - tiLeHoan) * slKhachDat - slThucDat));
 
       return {
         ...row,

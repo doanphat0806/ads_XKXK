@@ -37,7 +37,6 @@ export function calcChuaCo(ma, slKhachDat, config = DEFAULT_CONFIG) {
 
 export function calcSLCanDatThem(ma, slThucDat, slKhachDat, tiLeHoan) {
   if (!String(ma || '').trim()) return '';
-  if (slThucDat === 0) return 0;
 
   try {
     if (tiLeHoan <= 0.37) {
