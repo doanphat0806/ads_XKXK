@@ -354,14 +354,13 @@ export default function DealStopOrders() {
   const [importingActualQty, setImportingActualQty] = React.useState(false);
   const [sourceRows, setSourceRows] = React.useState([]);
   const [stateReady, setStateReady] = React.useState(false);
-  const [newDataBanner, setNewDataBanner] = React.useState(null); // { updatedAt, updatedBy }
-  const [reloading, setReloading] = React.useState(false);
   const actualQtyInputRef = React.useRef(null);
   const latestStateRef = React.useRef(initialState);
   const saveTimerRef = React.useRef(null);
   const saveStateRequestRef = React.useRef(Promise.resolve());
   const remoteUpdatedAtRef = React.useRef('');
   const isSavingRef = React.useRef(false);
+  const isReloadingRef = React.useRef(false);
   const pollTimerRef = React.useRef(null);
   const autoRefreshTimerRef = React.useRef(null);
 
@@ -519,39 +518,10 @@ export default function DealStopOrders() {
     };
   }, [stateReady, loadSourceRows]);
 
-  // Poll server state to detect changes from other users
-  React.useEffect(() => {
-    if (!stateReady) return;
-    if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
-
-    pollTimerRef.current = window.setInterval(async () => {
-      if (isSavingRef.current) return;
-      try {
-        const data = await api('GET', DEAL_STOP_STATE_API, null, { timeoutMs: 15000 });
-        const remoteState = data?.state || {};
-        const serverUpdatedAt = remoteState.updatedAt || '';
-        const knownUpdatedAt = remoteUpdatedAtRef.current;
-        // If server has newer data than what we last loaded
-        if (serverUpdatedAt && knownUpdatedAt && serverUpdatedAt > knownUpdatedAt) {
-          setNewDataBanner({
-            updatedAt: serverUpdatedAt,
-            updatedBy: remoteState.updatedBy || ''
-          });
-        }
-      } catch {
-        // Silently ignore poll errors
-      }
-    }, DEAL_STOP_STATE_POLL_MS);
-
-    return () => {
-      if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
-    };
-  }, [stateReady]);
-
-  const handleReloadNewData = React.useCallback(async () => {
-    if (reloading) return;
-    setReloading(true);
-    setNewDataBanner(null);
+  // Poll server state — auto-reload when another user saves new data
+  const applyRemoteState = React.useCallback(async () => {
+    if (isSavingRef.current || isReloadingRef.current) return;
+    isReloadingRef.current = true;
     try {
       const data = await api('GET', DEAL_STOP_STATE_API, null, { timeoutMs: 60000 });
       const remoteState = data?.state || {};
@@ -568,13 +538,38 @@ export default function DealStopOrders() {
       setColumnVisibility(nextState.columnVisibility);
       latestStateRef.current = nextState;
       await loadSourceRows();
-      toast.success('Đã tải dữ liệu mới');
-    } catch (error) {
-      toast.error(`Không tải được dữ liệu mới: ${error.message}`);
+      const updatedBy = remoteState.updatedBy ? ` từ ${remoteState.updatedBy}` : '';
+      toast(`🔄 Đã đồng bộ dữ liệu mới${updatedBy}`, { duration: 3000 });
+    } catch {
+      // Silently ignore auto-reload errors
     } finally {
-      setReloading(false);
+      isReloadingRef.current = false;
     }
-  }, [activeTab, loadSourceRows, replaceConfig, reloading]);
+  }, [activeTab, loadSourceRows, replaceConfig]);
+
+  React.useEffect(() => {
+    if (!stateReady) return;
+    if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+
+    pollTimerRef.current = window.setInterval(async () => {
+      if (isSavingRef.current || isReloadingRef.current) return;
+      try {
+        const data = await api('GET', DEAL_STOP_STATE_API, null, { timeoutMs: 15000 });
+        const remoteState = data?.state || {};
+        const serverUpdatedAt = remoteState.updatedAt || '';
+        const knownUpdatedAt = remoteUpdatedAtRef.current;
+        if (serverUpdatedAt && knownUpdatedAt && serverUpdatedAt > knownUpdatedAt) {
+          applyRemoteState();
+        }
+      } catch {
+        // Silently ignore poll errors
+      }
+    }, DEAL_STOP_STATE_POLL_MS);
+
+    return () => {
+      if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+    };
+  }, [stateReady, applyRemoteState]);
 
   const rows = React.useMemo(
     () => rowsByTab[activeTab] || [],
@@ -853,32 +848,6 @@ export default function DealStopOrders() {
 
   return (
     <div id="page-deal-stop-orders">
-      {newDataBanner && (
-        <div className="deal-new-data-banner">
-          <span className="deal-new-data-banner-icon">🔄</span>
-          <span className="deal-new-data-banner-text">
-            {newDataBanner.updatedBy
-              ? `Có dữ liệu mới từ ${newDataBanner.updatedBy}`
-              : 'Có dữ liệu mới từ người dùng khác'}
-          </span>
-          <button
-            type="button"
-            className="deal-new-data-banner-btn"
-            onClick={handleReloadNewData}
-            disabled={reloading}
-          >
-            {reloading ? 'Đang tải…' : 'Cập nhật ngay'}
-          </button>
-          <button
-            type="button"
-            className="deal-new-data-banner-close"
-            onClick={() => setNewDataBanner(null)}
-            title="Bỏ qua"
-          >
-            ✕
-          </button>
-        </div>
-      )}
       <StatsCards stats={stats} />
 
       <div className="deal-toolbar-card">
