@@ -129,9 +129,10 @@ function hasImportedActualQty(actualQtyByCode = {}, code = '') {
 
 function getRowActualQty(sourceRow = {}, actualQtyByCode = {}) {
   const code = normalizeCode(sourceRow.ma);
+  const baseQty = Number(sourceRow.slThucDat || 0);
   return hasImportedActualQty(actualQtyByCode, code)
-    ? toSafeNumber(actualQtyByCode[code])
-    : Number(sourceRow.slThucDat || 0);
+    ? baseQty + toSafeNumber(actualQtyByCode[code])
+    : baseQty;
 }
 
 function getAllowedPrefixes(staffList) {
@@ -652,11 +653,16 @@ export default function DealStopOrders() {
     setImportingActualQty(true);
 
     try {
-      const nextActualQtyByCode = await readActualQtyImportFile(file);
-      const importedCount = Object.keys(nextActualQtyByCode).length;
+      const parsedQtyByCode = await readActualQtyImportFile(file);
+      const importedCount = Object.keys(parsedQtyByCode).length;
       if (!importedCount) {
         toast.error('File không có dòng hợp lệ. Cần 2 cột: mã SP và số lượng thực đặt.');
         return;
+      }
+
+      const nextActualQtyByCode = { ...actualQtyByCode };
+      for (const [code, qty] of Object.entries(parsedQtyByCode)) {
+        nextActualQtyByCode[code] = (nextActualQtyByCode[code] || 0) + qty;
       }
 
       applyActualQtyByCode(nextActualQtyByCode);
