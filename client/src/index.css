@@ -5526,6 +5526,88 @@
       color: #0f172a;
     }
 
+    #page-deal-stop-orders .deal-new-data-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      margin-bottom: 10px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #0e7490 0%, #1d4ed8 100%);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 8px 24px rgba(14, 116, 144, 0.28);
+      animation: deal-banner-slide-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes deal-banner-slide-in {
+      from { opacity: 0; transform: translateY(-10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    #page-deal-stop-orders .deal-new-data-banner-icon {
+      font-size: 18px;
+      flex: 0 0 auto;
+      animation: deal-banner-spin 1.2s linear infinite;
+    }
+
+    @keyframes deal-banner-spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+
+    #page-deal-stop-orders .deal-new-data-banner-text {
+      flex: 1 1 auto;
+    }
+
+    #page-deal-stop-orders .deal-new-data-banner-btn {
+      flex: 0 0 auto;
+      height: 32px;
+      padding: 0 14px;
+      border: 0;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.22);
+      color: #fff;
+      font-family: var(--display);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 120ms ease, transform 120ms ease;
+    }
+
+    #page-deal-stop-orders .deal-new-data-banner-btn:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.35);
+      transform: translateY(-1px);
+    }
+
+    #page-deal-stop-orders .deal-new-data-banner-btn:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+
+    #page-deal-stop-orders .deal-new-data-banner-close {
+      flex: 0 0 auto;
+      width: 28px;
+      height: 28px;
+      border: 0;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 120ms ease;
+    }
+
+    #page-deal-stop-orders .deal-new-data-banner-close:hover {
+      background: rgba(255, 255, 255, 0.28);
+    }
+
     #page-deal-stop-orders .deal-page-header {
       display: flex;
       align-items: flex-start;
