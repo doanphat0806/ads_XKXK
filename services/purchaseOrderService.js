@@ -1435,5 +1435,7 @@ module.exports = {
   importPurchaseOrderStatusesFromCsvText,
   updatePurchaseOrderDashboardCancellation,
   updatePurchaseOrderDashboardNote,
-  updatePurchaseOrder
+  updatePurchaseOrder,
+  parseQuantity,
+  getFirstQuantityText
 };

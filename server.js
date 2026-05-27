@@ -198,7 +198,9 @@ const {
   importPurchaseOrderStatusesFromCsvText,
   updatePurchaseOrderDashboardCancellation,
   updatePurchaseOrderDashboardNote,
-  updatePurchaseOrder
+  updatePurchaseOrder,
+  parseQuantity,
+  getFirstQuantityText
 } = require('./services/purchaseOrderService');
 const {
   DEFAULT_CAMPAIGN_DAILY_BUDGET,
@@ -8879,7 +8881,8 @@ async function buildPurchasePlacedQtyByCode() {
       $group: {
         _id: '$col3',
         orderId: { $last: '$col3' },
-        quantityRaw: { $last: '$productQuantity' }
+        quantityRaw: { $last: '$productQuantity' },
+        quantityFallback: { $last: '$col15' }
       }
     }
   ]).allowDiskUse(true);
@@ -8902,14 +8905,18 @@ async function buildPurchasePlacedQtyByCode() {
 
   groupedRows.forEach(row => {
     const manual = manualByOrderId.get(String(row.orderId || '').trim()) || {};
-    // In this sheet, `col4` is the order date, so only the manually mapped SKU is reliable here.
-    const code = normalizeDealStopCode(manual.skuManual);
-    if (!code) return;
+    const codes = String(manual.skuManual || '').split(/\r?\n/)
+      .map(line => normalizeDealStopCode(line))
+      .filter(Boolean);
+    if (!codes.length) return;
 
-    const qty = parseDealStopManualQty(row.quantityRaw);
+    const quantityText = getFirstQuantityText(row.quantityRaw, row.quantityFallback);
+    const qty = parseQuantity(quantityText);
     if (qty <= 0) return;
 
-    qtyByCode[code] = Number(qtyByCode[code] || 0) + qty;
+    codes.forEach(code => {
+      qtyByCode[code] = Number(qtyByCode[code] || 0) + qty;
+    });
   });
 
   return qtyByCode;

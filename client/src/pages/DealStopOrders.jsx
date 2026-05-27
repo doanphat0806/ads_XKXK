@@ -662,7 +662,7 @@ export default function DealStopOrders() {
 
       const nextActualQtyByCode = { ...actualQtyByCode };
       for (const [code, qty] of Object.entries(parsedQtyByCode)) {
-        nextActualQtyByCode[code] = (nextActualQtyByCode[code] || 0) + qty;
+        nextActualQtyByCode[code] = qty;
       }
 
       applyActualQtyByCode(nextActualQtyByCode);
