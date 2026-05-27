@@ -40,7 +40,7 @@ const DEAL_STOP_STATE_API = '/deal-stop/state';
 const DEAL_STOP_DATA_VERSION = 4;
 const DEAL_STOP_AUTO_REFRESH_MS = 60 * 1000;
 const DEAL_STOP_STATE_POLL_MS = 30 * 1000;
-const SOURCE_OVERRIDE_COLUMNS = new Set(['slKhachDat', 'tiLeHoan', 'dangGuiHang', 'tongDaShip']);
+const SOURCE_OVERRIDE_COLUMNS = new Set(['slKhachDat', 'tiLeHoan', 'dangGuiHang', 'tongDaShip', 'slHuy']);
 
 function getDefaultExpanded(staffList) {
   return staffList.reduce((acc, staff) => {
@@ -245,6 +245,7 @@ function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, ac
         campaignAmount: Number(sourceRow.campaignAmount || 0),
         hasCampaign: Boolean(sourceRow.hasCampaign),
         slKhachDat: overrideNumber('slKhachDat', sourceRow.slKhachDat),
+        slHuy: overrideNumber('slHuy', 0),
         slThucDat: getRowActualQty(sourceRow, actualQtyByCode),
         tiLeHoan: overrideNumber('tiLeHoan', sourceRow.tiLeHoan),
         daNhan: Number(sourceRow.daNhan || 0),

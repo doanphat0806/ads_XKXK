@@ -72,7 +72,8 @@ export function recalculateRow(row, config = DEFAULT_CONFIG) {
   const normalized = {
     ...row,
     slKhachDat: toSafeNumber(row.slKhachDat),
-    slThucDat: toSafeNumber(row.slThucDat),
+    slHuy: toSafeNumber(row.slHuy),
+    slThucDat: Math.max(0, toSafeNumber(row.slThucDat) - toSafeNumber(row.slHuy)),
     orderSizeS: normalizeManualText(row.orderSizeS),
     orderSizeM: normalizeManualText(row.orderSizeM),
     orderSizeL: normalizeManualText(row.orderSizeL),

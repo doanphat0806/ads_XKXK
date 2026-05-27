@@ -8873,7 +8873,8 @@ async function buildPurchasePlacedQtyByCode() {
       $match: {
         sourceId: dataPurchaseSheetId,
         sourceName: dataPurchaseSheetName,
-        col3: { $nin: ['', null] }
+        col3: { $nin: ['', null] },
+        orderDateKey: { $gte: '2026-05-25' }
       }
     },
     { $sort: { rowNumber: 1 } },

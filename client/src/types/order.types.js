@@ -39,6 +39,7 @@ export const ORDER_COLUMN_CONFIG = [
   { id: 'cpo', header: 'CPO', group: 'thongTin', width: 88, type: 'currency', editable: false, align: 'right' },
   { id: 'slKhachDat', header: 'SL Khách Đặt', group: 'thongTin', width: 94, type: 'number', editable: true, align: 'right' },
   { id: 'slThucDat', header: 'SL Thực Đặt', group: 'thongTin', width: 94, type: 'number', editable: false, align: 'right' },
+  { id: 'slHuy', header: 'SL Hủy', group: 'thongTin', width: 94, type: 'number', editable: true, align: 'right' },
   { id: 'sizeS', header: 'SIZE S', group: 'thongTin', width: 70, type: 'text', editable: false, align: 'center' },
   { id: 'sizeM', header: 'SIZE M', group: 'thongTin', width: 70, type: 'text', editable: false, align: 'center' },
   { id: 'sizeL', header: 'SIZE L', group: 'thongTin', width: 70, type: 'text', editable: false, align: 'center' },
@@ -72,6 +73,7 @@ export const EDITABLE_COLUMNS = ORDER_COLUMN_CONFIG.filter(column => column.edit
 export const NUMERIC_COLUMNS = [
   'slKhachDat',
   'slThucDat',
+  'slHuy',
   'orderSizeS',
   'orderSizeM',
   'orderSizeL',
