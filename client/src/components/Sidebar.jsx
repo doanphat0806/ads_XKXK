@@ -119,9 +119,14 @@ export default function Sidebar() {
       )}
 
       {provider === 'shopee' && (
-        <NavLink to="/shopee-commission" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Hoa hong">
-          <span className="icon"><Coins size={16} strokeWidth={2} /></span><span>Hoa hong</span>
-        </NavLink>
+        <>
+          <NavLink to="/shopee-commission" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Hoa hong">
+            <span className="icon"><Coins size={16} strokeWidth={2} /></span><span>Hoa hong</span>
+          </NavLink>
+          <NavLink to="/report-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Bao Cao Giam Sat">
+            <span className="icon"><BarChart3 size={16} strokeWidth={2} /></span><span>Báo Cáo Ads</span>
+          </NavLink>
+        </>
       )}
 
       {(showOrders || showInventory) && (

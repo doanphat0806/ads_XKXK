@@ -26,6 +26,7 @@ import CreateCampaign from './pages/Pages';
 import PurchaseOrders from './pages/PurchaseOrders';
 import ReturnSummary from './pages/ReturnSummary';
 import ShopeeCommission from './pages/ShopeeCommission';
+import ReportDashboard from './pages/ReportDashboard';
 import UserManagement from './pages/UserManagement';
 
 function AppContent() {
@@ -72,6 +73,8 @@ function AppContent() {
         return 'Thống kê kho';
       case '/shopee-commission':
         return 'Hoa hồng Shopee';
+      case '/report-dashboard':
+        return 'Báo Cáo Giám Sát';
       case '/google-sheets':
         return 'Google Sheets';
       case '/creater-page':
@@ -130,6 +133,7 @@ function AppContent() {
                 <Route path="/inventory" element={<Inventory />} />
                 <Route path="/inventory-summary" element={<InventorySummary />} />
                 <Route path="/shopee-commission" element={<ShopeeCommission />} />
+                <Route path="/report-dashboard" element={<ReportDashboard />} />
                 <Route path="/google-sheets" element={<GoogleSheets />} />
                 <Route path="/creater-page" element={<CreaterPage />} />
                 <Route path="/logs" element={<Logs />} />

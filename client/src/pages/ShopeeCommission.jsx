@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
-import { api, formatNumber, formatVND, todayString, uploadForm } from '../lib/api';
+import { api, apiUrl, formatNumber, formatVND, getAuthToken, todayString, uploadForm } from '../lib/api';
 import DateRangePicker from '../components/DateRangePicker';
 import { removeGeminiApiKey, requestGeminiMessage } from '../lib/gemini';
 
@@ -288,6 +288,7 @@ export default function ShopeeCommission() {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
   const [importingCsv, setImportingCsv] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
@@ -494,6 +495,31 @@ Tổng ngan_sach trong phan_bo phải xấp xỉ ngan_sach_hien_tai trong contex
     }
   };
 
+  const downloadExcelReport = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      const url = apiUrl(`/reports/generate-excel?date=${toDate}`);
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${getAuthToken()}` } });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const [, mm, dd] = toDate.split('-');
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `BaoCao_Shopee_${dd}_${mm}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+      toast.success('Đã tải báo cáo Excel thành công!');
+    } catch (error) {
+      toast.error(`Lỗi tải báo cáo: ${error.message}`);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const requestSubIdChat = async (row, apiMessages, displayMessages, retryOnRateLimit = true) => {
     setChatLoading(true);
     setChatError('');
@@ -673,6 +699,14 @@ Tổng ngan_sach trong phan_bo phải xấp xỉ ngan_sach_hien_tai trong contex
               }}
             />
           </div>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={downloadExcelReport}
+            disabled={downloading}
+            title={`Xuất báo cáo giám sát 5 sheet cho ngày ${toDate}`}
+          >
+            {downloading ? '⏳ Đang xuất...' : '📊 Xuất Báo Cáo Excel'}
+          </button>
           <div className="shopee-helper">
             Lấy cột Sub_id2, Thời Gian Đặt Hàng và Tổng hoa hồng đơn hàng trong file AffiliateCommissionReport.
           </div>

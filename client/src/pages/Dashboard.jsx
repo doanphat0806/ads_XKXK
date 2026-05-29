@@ -587,7 +587,7 @@ export default function Dashboard() {
         return dir * (a.costPerOrder - b.costPerOrder);
       }
       if (sortField === 'spend') return dir * (a.spend - b.spend);
-      if (sortField === 'messages') return dir * ((isShopee ? a.clicks : a.messages) - (isShopee ? b.clicks : b.messages));
+      if (sortField === 'messages') return dir * ((isShopee ? a.costPerClick : a.costPerMessage) - (isShopee ? b.costPerClick : b.costPerMessage));
       if (sortField === 'returnRate') {
         if (!a.returnStats?.denominator && !b.returnStats?.denominator) return 0;
         if (!a.returnStats?.denominator) return 1;

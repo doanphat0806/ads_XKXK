@@ -5,6 +5,7 @@ const Campaign = require('../models/Campaign');
 const ShopeeCommission = require('../models/ShopeeCommission');
 const ShopeeCommissionOrder = require('../models/ShopeeCommissionOrder');
 const Account = require('../models/Account');
+const { normalizeCsvHeader, parseCsvNumber } = require('../utils/csvImport');
 
 // ============================================================
 // STYLE CONSTANTS
@@ -977,10 +978,6 @@ async function generateExcelReport({ ownerUserId, targetDate, accountIds }) {
 // CSV PARSING FOR ORDER IMPORT
 // ============================================================
 
-function normalizeCsvHeader(v = '') {
-  return String(v || '').replace(/^﻿/, '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
-
 function getCsvColIdx(headers, candidates) {
   const norm = candidates.map(normalizeCsvHeader);
   return headers.findIndex(h => {
@@ -989,26 +986,14 @@ function getCsvColIdx(headers, candidates) {
   });
 }
 
-function parseCsvNumber(v) {
-  const raw = String(v || '').trim().replace(/\s/g, '').replace(/[^\d,.-]/g, '');
-  if (!raw || raw === '-') return 0;
-  const commas = (raw.match(/,/g) || []).length;
-  const dots   = (raw.match(/\./g) || []).length;
-  let n = raw;
-  if (commas === 1 && dots === 0) n = raw.replace(',', '.');
-  else if (commas > 1 || (commas === 1 && dots === 1 && raw.indexOf(',') < raw.indexOf('.'))) n = raw.replace(/,/g, '');
-  else if (dots > 1) n = raw.replace(/\./g, '');
-  return parseFloat(n) || 0;
-}
-
-const ORDER_ID_HEADERS      = ['Mã đơn hàng', 'Order ID', 'ma don hang', 'order id'];
-const ORDER_STATUS_HEADERS  = ['Trạng thái đơn hàng', 'Order Status', 'trang thai don hang'];
-const ITEM_NAME_HEADERS     = ['Tên mặt hàng', 'Item Name', 'Product Name', 'ten mat hang', 'ten san pham'];
-const ORDER_VALUE_HEADERS   = ['Giá trị đơn hàng', 'Order Value', 'gia tri don hang'];
-const COMM_RATE_ACT_HEADERS = ['% Hoa hồng thực', 'Actual Commission Rate', 'ti le hoa hong thuc'];
-const COMM_RATE_AGR_HEADERS = ['% Hoa hồng thỏa thuận', 'Agreed Commission Rate', 'ti le hoa hong thoa thuan'];
-const COMM_STATUS_HEADERS   = ['Trạng thái hoa hồng', 'Commission Status', 'trang thai hoa hong'];
-const CHANNEL_HEADERS       = ['Kênh', 'Channel', 'kenh'];
+const ORDER_ID_HEADERS      = ['Mã đơn hàng', 'Order ID', 'Order Number', 'ID Đơn', 'Ma don hang', 'Ma DH', 'order id', 'order number', 'order_no', 'order#'];
+const ORDER_STATUS_HEADERS  = ['Trạng thái đơn hàng', 'Order Status', 'trang thai don hang', 'status don hang', 'order status', 'order_state'];
+const ITEM_NAME_HEADERS     = ['Tên mặt hàng', 'Item Name', 'Product Name', 'ten mat hang', 'ten san pham', 'ten san pham', 'item name', 'product name'];
+const ORDER_VALUE_HEADERS   = ['Giá trị đơn hàng', 'Order Value', 'gia tri don hang', 'Total Order Value', 'Order Amount', 'Gia tri don hang'];
+const COMM_RATE_ACT_HEADERS = ['% Hoa hồng thực', 'Actual Commission Rate', 'ti le hoa hong thuc', '% hoa hong thuc'];
+const COMM_RATE_AGR_HEADERS = ['% Hoa hồng thỏa thuận', 'Agreed Commission Rate', 'ti le hoa hong thoa thuan', '% hoa hong thoa thuan'];
+const COMM_STATUS_HEADERS   = ['Trạng thái hoa hồng', 'Commission Status', 'trang thai hoa hong', 'status hoa hong'];
+const CHANNEL_HEADERS       = ['Kênh', 'Channel', 'kenh', 'Nguồn', 'source', 'platform'];
 
 async function importCommissionOrders(ownerUserId, rows, subId2Index, dateIndex, commissionIndex, parseCsvDate) {
   if (!ownerUserId) return { ok: false, error: 'Missing ownerUserId' };
@@ -1066,4 +1051,53 @@ async function importCommissionOrders(ownerUserId, rows, subId2Index, dateIndex,
   return { ok: true, imported: ops.length, upserted: result.upsertedCount, modified: result.modifiedCount };
 }
 
-module.exports = { generateExcelReport, importCommissionOrders };
+async function getReportData({ ownerUserId, targetDate, accountIds }) {
+  const raw  = await fetchReportData({ ownerUserId, targetDate, accountIds });
+  const data = processReportData({ ...raw, targetDate });
+
+  const { processedCamps, sheet1Rows, tkqcRows, todayOrders, tomorrow, n1, n2, n3 } = data;
+
+  // Sheet 3: sorted by campSpend desc
+  const sheet3 = [...processedCamps].sort((a, b) => b.campSpend - a.campSpend).map(r => ({
+    subId2: r.subId2, accountName: r.accountName, testType: r.testType,
+    campaignName: r.campaignName, status: r.status,
+    clicks: r.campClicks, cpc: r.campCpc,
+    spend: r.campSpend, budget: r.campBudget, budgetUsage: r.budgetUsage,
+    recommendation: r.recommendation,
+  }));
+
+  // Sheet 4: all campaigns with history
+  const sheet4 = processedCamps.map(r => ({
+    subId2: r.subId2, accountName: r.accountName, testType: r.testType,
+    campaignName: r.campaignName, status: r.status,
+    recommendation: r.recommendation,
+    histN3: r.histN3, histN2: r.histN2, histN1: r.histN1,
+    commission: r.commission, todayRoi: r.todayRoi,
+    campBudget: r.campBudget, tomorrow: r.tomorrow,
+    changePct: r.changePct, dupSuggestion: r.dupSuggestion,
+    budgetReason: r.budgetReason,
+  }));
+
+  // Sheet 5
+  const sheet5 = tkqcRows.map(r => ({
+    ...r,
+    ...getOverlapRisk(r.activeCnt),
+  }));
+
+  const saleCtx = getSaleContext(tomorrow);
+  const bannerMessage = buildSaleBannerMessage(tomorrow);
+
+  return {
+    targetDate, tomorrowDate: tomorrow, n1, n2, n3,
+    bannerMessage,
+    saleType: saleCtx?.saleType ?? null,
+    saleTOffset: saleCtx?.tOffset ?? null,
+    sheet1: sheet1Rows,
+    sheet2: todayOrders,
+    sheet3,
+    sheet4,
+    sheet5,
+  };
+}
+
+module.exports = { generateExcelReport, importCommissionOrders, getReportData };
