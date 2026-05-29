@@ -150,6 +150,8 @@ const FacebookPost = require('./models/FacebookPost');
 const DataPurchaseOrder = require('./models/DataPurchaseOrder');
 const PurchaseOrder = require('./models/PurchaseOrder');
 const ShopeeCommission = require('./models/ShopeeCommission');
+const ShopeeCommissionOrder = require('./models/ShopeeCommissionOrder');
+const { generateExcelReport, importCommissionOrders } = require('./services/reportService');
 const {
   buildOrderQuery,
   getOrderItemsFromRaw,
@@ -7694,6 +7696,14 @@ async function importShopeeCommissionsFromCsvText(req, csvText = '', options = {
   const result = await ShopeeCommission.bulkWrite(operations, { ordered: false });
   const totalCommission = [...grouped.values()].reduce((sum, item) => sum + item.commission, 0);
 
+  // Also import per-order detail rows for Sheet 2 reconciliation
+  let orderImport = { ok: false, skipped: true };
+  try {
+    orderImport = await importCommissionOrders(ownerUserId, rows, subId2Index, dateIndex, commissionIndex, parseCsvCampaignDate);
+  } catch (e) {
+    orderImport = { ok: false, error: e.message };
+  }
+
   return {
     ok: true,
     imported: grouped.size,
@@ -7702,7 +7712,8 @@ async function importShopeeCommissionsFromCsvText(req, csvText = '', options = {
     modified: result.modifiedCount || 0,
     upserted: result.upsertedCount || 0,
     totalCommission,
-    skipped
+    skipped,
+    orderImport,
   };
 }
 
@@ -10258,6 +10269,7 @@ async function ensureApplicationIndexes() {
     DataPurchaseOrder.createIndexes(),
     PurchaseOrder.createIndexes(),
     ShopeeCommission.createIndexes(),
+    ShopeeCommissionOrder.createIndexes(),
     Config.createIndexes(),
     User.createIndexes(),
     FacebookToken.createIndexes()
@@ -10343,6 +10355,42 @@ app.get('/data-deletion', (req, res) => {
     `
   }));
 });
+
+// ─── EXCEL REPORT GENERATION ────────────────────────────────
+app.get('/api/reports/generate-excel', async (req, res) => {
+  try {
+    if (!req.currentUser?._id) return res.status(401).json({ error: 'Unauthorized' });
+
+    const targetDate = normalizeCampaignDate(req.query.date || todayStr());
+    if (!targetDate) return res.status(400).json({ error: 'Invalid date' });
+
+    const accounts = await Account.find(withUserFilter(req, buildAccountProviderFilter('shopee')))
+      .select('_id name adAccountId').lean();
+
+    if (!accounts.length) {
+      return res.status(404).json({ error: 'Không tìm thấy tài khoản Shopee nào' });
+    }
+
+    const accountIds = accounts.map(a => a._id);
+    const buffer = await generateExcelReport({
+      ownerUserId: req.currentUser._id,
+      targetDate,
+      accountIds,
+    });
+
+    const [, mm, dd] = targetDate.split('-');
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="BaoCao_Shopee_${dd}_${mm}.xlsx"`,
+      'Content-Length': buffer.length,
+    });
+    res.send(Buffer.from(buffer));
+  } catch (err) {
+    console.error('[Report] Error generating Excel report:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+// ────────────────────────────────────────────────────────────
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));
