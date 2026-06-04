@@ -25,6 +25,8 @@ PurchaseOrderSchema.index(
   { name: 'purchase_order_source_order_status_cover' }
 );
 PurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, status: 1 }, { name: 'purchase_order_source_status' });
+PurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, supplementalTrackingCode: 1 }, { name: 'purchase_order_source_supplemental_tracking' });
+PurchaseOrderSchema.index({ sourceId: 1, sourceName: 1, skuManual: 1 }, { name: 'purchase_order_source_sku_manual' });
 PurchaseOrderSchema.index({ updatedAt: -1 }, { name: 'purchase_order_updated' });
 
 module.exports = mongoose.model('PurchaseOrder', PurchaseOrderSchema);

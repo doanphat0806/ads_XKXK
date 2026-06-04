@@ -534,6 +534,39 @@ function rowMatchesSearch(row, search) {
   ].join(' ')).includes(term);
 }
 
+function escapeRegexStr(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function buildSearchSourceFilter(sourceFilter, searchTerm) {
+  if (!searchTerm) return sourceFilter;
+  const regex = { $regex: escapeRegexStr(searchTerm), $options: 'i' };
+  const orConditions = [
+    { col3: regex },
+    { logisticsTrackingCode: regex },
+    { col25: regex },
+    { col1: regex },
+    { col24: regex },
+    { spec: regex },
+    { col13: regex },
+    { col7: regex }
+  ];
+  const manualMatches = await PurchaseOrder.find(
+    {
+      sourceId: SHEET_ID,
+      sourceName: SHEET_NAME,
+      $or: [
+        { supplementalTrackingCode: regex },
+        { skuManual: regex }
+      ]
+    },
+    { orderId: 1 }
+  ).lean();
+  const manualIds = manualMatches.map(r => r.orderId).filter(Boolean);
+  if (manualIds.length) orConditions.push({ col3: { $in: manualIds } });
+  return { ...sourceFilter, $or: orConditions };
+}
+
 function buildSummary(rows) {
   const statusCounts = {
     ve_du: 0,
@@ -1230,8 +1263,10 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
     };
   }
 
+  const searchSourceFilter = await buildSearchSourceFilter(sourceFilter, searchTerm);
+
   const groupedRows = await DataPurchaseOrder.aggregate([
-    ...getPurchaseOrderGroupedPipeline(sourceFilter),
+    ...getPurchaseOrderGroupedPipeline(searchSourceFilter),
     { $sort: { orderDateKey: -1, rowNumber: 1 } }
   ]).allowDiskUse(true);
 
