@@ -794,17 +794,21 @@ function mergeAutoConfig(globalConfig = {}, userConfig = {}) {
     shopeeAutoRuleEndTime: pickDefinedValue(userConfig.shopeeAutoRuleEndTime, globalConfig.shopeeAutoRuleEndTime, userConfig.autoRuleEndTime, globalConfig.autoRuleEndTime, '09:00'),
     scheduledDuplicatePauseTime: pickDefinedValue(userConfig.scheduledDuplicatePauseTime, globalConfig.scheduledDuplicatePauseTime, '21:00'),
     dailyZeroMessageSpendLimit: pickDefinedValue(userConfig.dailyZeroMessageSpendLimit, globalConfig.dailyZeroMessageSpendLimit, 25000),
+    dailyOneMessageSpendLimit: pickDefinedValue(userConfig.dailyOneMessageSpendLimit, globalConfig.dailyOneMessageSpendLimit, 25000),
     dailyHighCostPerMessageLimit: pickDefinedValue(userConfig.dailyHighCostPerMessageLimit, globalConfig.dailyHighCostPerMessageLimit, 20000),
     dailyHighCostSpendLimit: pickDefinedValue(userConfig.dailyHighCostSpendLimit, globalConfig.dailyHighCostSpendLimit, 50000),
     dailyClickLimit: pickDefinedValue(userConfig.dailyClickLimit, globalConfig.dailyClickLimit, 0),
     dailyCpcLimit: pickDefinedValue(userConfig.dailyCpcLimit, globalConfig.dailyCpcLimit, 600),
     lifetimeZeroMessageSpendLimit: pickDefinedValue(userConfig.lifetimeZeroMessageSpendLimit, globalConfig.lifetimeZeroMessageSpendLimit, 25000),
+    lifetimeOneMessageSpendLimit: pickDefinedValue(userConfig.lifetimeOneMessageSpendLimit, globalConfig.lifetimeOneMessageSpendLimit, 25000),
     lifetimeHighCostPerMessageLimit: pickDefinedValue(userConfig.lifetimeHighCostPerMessageLimit, globalConfig.lifetimeHighCostPerMessageLimit, 20000),
     lifetimeHighCostSpendLimit: pickDefinedValue(userConfig.lifetimeHighCostSpendLimit, globalConfig.lifetimeHighCostSpendLimit, 50000),
     lifetimeClickLimit: pickDefinedValue(userConfig.lifetimeClickLimit, globalConfig.lifetimeClickLimit, 0),
     lifetimeCpcLimit: pickDefinedValue(userConfig.lifetimeCpcLimit, globalConfig.lifetimeCpcLimit, 600),
     autoPauseCpoLimit: pickDefinedValue(userConfig.autoPauseCpoLimit, globalConfig.autoPauseCpoLimit, AUTO_PAUSE_CPO_LIMIT),
+    autoPauseCpoLimitLifetime: pickDefinedValue(userConfig.autoPauseCpoLimitLifetime, globalConfig.autoPauseCpoLimitLifetime, AUTO_PAUSE_CPO_LIMIT),
     autoPauseZeroOrderSpendLimit: pickDefinedValue(userConfig.autoPauseZeroOrderSpendLimit, globalConfig.autoPauseZeroOrderSpendLimit, AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
+    autoPauseZeroOrderSpendLimitLifetime: pickDefinedValue(userConfig.autoPauseZeroOrderSpendLimitLifetime, globalConfig.autoPauseZeroOrderSpendLimitLifetime, AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
     autoPauseShopeeMinSpendLimit: getShopeeAutoMinSpendLimit({ autoPauseShopeeMinSpendLimit: shopeeMinSpendLimit }),
     autoPauseShopeeHhAdsPercent: pickDefinedValue(userConfig.autoPauseShopeeHhAdsPercent, globalConfig.autoPauseShopeeHhAdsPercent, AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT)
   };
@@ -815,9 +819,9 @@ async function getUserAutoConfig(userId) {
     getAppConfig(),
     userId ? User.findById(userId).select(
       'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
-      'dailyZeroMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
-      'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
-      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseZeroOrderSpendLimit autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent'
+      'dailyZeroMessageSpendLimit dailyOneMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
+      'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeOneMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
+      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent'
     ).lean() : null
   ]);
   return mergeAutoConfig(globalConfig || {}, userConfig || {});
@@ -1964,6 +1968,7 @@ function getPauseReason(provider, spend, messages, costPerMessage, clicks, costP
   const normalizedProvider = normalizeProvider(provider);
   const isDaily = budgetType === 'DAILY';
   const limitZero = isDaily ? limits.dailyZeroMessageSpendLimit : limits.lifetimeZeroMessageSpendLimit;
+  const limitOne = isDaily ? limits.dailyOneMessageSpendLimit : limits.lifetimeOneMessageSpendLimit;
   const limitHighCostPerMsg = isDaily ? limits.dailyHighCostPerMessageLimit : limits.lifetimeHighCostPerMessageLimit;
   const limitHighCostSpend = isDaily ? limits.dailyHighCostSpendLimit : limits.lifetimeHighCostSpendLimit;
   const configuredLimitCpc = isDaily ? limits.dailyCpcLimit : limits.lifetimeCpcLimit;
@@ -1983,9 +1988,12 @@ function getPauseReason(provider, spend, messages, costPerMessage, clicks, costP
     return null;
   }
 
-  if (messages <= 1 && spend >= limitZero) {
-    const messageText = messages <= 0 ? 'khong co tin nhan' : 'chi co 1 tin nhan';
-    return `Campaign ${messageText} va da tieu tu ${limitZero.toLocaleString()}d`;
+  if (messages <= 0 && spend >= limitZero) {
+    return `Campaign không có tin nhắn và đã tiêu từ ${limitZero.toLocaleString()}đ`;
+  }
+
+  if (messages === 1 && spend >= limitOne) {
+    return `Campaign chỉ có 1 tin nhắn và đã tiêu từ ${limitOne.toLocaleString()}đ`;
   }
 
   if (
@@ -1993,7 +2001,7 @@ function getPauseReason(provider, spend, messages, costPerMessage, clicks, costP
     costPerMessage >= limitHighCostPerMsg &&
     spend >= limitHighCostSpend
   ) {
-    return `Chi phi moi tin nhan tu ${limitHighCostPerMsg.toLocaleString()}d va da tieu tu ${limitHighCostSpend.toLocaleString()}d`;
+    return `Chi phí mỗi tin nhắn từ ${limitHighCostPerMsg.toLocaleString()}đ và đã tiêu từ ${limitHighCostSpend.toLocaleString()}đ`;
   }
 
   return null;
@@ -2293,19 +2301,24 @@ function getAutoPauseDecision({ provider, campaignName, spend, messages, costPer
 
   const orderCount = getOrderCountForCampaignName(campaignName, skuCounts);
   const costPerOrder = orderCount > 0 ? spend / orderCount : 0;
-  const zeroOrderSpendLimit = Number(limits?.autoPauseZeroOrderSpendLimit ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT);
+  const isDaily = budgetType === 'DAILY';
+  const zeroOrderSpendLimit = isDaily
+    ? Number(limits?.autoPauseZeroOrderSpendLimit ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT)
+    : Number(limits?.autoPauseZeroOrderSpendLimitLifetime ?? limits?.autoPauseZeroOrderSpendLimit ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT);
   if (zeroOrderSpendLimit > 0 && orderCount <= 0 && spend >= zeroOrderSpendLimit) {
     return {
-      pauseReason: `Campaign khong co don va da tieu tu ${zeroOrderSpendLimit.toLocaleString()}d`,
+      pauseReason: `Campaign không có đơn và đã tiêu từ ${zeroOrderSpendLimit.toLocaleString()}đ`,
       orderCount,
       costPerOrder
     };
   }
 
-  const cpoLimit = Number(limits?.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT);
+  const cpoLimit = isDaily
+    ? Number(limits?.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT)
+    : Number(limits?.autoPauseCpoLimitLifetime ?? limits?.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT);
   if (cpoLimit > 0 && orderCount > 0 && costPerOrder > cpoLimit) {
     return {
-      pauseReason: `CPO ${Math.round(costPerOrder).toLocaleString()}d > ${cpoLimit.toLocaleString()}d (${orderCount} don)`,
+      pauseReason: `CPO ${Math.round(costPerOrder).toLocaleString()}đ > ${cpoLimit.toLocaleString()}đ (${orderCount} đơn)`,
       orderCount,
       costPerOrder
     };
@@ -4880,9 +4893,9 @@ app.get('/api/config', async (req, res) => {
     const user = await User.findById(req.currentUser._id).select(
       'fbToken fbTokenExpiresAt fbTokenLastRefreshTime fbTokenLastDebugTime fbTokenLastRefreshError ' +
       'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
-      'dailyZeroMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
-      'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
-      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseZeroOrderSpendLimit autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent'
+      'dailyZeroMessageSpendLimit dailyOneMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
+      'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeOneMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
+      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent'
     ).lean();
     const autoConfig = mergeAutoConfig(config || {}, user || {});
     res.json({
@@ -4905,18 +4918,22 @@ app.get('/api/config', async (req, res) => {
       scheduledDuplicatePauseTime: autoConfig.scheduledDuplicatePauseTime,
 
       dailyZeroMessageSpendLimit: autoConfig.dailyZeroMessageSpendLimit,
+      dailyOneMessageSpendLimit: autoConfig.dailyOneMessageSpendLimit,
       dailyHighCostPerMessageLimit: autoConfig.dailyHighCostPerMessageLimit,
       dailyHighCostSpendLimit: autoConfig.dailyHighCostSpendLimit,
       dailyClickLimit: autoConfig.dailyClickLimit,
       dailyCpcLimit: autoConfig.dailyCpcLimit,
 
       lifetimeZeroMessageSpendLimit: autoConfig.lifetimeZeroMessageSpendLimit,
+      lifetimeOneMessageSpendLimit: autoConfig.lifetimeOneMessageSpendLimit,
       lifetimeHighCostPerMessageLimit: autoConfig.lifetimeHighCostPerMessageLimit,
       lifetimeHighCostSpendLimit: autoConfig.lifetimeHighCostSpendLimit,
       lifetimeClickLimit: autoConfig.lifetimeClickLimit,
       lifetimeCpcLimit: autoConfig.lifetimeCpcLimit,
       autoPauseCpoLimit: autoConfig.autoPauseCpoLimit,
+      autoPauseCpoLimitLifetime: autoConfig.autoPauseCpoLimitLifetime,
       autoPauseZeroOrderSpendLimit: autoConfig.autoPauseZeroOrderSpendLimit,
+      autoPauseZeroOrderSpendLimitLifetime: autoConfig.autoPauseZeroOrderSpendLimitLifetime,
       autoPauseShopeeMinSpendLimit: autoConfig.autoPauseShopeeMinSpendLimit,
       autoPauseShopeeHhAdsPercent: autoConfig.autoPauseShopeeHhAdsPercent
     });
@@ -5081,17 +5098,21 @@ app.put('/api/auto-limits', async (req, res) => {
   try {
     const limits = {
       dailyZeroMessageSpendLimit: Number(req.body.dailyZeroMessageSpendLimit),
+      dailyOneMessageSpendLimit: Number(req.body.dailyOneMessageSpendLimit),
       dailyHighCostPerMessageLimit: Number(req.body.dailyHighCostPerMessageLimit),
       dailyHighCostSpendLimit: Number(req.body.dailyHighCostSpendLimit),
       dailyClickLimit: Number(req.body.dailyClickLimit || 0),
       dailyCpcLimit: Number(req.body.dailyCpcLimit || 0),
       lifetimeZeroMessageSpendLimit: Number(req.body.lifetimeZeroMessageSpendLimit),
+      lifetimeOneMessageSpendLimit: Number(req.body.lifetimeOneMessageSpendLimit),
       lifetimeHighCostPerMessageLimit: Number(req.body.lifetimeHighCostPerMessageLimit),
       lifetimeHighCostSpendLimit: Number(req.body.lifetimeHighCostSpendLimit),
       lifetimeClickLimit: Number(req.body.lifetimeClickLimit || 0),
       lifetimeCpcLimit: Number(req.body.lifetimeCpcLimit || 0),
       autoPauseCpoLimit: Number(req.body.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT),
+      autoPauseCpoLimitLifetime: Number(req.body.autoPauseCpoLimitLifetime ?? AUTO_PAUSE_CPO_LIMIT),
       autoPauseZeroOrderSpendLimit: Number(req.body.autoPauseZeroOrderSpendLimit ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
+      autoPauseZeroOrderSpendLimitLifetime: Number(req.body.autoPauseZeroOrderSpendLimitLifetime ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
       autoPauseShopeeMinSpendLimit: getShopeeAutoMinSpendLimit({ autoPauseShopeeMinSpendLimit: req.body.autoPauseShopeeMinSpendLimit }),
       autoPauseShopeeHhAdsPercent: Number(req.body.autoPauseShopeeHhAdsPercent ?? AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT),
       updatedAt: new Date()

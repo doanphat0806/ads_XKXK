@@ -20,18 +20,22 @@ const ConfigSchema = new mongoose.Schema({
   scheduledDuplicatePauseTime: { type: String, default: '21:00' },
   
   dailyZeroMessageSpendLimit: { type: Number, default: 25000 },
+  dailyOneMessageSpendLimit: { type: Number, default: 25000 },
   dailyHighCostPerMessageLimit: { type: Number, default: 20000 },
   dailyHighCostSpendLimit: { type: Number, default: 50000 },
   dailyClickLimit: { type: Number, default: 0 },
   dailyCpcLimit: { type: Number, default: 500 },
-  
+
   lifetimeZeroMessageSpendLimit: { type: Number, default: 25000 },
+  lifetimeOneMessageSpendLimit: { type: Number, default: 25000 },
   lifetimeHighCostPerMessageLimit: { type: Number, default: 20000 },
   lifetimeHighCostSpendLimit: { type: Number, default: 50000 },
   lifetimeClickLimit: { type: Number, default: 0 },
   lifetimeCpcLimit: { type: Number, default: 500 },
   autoPauseCpoLimit: { type: Number, default: 100000 },
+  autoPauseCpoLimitLifetime: { type: Number, default: 100000 },
   autoPauseZeroOrderSpendLimit: { type: Number, default: 60000 },
+  autoPauseZeroOrderSpendLimitLifetime: { type: Number, default: 60000 },
   autoPauseShopeeMinSpendLimit: { type: Number, default: 50000 },
   autoPauseShopeeHhAdsPercent: { type: Number, default: 15 },
   dataPurchaseOrderMeta: { type: mongoose.Schema.Types.Mixed, default: {} },

@@ -6,7 +6,7 @@ import { toast } from 'react-toastify';
 export default function ConfigModal() {
   const { closeModal, appConfig, loadConfig, provider } = useAppContext();
   const isShopee = provider === 'shopee';
-  
+
   const [fbToken, setFbToken] = useState('');
   const [fbApp, setFbApp] = useState({ id: '', secret: '' });
   const [fbOAuthLoading, setFbOAuthLoading] = useState(false);
@@ -15,12 +15,14 @@ export default function ConfigModal() {
   const [autoRules, setAutoRules] = useState({ start: '00:00', end: '09:00' });
   const [scheduledPauseTime, setScheduledPauseTime] = useState('21:00');
   const [autoLimits, setAutoLimits] = useState({
-    dailyZero: 25000, dailyHighCost: 20000, dailyHighSpend: 50000,
-    lifetimeZero: 25000, lifetimeHighCost: 20000, lifetimeHighSpend: 50000,
+    dailyZero: 25000, dailyOne: 25000, dailyHighCost: 20000, dailyHighSpend: 50000,
+    lifetimeZero: 25000, lifetimeOne: 25000, lifetimeHighCost: 20000, lifetimeHighSpend: 50000,
     dailyClickLimit: 0, lifetimeClickLimit: 0,
     dailyCpcLimit: 600, lifetimeCpcLimit: 600,
     autoPauseCpoLimit: 100000,
+    autoPauseCpoLimitLifetime: 100000,
     autoPauseZeroOrderSpendLimit: 60000,
+    autoPauseZeroOrderSpendLimitLifetime: 60000,
     autoPauseShopeeMinSpendLimit: 50000
   });
 
@@ -28,17 +30,18 @@ export default function ConfigModal() {
     if (appConfig) {
       setFbApp({ id: appConfig.fbAppId || '', secret: '' });
       setPancake({ apiKey: '', shopId: appConfig.pancakeShopId || '' });
-      setAutoRules({ 
-        start: isShopee ? (appConfig.shopeeAutoRuleStartTime || '00:00') : (appConfig.autoRuleStartTime || '00:00'), 
-        end: isShopee ? (appConfig.shopeeAutoRuleEndTime || '09:00') : (appConfig.autoRuleEndTime || '09:00') 
+      setAutoRules({
+        start: isShopee ? (appConfig.shopeeAutoRuleStartTime || '00:00') : (appConfig.autoRuleStartTime || '00:00'),
+        end: isShopee ? (appConfig.shopeeAutoRuleEndTime || '09:00') : (appConfig.autoRuleEndTime || '09:00')
       });
       setScheduledPauseTime(appConfig.scheduledDuplicatePauseTime || '21:00');
-      // Populating limits from config if available
       setAutoLimits({
         dailyZero: appConfig.dailyZeroMessageSpendLimit || 25000,
+        dailyOne: appConfig.dailyOneMessageSpendLimit || 25000,
         dailyHighCost: appConfig.dailyHighCostPerMessageLimit || 20000,
         dailyHighSpend: appConfig.dailyHighCostSpendLimit || 50000,
         lifetimeZero: appConfig.lifetimeZeroMessageSpendLimit || 25000,
+        lifetimeOne: appConfig.lifetimeOneMessageSpendLimit || 25000,
         lifetimeHighCost: appConfig.lifetimeHighCostPerMessageLimit || 20000,
         lifetimeHighSpend: appConfig.lifetimeHighCostSpendLimit || 50000,
         dailyClickLimit: appConfig.dailyClickLimit || 0,
@@ -46,7 +49,9 @@ export default function ConfigModal() {
         dailyCpcLimit: appConfig.dailyCpcLimit || 600,
         lifetimeCpcLimit: appConfig.lifetimeCpcLimit || 600,
         autoPauseCpoLimit: appConfig.autoPauseCpoLimit ?? 100000,
+        autoPauseCpoLimitLifetime: appConfig.autoPauseCpoLimitLifetime ?? 100000,
         autoPauseZeroOrderSpendLimit: appConfig.autoPauseZeroOrderSpendLimit ?? 60000,
+        autoPauseZeroOrderSpendLimitLifetime: appConfig.autoPauseZeroOrderSpendLimitLifetime ?? 60000,
         autoPauseShopeeMinSpendLimit: appConfig.autoPauseShopeeMinSpendLimit ?? 50000
       });
     }
@@ -75,13 +80,13 @@ export default function ConfigModal() {
 
       const payload = event.data.payload || {};
       if (!payload.ok) {
-        toast.error('Facebook login loi: ' + (payload.error || 'Khong xac dinh'));
+        toast.error('Facebook login lỗi: ' + (payload.error || 'Không xác định'));
         return;
       }
 
       await loadConfig();
       setFbToken('');
-      toast.success('Da dang nhap Facebook va luu token du quyen');
+      toast.success('Đã đăng nhập Facebook và lưu token đủ quyền');
     };
 
     try {
@@ -94,15 +99,14 @@ export default function ConfigModal() {
       if (!popup) {
         window.removeEventListener('message', handleMessage);
         setFbOAuthLoading(false);
-        toast.error('Trinh duyet da chan popup. Hay cho phep popup roi thu lai.');
+        toast.error('Trình duyệt đã chặn popup. Hãy cho phép popup rồi thử lại.');
         return;
       }
 
-      // Check if popup is closed by user manually or errors out
       const checkTimer = setInterval(() => {
         if (!popup || popup.closed) {
           clearInterval(checkTimer);
-          if (fbOAuthLoading) { // if still loading, means we didn't get success message
+          if (fbOAuthLoading) {
             window.removeEventListener('message', handleMessage);
             setFbOAuthLoading(false);
           }
@@ -112,7 +116,7 @@ export default function ConfigModal() {
     } catch (e) {
       window.removeEventListener('message', handleMessage);
       setFbOAuthLoading(false);
-      toast.error('Loi Facebook login: ' + e.message);
+      toast.error('Lỗi Facebook login: ' + e.message);
     }
   };
 
@@ -123,21 +127,21 @@ export default function ConfigModal() {
         <button className="btn btn-ghost btn-sm" onClick={closeModal}>✕</button>
       </div>
       <div style={{ padding: '20px' }}>
-        
+
         {/* Section: Facebook Token */}
         <section className="section-gap">
           <div className="section-title">1. Facebook Access Token (Dùng chung)</div>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
             <button className="btn btn-g btn-sm" onClick={loginFacebookOAuth} disabled={fbOAuthLoading}>
-              {fbOAuthLoading ? 'Dang doi Facebook...' : 'Dang nhap Facebook cap full quyen'}
+              {fbOAuthLoading ? 'Đang đợi Facebook...' : 'Đăng nhập Facebook cấp full quyền'}
             </button>
             <span style={{ fontSize: '12px', color: 'var(--muted2)' }}>
-              Yeu cau quyen ads_read, ads_management, business_management, pages_show_list, pages_manage_metadata va pages_read_engagement.
+              Yêu cầu quyền ads_read, ads_management, business_management, pages_show_list, pages_manage_metadata và pages_read_engagement.
             </span>
           </div>
           <div className="form-group">
-            <input 
-              type="password" 
+            <input
+              type="password"
               placeholder={appConfig.hasFbToken ? "Đã lưu token (Nhập mới để ghi đè)" : "EAAxxxxxxxxxx..."}
               value={fbToken}
               onChange={e => setFbToken(e.target.value)}
@@ -170,8 +174,8 @@ export default function ConfigModal() {
         <section className="section-gap">
           <div className="section-title">3. Gemini AI API Key (Dùng chung)</div>
           <div className="form-group">
-            <input 
-              type="password" 
+            <input
+              type="password"
               placeholder={appConfig.hasGeminiKey ? "Đã lưu key (Nhập mới để ghi đè)" : "AIzaSy..."}
               value={geminiKey}
               onChange={e => setGeminiKey(e.target.value)}
@@ -219,18 +223,18 @@ export default function ConfigModal() {
         </section>
 
         <section className="section-gap">
-          <div className="section-title">6. Gio tat camp da len lich bi trung</div>
+          <div className="section-title">6. Giờ tắt camp đã lên lịch bị trùng</div>
           <div style={{ marginBottom: '12px', color: 'var(--muted2)' }}>
-            Khi nhieu camp cung ma/ten dang chay, he thong se kiem tra tu moc gio nay va tu tat bot, uu tien giu camp tron doi.
+            Khi nhiều camp cùng mã/tên đang chạy, hệ thống sẽ kiểm tra từ mốc giờ này và tự tắt bớt, ưu tiên giữ camp trọn đời.
           </div>
           <div className="form-grid" style={{ gridTemplateColumns: '1fr' }}>
             <div className="form-group">
-              <label>Gio kiem tra camp trung</label>
+              <label>Giờ kiểm tra camp trùng</label>
               <input type="text" inputMode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:mm" value={scheduledPauseTime} onChange={e => setScheduledPauseTime(e.target.value)} />
             </div>
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
-            <button className="btn btn-p btn-sm" onClick={() => save('/scheduled-duplicate-pause-time', { pauseTime: scheduledPauseTime }, 'Da luu gio tat camp trung')}>Luu gio tat</button>
+            <button className="btn btn-p btn-sm" onClick={() => save('/scheduled-duplicate-pause-time', { pauseTime: scheduledPauseTime }, 'Đã lưu giờ tắt camp trùng')}>Lưu giờ tắt</button>
           </div>
         </section>
 
@@ -240,24 +244,61 @@ export default function ConfigModal() {
           <div style={{ marginBottom: '12px', color: 'var(--muted2)' }}>
             {isShopee
               ? 'Shopee sẽ tắt chiến dịch dựa trên chi phí trên mỗi lượt click. Ngưỡng có thể điều chỉnh được.'
-              : 'Facebook co 4 dieu kien tat camp: 0-1 tin nhan, tin nhan dat, 0 don, va CPO cao.'}
+              : 'Facebook có 4 điều kiện tắt camp: 0 tin nhắn, 1 tin nhắn, tin nhắn đắt, 0 đơn, và CPO cao.'}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
             <div>
               <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>THEO NGÀY</div>
               {isShopee ? (
                 <>
-                  <div className="form-group"><label>Chi tieu toi thieu de xet tat</label><input type="number" min="1" placeholder="50000" value={autoLimits.autoPauseShopeeMinSpendLimit} onChange={e => setAutoLimits({ ...autoLimits, autoPauseShopeeMinSpendLimit: e.target.value })} /></div>
-                  <div className="form-group"><label>Chi phí tối đa/ click (ngày)</label><input type="number" min="0" placeholder="600" value={autoLimits.dailyCpcLimit} onChange={e => setAutoLimits({ ...autoLimits, dailyCpcLimit: e.target.value })} /></div>
-                  <div className="form-group"><label>Số click tối đa/ngày</label><input type="number" min="0" placeholder="0" value={autoLimits.dailyClickLimit} onChange={e => setAutoLimits({ ...autoLimits, dailyClickLimit: e.target.value })} /></div>
+                  <div className="form-group">
+                    <label>Chi tiêu tối thiểu để xét tắt</label>
+                    <input type="number" min="1" placeholder="50000" value={autoLimits.autoPauseShopeeMinSpendLimit} onChange={e => setAutoLimits({ ...autoLimits, autoPauseShopeeMinSpendLimit: e.target.value })} />
+                    <div className="inline-note">Camp chưa tiêu đủ mức này sẽ không bị xét tắt dù CPC cao.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>Chi phí tối đa / click (ngày)</label>
+                    <input type="number" min="0" placeholder="600" value={autoLimits.dailyCpcLimit} onChange={e => setAutoLimits({ ...autoLimits, dailyCpcLimit: e.target.value })} />
+                    <div className="inline-note">Tắt nếu CPC ngày vượt mức này. Đặt 0 để bỏ qua.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>Số click tối đa / ngày</label>
+                    <input type="number" min="0" placeholder="0" value={autoLimits.dailyClickLimit} onChange={e => setAutoLimits({ ...autoLimits, dailyClickLimit: e.target.value })} />
+                    <div className="inline-note">Tắt nếu số click ngày vượt mức này. Đặt 0 để bỏ qua.</div>
+                  </div>
                 </>
               ) : (
                 <>
-                  <div className="form-group"><label>Chi tiêu tối đa khi 0-1 TN</label><input type="number" min="0" placeholder="25000" value={autoLimits.dailyZero} onChange={e => setAutoLimits({ ...autoLimits, dailyZero: e.target.value })} /></div>
-                  <div className="form-group"><label>Giá TN tối đa</label><input type="number" min="0" placeholder="20000" value={autoLimits.dailyHighCost} onChange={e => setAutoLimits({ ...autoLimits, dailyHighCost: e.target.value })} /></div>
-                  <div className="form-group"><label>Chi tiêu tối đa khi TN đắt</label><input type="number" min="0" placeholder="50000" value={autoLimits.dailyHighSpend} onChange={e => setAutoLimits({ ...autoLimits, dailyHighSpend: e.target.value })} /></div>
-                  <div className="form-group"><label>CPO toi da de giu camp co don</label><input type="number" min="0" placeholder="100000" value={autoLimits.autoPauseCpoLimit} onChange={e => setAutoLimits({ ...autoLimits, autoPauseCpoLimit: e.target.value })} /></div>
-                  <div className="form-group"><label>Chi tieu tat camp 0 don</label><input type="number" min="0" placeholder="60000" value={autoLimits.autoPauseZeroOrderSpendLimit} onChange={e => setAutoLimits({ ...autoLimits, autoPauseZeroOrderSpendLimit: e.target.value })} /></div>
+                  <div className="form-group">
+                    <label>Chi tiêu tối đa khi 0 TN</label>
+                    <input type="number" min="0" placeholder="25000" value={autoLimits.dailyZero} onChange={e => setAutoLimits({ ...autoLimits, dailyZero: e.target.value })} />
+                    <div className="inline-note">Camp không có tin nhắn nào chỉ được chi tiêu đến mức này — vượt quá sẽ bị tắt.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>Chi tiêu tối đa khi 1 TN</label>
+                    <input type="number" min="0" placeholder="25000" value={autoLimits.dailyOne} onChange={e => setAutoLimits({ ...autoLimits, dailyOne: e.target.value })} />
+                    <div className="inline-note">Tắt nếu camp chỉ có đúng 1 tin nhắn mà đã tiêu quá mức này.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>Giá TN tối đa</label>
+                    <input type="number" min="0" placeholder="20000" value={autoLimits.dailyHighCost} onChange={e => setAutoLimits({ ...autoLimits, dailyHighCost: e.target.value })} />
+                    <div className="inline-note">Ngưỡng giá mỗi tin nhắn để xét "TN đắt" — dùng kết hợp với chi tiêu tối đa bên dưới.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>Chi tiêu tối đa khi TN đắt</label>
+                    <input type="number" min="0" placeholder="50000" value={autoLimits.dailyHighSpend} onChange={e => setAutoLimits({ ...autoLimits, dailyHighSpend: e.target.value })} />
+                    <div className="inline-note">Tắt nếu giá/TN vượt ngưỡng trên VÀ tổng chi tiêu đã vượt mức này.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>CPO tối đa để giữ camp có đơn (ngày)</label>
+                    <input type="number" min="0" placeholder="100000" value={autoLimits.autoPauseCpoLimit} onChange={e => setAutoLimits({ ...autoLimits, autoPauseCpoLimit: e.target.value })} />
+                    <div className="inline-note">Camp có đơn nhưng CPO vượt mức này vẫn bị tắt. Đặt 0 để bỏ qua.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>Chi tiêu tắt camp 0 đơn (ngày)</label>
+                    <input type="number" min="0" placeholder="60000" value={autoLimits.autoPauseZeroOrderSpendLimit} onChange={e => setAutoLimits({ ...autoLimits, autoPauseZeroOrderSpendLimit: e.target.value })} />
+                    <div className="inline-note">Tắt nếu camp chưa có đơn nào mà đã tiêu quá mức này.</div>
+                  </div>
                 </>
               )}
             </div>
@@ -265,14 +306,49 @@ export default function ConfigModal() {
               <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>TRỌN ĐỜI</div>
               {isShopee ? (
                 <>
-                  <div className="form-group"><label>Chi phí tối đa/ click (trọn đời)</label><input type="number" min="0" placeholder="600" value={autoLimits.lifetimeCpcLimit} onChange={e => setAutoLimits({ ...autoLimits, lifetimeCpcLimit: e.target.value })} /></div>
-                  <div className="form-group"><label>Số click tối đa trọn đời</label><input type="number" min="0" placeholder="0" value={autoLimits.lifetimeClickLimit} onChange={e => setAutoLimits({ ...autoLimits, lifetimeClickLimit: e.target.value })} /></div>
+                  <div className="form-group">
+                    <label>Chi phí tối đa / click (trọn đời)</label>
+                    <input type="number" min="0" placeholder="600" value={autoLimits.lifetimeCpcLimit} onChange={e => setAutoLimits({ ...autoLimits, lifetimeCpcLimit: e.target.value })} />
+                    <div className="inline-note">Tắt nếu CPC trọn đời vượt mức này. Đặt 0 để bỏ qua.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>Số click tối đa trọn đời</label>
+                    <input type="number" min="0" placeholder="0" value={autoLimits.lifetimeClickLimit} onChange={e => setAutoLimits({ ...autoLimits, lifetimeClickLimit: e.target.value })} />
+                    <div className="inline-note">Tắt nếu tổng click trọn đời vượt mức này. Đặt 0 để bỏ qua.</div>
+                  </div>
                 </>
               ) : (
                 <>
-                  <div className="form-group"><label>Chi tiêu tối đa trọn đời khi 0-1 TN</label><input type="number" min="0" placeholder="25000" value={autoLimits.lifetimeZero} onChange={e => setAutoLimits({ ...autoLimits, lifetimeZero: e.target.value })} /></div>
-                  <div className="form-group"><label>Giá TN tối đa trọn đời</label><input type="number" min="0" placeholder="20000" value={autoLimits.lifetimeHighCost} onChange={e => setAutoLimits({ ...autoLimits, lifetimeHighCost: e.target.value })} /></div>
-                  <div className="form-group"><label>Chi tiêu tối đa trọn đời khi TN đắt</label><input type="number" min="0" placeholder="50000" value={autoLimits.lifetimeHighSpend} onChange={e => setAutoLimits({ ...autoLimits, lifetimeHighSpend: e.target.value })} /></div>
+                  <div className="form-group">
+                    <label>Chi tiêu tối đa trọn đời khi 0 TN</label>
+                    <input type="number" min="0" placeholder="25000" value={autoLimits.lifetimeZero} onChange={e => setAutoLimits({ ...autoLimits, lifetimeZero: e.target.value })} />
+                    <div className="inline-note">Camp trọn đời không có tin nhắn nào chỉ được chi tiêu đến mức này — vượt quá sẽ bị tắt.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>Chi tiêu tối đa trọn đời khi 1 TN</label>
+                    <input type="number" min="0" placeholder="25000" value={autoLimits.lifetimeOne} onChange={e => setAutoLimits({ ...autoLimits, lifetimeOne: e.target.value })} />
+                    <div className="inline-note">Áp dụng cho camp ngân sách trọn đời — tắt nếu chỉ có 1 TN mà đã tiêu quá mức này.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>Giá TN tối đa trọn đời</label>
+                    <input type="number" min="0" placeholder="20000" value={autoLimits.lifetimeHighCost} onChange={e => setAutoLimits({ ...autoLimits, lifetimeHighCost: e.target.value })} />
+                    <div className="inline-note">Ngưỡng giá TN để xét "đắt" cho camp trọn đời.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>Chi tiêu tối đa trọn đời khi TN đắt</label>
+                    <input type="number" min="0" placeholder="50000" value={autoLimits.lifetimeHighSpend} onChange={e => setAutoLimits({ ...autoLimits, lifetimeHighSpend: e.target.value })} />
+                    <div className="inline-note">Tắt nếu giá/TN đắt VÀ tổng chi tiêu trọn đời vượt mức này.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>CPO tối đa để giữ camp có đơn (trọn đời)</label>
+                    <input type="number" min="0" placeholder="100000" value={autoLimits.autoPauseCpoLimitLifetime} onChange={e => setAutoLimits({ ...autoLimits, autoPauseCpoLimitLifetime: e.target.value })} />
+                    <div className="inline-note">Camp trọn đời có đơn nhưng CPO vượt mức này vẫn bị tắt.</div>
+                  </div>
+                  <div className="form-group">
+                    <label>Chi tiêu tắt camp 0 đơn (trọn đời)</label>
+                    <input type="number" min="0" placeholder="60000" value={autoLimits.autoPauseZeroOrderSpendLimitLifetime} onChange={e => setAutoLimits({ ...autoLimits, autoPauseZeroOrderSpendLimitLifetime: e.target.value })} />
+                    <div className="inline-note">Tắt nếu camp trọn đời chưa có đơn mà đã tiêu quá mức này.</div>
+                  </div>
                 </>
               )}
             </div>
@@ -280,17 +356,21 @@ export default function ConfigModal() {
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
             <button className="btn btn-p btn-sm" onClick={() => save('/auto-limits', {
               dailyZeroMessageSpendLimit: Number(autoLimits.dailyZero),
+              dailyOneMessageSpendLimit: Number(autoLimits.dailyOne),
               dailyHighCostPerMessageLimit: Number(autoLimits.dailyHighCost),
               dailyHighCostSpendLimit: Number(autoLimits.dailyHighSpend),
               dailyClickLimit: Number(autoLimits.dailyClickLimit || 0),
               dailyCpcLimit: Number(autoLimits.dailyCpcLimit || 0),
               lifetimeZeroMessageSpendLimit: Number(autoLimits.lifetimeZero),
+              lifetimeOneMessageSpendLimit: Number(autoLimits.lifetimeOne),
               lifetimeHighCostPerMessageLimit: Number(autoLimits.lifetimeHighCost),
               lifetimeHighCostSpendLimit: Number(autoLimits.lifetimeHighSpend),
               lifetimeClickLimit: Number(autoLimits.lifetimeClickLimit || 0),
               lifetimeCpcLimit: Number(autoLimits.lifetimeCpcLimit || 0),
               autoPauseCpoLimit: Number(autoLimits.autoPauseCpoLimit || 0),
+              autoPauseCpoLimitLifetime: Number(autoLimits.autoPauseCpoLimitLifetime || 0),
               autoPauseZeroOrderSpendLimit: Number(autoLimits.autoPauseZeroOrderSpendLimit || 0),
+              autoPauseZeroOrderSpendLimitLifetime: Number(autoLimits.autoPauseZeroOrderSpendLimitLifetime || 0),
               autoPauseShopeeMinSpendLimit: Number(autoLimits.autoPauseShopeeMinSpendLimit || 0)
             }, 'Đã lưu giới hạn tự động')}>Lưu giới hạn</button>
           </div>
