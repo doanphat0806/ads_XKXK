@@ -2,7 +2,7 @@ import React from 'react';
 import { formatCompactInt, formatPercent } from '../../utils/formatters';
 
 const CARDS = [
-  { key: 'totalOrders', icon: '📦', label: 'Tổng Đơn', accent: 'blue', render: value => `${formatCompactInt(value)} đơn hàng` },
+  { key: 'totalOrders', icon: '📦', label: 'Tổng Mã', accent: 'blue', render: value => `${formatCompactInt(value)} đơn hàng` },
   { key: 'totalQuantity', icon: '👕', label: 'Tổng SL', accent: 'green', render: value => `${formatCompactInt(value)} sp` },
   { key: 'averageRate', icon: '📊', label: 'TB TL Đặt', accent: 'orange', render: value => formatPercent(value) },
   { key: 'totalShipped', icon: '🚚', label: 'Đã Ship', accent: 'purple', render: value => `${formatCompactInt(value)} sp` }

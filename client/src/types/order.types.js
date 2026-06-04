@@ -36,6 +36,7 @@ export const ORDER_COLUMN_CONFIG = [
   { id: 'actions', header: 'Xóa', group: 'thongTin', width: 76, type: 'action', editable: false, align: 'center', enableSorting: false },
   { id: 'ghiChu', header: 'Ghi Chú', group: 'thongTin', width: 220, type: 'text', editable: true, align: 'left' },
   { id: 'ma', header: 'Mã', group: 'thongTin', width: 112, type: 'text', editable: false, sticky: true, align: 'left' },
+  { id: 'maPrefix2', header: '2 kí tự', group: 'thongTin', width: 90, type: 'text', editable: false, align: 'center' },
   { id: 'cpo', header: 'CPO', group: 'thongTin', width: 88, type: 'currency', editable: false, align: 'right' },
   { id: 'slKhachDat', header: 'SL Khách Đặt', group: 'thongTin', width: 94, type: 'number', editable: true, align: 'right' },
   { id: 'slThucDat', header: 'SL Thực Đặt', group: 'thongTin', width: 94, type: 'number', editable: false, align: 'right' },
@@ -85,10 +86,36 @@ export const NUMERIC_COLUMNS = [
 
 export const PERCENT_COLUMNS = ['tiLeDat', 'tiLeHoan', 'tiLeShip'];
 
+export function parseStaffPrefixes(value) {
+  return String(value || '')
+    .split(',')
+    .map(part => String(part || '').trim().toUpperCase())
+    .map(part => part.replace(/[^A-Z]/g, ''))
+    .filter(part => /^[A-Z]{1,2}$/.test(part));
+}
+
+export function normalizeStaffPrefix(value) {
+  return parseStaffPrefixes(value).join(',');
+}
+
 export function getStaffByMa(ma, staffList = DEFAULT_STAFF_LIST) {
-  const prefix = String(ma || '').trim().charAt(0).toUpperCase();
-  if (!prefix) return null;
-  return staffList.find(staff => String(staff.prefix || '').trim().toUpperCase() === prefix) || null;
+  const code = String(ma || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (!code) return null;
+
+  let bestMatch = null;
+  let bestLength = 0;
+
+  staffList.forEach(staff => {
+    const prefixes = parseStaffPrefixes(staff.prefix);
+    prefixes.forEach(prefix => {
+      if (code.startsWith(prefix) && prefix.length > bestLength) {
+        bestMatch = staff;
+        bestLength = prefix.length;
+      }
+    });
+  });
+
+  return bestMatch;
 }
 
 export function createUnknownStaff(prefix) {
@@ -98,4 +125,10 @@ export function createUnknownStaff(prefix) {
     prefix: String(prefix || '?').toUpperCase(),
     color: 'slate'
   };
+}
+
+export function getMaPrefix2(ma) {
+  const code = String(ma || '').trim().toUpperCase().replace(/\s+/g, '');
+  const prefix = code.slice(0, 2);
+  return /^[A-Z]{2}$/.test(prefix) ? prefix : '';
 }

@@ -1,31 +1,39 @@
 import React, { useState } from 'react';
 import toast from 'react-hot-toast';
 import Modal from '../Common/Modal';
-import { STAFF_COLOR_OPTIONS } from '../../types/order.types';
-
-function normalizePrefix(value) {
-  return String(value || '').trim().charAt(0).toUpperCase();
-}
+import { STAFF_COLOR_OPTIONS, normalizeStaffPrefix } from '../../types/order.types';
 
 function validateStaffList(staffList) {
   const errors = [];
   const prefixSet = new Set();
 
   staffList.forEach((staff, index) => {
-    const prefix = normalizePrefix(staff.prefix);
+    const normalizedPrefix = normalizeStaffPrefix(staff.prefix);
+    const prefixes = normalizedPrefix ? normalizedPrefix.split(',') : [];
+    const rowPrefixSet = new Set();
+
     if (!staff.name.trim()) {
       errors.push(`Tên nhân viên dòng ${index + 1} không được trống`);
       return;
     }
-    if (!prefix) {
+    if (!prefixes.length) {
       errors.push(`Ký tự đầu dòng ${index + 1} không hợp lệ`);
       return;
     }
-    if (prefixSet.has(prefix)) {
-      errors.push(`Ký tự đầu ${prefix} đang bị trùng`);
-      return;
-    }
-    prefixSet.add(prefix);
+
+    prefixes.forEach(prefix => {
+      if (rowPrefixSet.has(prefix)) {
+        errors.push(`Ký tự đầu ${prefix} dòng ${index + 1} bị lặp`);
+        return;
+      }
+      rowPrefixSet.add(prefix);
+
+      if (prefixSet.has(prefix)) {
+        errors.push(`Ký tự đầu ${prefix} đang bị trùng`);
+        return;
+      }
+      prefixSet.add(prefix);
+    });
   });
 
   return errors;
@@ -45,7 +53,7 @@ export default function StaffSettings({ open, staffList, onClose, onSave }) {
   const handleChange = (id, field, value) => {
     setDraft(current => current.map(staff => (
       staff.id === id
-        ? { ...staff, [field]: field === 'prefix' ? normalizePrefix(value) : value }
+        ? { ...staff, [field]: value }
         : staff
     )));
   };
@@ -70,7 +78,7 @@ export default function StaffSettings({ open, staffList, onClose, onSave }) {
     const normalized = draft.map(staff => ({
       ...staff,
       name: String(staff.name || '').trim(),
-      prefix: normalizePrefix(staff.prefix),
+      prefix: normalizeStaffPrefix(staff.prefix),
       color: staff.color || 'slate'
     }));
     const nextErrors = validateStaffList(normalized);
@@ -124,10 +132,9 @@ export default function StaffSettings({ open, staffList, onClose, onSave }) {
                 <td>
                   <input
                     type="text"
-                    maxLength="1"
                     value={staff.prefix}
                     onChange={event => handleChange(staff.id, 'prefix', event.target.value)}
-                    placeholder="P"
+                    placeholder="P hoặc PE,PC,PD"
                   />
                 </td>
                 <td>

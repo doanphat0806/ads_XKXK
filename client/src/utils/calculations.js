@@ -63,6 +63,12 @@ export function calcSLChenh(slKhachDat, slThucDat) {
   return slKhachDat - slThucDat;
 }
 
+function getMaPrefix2(ma) {
+  const code = String(ma || '').trim().toUpperCase().replace(/\s+/g, '');
+  const prefix = code.slice(0, 2);
+  return /^[A-Z]{2}$/.test(prefix) ? prefix : '';
+}
+
 export function recalculateRow(row, config = DEFAULT_CONFIG) {
   const normalizeManualText = (value) => {
     if (value === '' || value === null || value === undefined) return '';
@@ -89,6 +95,7 @@ export function recalculateRow(row, config = DEFAULT_CONFIG) {
 
   return {
     ...normalized,
+    maPrefix2: getMaPrefix2(normalized.ma),
     slCanDatThem: calcSLCanDatThem(
       normalized.ma,
       normalized.slThucDat,

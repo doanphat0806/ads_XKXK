@@ -21,7 +21,8 @@ import {
   NUMERIC_COLUMNS,
   ORDER_COLUMN_CONFIG,
   PERCENT_COLUMNS,
-  TAB_OPTIONS
+  TAB_OPTIONS,
+  parseStaffPrefixes
 } from '../types/order.types';
 import { DEFAULT_CONFIG } from '../types/chuaCoConfig.types';
 import { parsePercentInput, recalculateRow, toSafeNumber } from '../utils/calculations';
@@ -137,9 +138,7 @@ function getRowActualQty(sourceRow = {}, actualQtyByCode = {}) {
 
 function getAllowedPrefixes(staffList) {
   return new Set(
-    staffList
-      .map(staff => String(staff.prefix || '').trim().toUpperCase())
-      .filter(Boolean)
+    staffList.flatMap(staff => parseStaffPrefixes(staff.prefix))
   );
 }
 
@@ -151,8 +150,8 @@ function pruneRowsByStaffList(rowsByTab, staffList) {
   const nextRowsByTab = Object.fromEntries(
     Object.entries(rowsByTab).map(([tabId, tabRows]) => {
       const filteredRows = tabRows.filter(row => {
-        const prefix = String(row.ma || '').trim().charAt(0).toUpperCase();
-        const keep = allowedPrefixes.has(prefix);
+        const code = normalizeCode(row.ma);
+        const keep = Array.from(allowedPrefixes).some(prefix => code.startsWith(prefix));
         if (!keep) removedCount += 1;
         return keep;
       });
