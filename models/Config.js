@@ -21,6 +21,10 @@ const ConfigSchema = new mongoose.Schema({
   
   dailyZeroMessageSpendLimit: { type: Number, default: 25000 },
   dailyOneMessageSpendLimit: { type: Number, default: 25000 },
+  dailyFewMessageThreshold: { type: Number, default: 0 },
+  dailyFewMessageSpendLimit: { type: Number, default: 0 },
+  dailyCheapMessageCostLimit: { type: Number, default: 0 },
+  dailyCheapMessageSpendLimit: { type: Number, default: 0 },
   dailyHighCostPerMessageLimit: { type: Number, default: 20000 },
   dailyHighCostSpendLimit: { type: Number, default: 50000 },
   dailyClickLimit: { type: Number, default: 0 },
@@ -28,6 +32,10 @@ const ConfigSchema = new mongoose.Schema({
 
   lifetimeZeroMessageSpendLimit: { type: Number, default: 25000 },
   lifetimeOneMessageSpendLimit: { type: Number, default: 25000 },
+  lifetimeFewMessageThreshold: { type: Number, default: 0 },
+  lifetimeFewMessageSpendLimit: { type: Number, default: 0 },
+  lifetimeCheapMessageCostLimit: { type: Number, default: 0 },
+  lifetimeCheapMessageSpendLimit: { type: Number, default: 0 },
   lifetimeHighCostPerMessageLimit: { type: Number, default: 20000 },
   lifetimeHighCostSpendLimit: { type: Number, default: 50000 },
   lifetimeClickLimit: { type: Number, default: 0 },

@@ -15,8 +15,8 @@ export default function ConfigModal() {
   const [autoRules, setAutoRules] = useState({ start: '00:00', end: '09:00' });
   const [scheduledPauseTime, setScheduledPauseTime] = useState('21:00');
   const [autoLimits, setAutoLimits] = useState({
-    dailyZero: 25000, dailyOne: 25000, dailyHighCost: 20000, dailyHighSpend: 50000,
-    lifetimeZero: 25000, lifetimeOne: 25000, lifetimeHighCost: 20000, lifetimeHighSpend: 50000,
+    dailyZero: 25000, dailyOne: 25000, dailyFewThreshold: 0, dailyFewSpend: 0, dailyCheapCost: 0, dailyCheapSpend: 0, dailyHighCost: 20000, dailyHighSpend: 50000,
+    lifetimeZero: 25000, lifetimeOne: 25000, lifetimeFewThreshold: 0, lifetimeFewSpend: 0, lifetimeCheapCost: 0, lifetimeCheapSpend: 0, lifetimeHighCost: 20000, lifetimeHighSpend: 50000,
     dailyClickLimit: 0, lifetimeClickLimit: 0,
     dailyCpcLimit: 600, lifetimeCpcLimit: 600,
     autoPauseCpoLimit: 100000,
@@ -38,10 +38,18 @@ export default function ConfigModal() {
       setAutoLimits({
         dailyZero: appConfig.dailyZeroMessageSpendLimit || 25000,
         dailyOne: appConfig.dailyOneMessageSpendLimit || 25000,
+        dailyFewThreshold: appConfig.dailyFewMessageThreshold || 0,
+        dailyFewSpend: appConfig.dailyFewMessageSpendLimit || 0,
+        dailyCheapCost: appConfig.dailyCheapMessageCostLimit || 0,
+        dailyCheapSpend: appConfig.dailyCheapMessageSpendLimit || 0,
         dailyHighCost: appConfig.dailyHighCostPerMessageLimit || 20000,
         dailyHighSpend: appConfig.dailyHighCostSpendLimit || 50000,
         lifetimeZero: appConfig.lifetimeZeroMessageSpendLimit || 25000,
         lifetimeOne: appConfig.lifetimeOneMessageSpendLimit || 25000,
+        lifetimeFewThreshold: appConfig.lifetimeFewMessageThreshold || 0,
+        lifetimeFewSpend: appConfig.lifetimeFewMessageSpendLimit || 0,
+        lifetimeCheapCost: appConfig.lifetimeCheapMessageCostLimit || 0,
+        lifetimeCheapSpend: appConfig.lifetimeCheapMessageSpendLimit || 0,
         lifetimeHighCost: appConfig.lifetimeHighCostPerMessageLimit || 20000,
         lifetimeHighSpend: appConfig.lifetimeHighCostSpendLimit || 50000,
         dailyClickLimit: appConfig.dailyClickLimit || 0,
@@ -280,6 +288,15 @@ export default function ConfigModal() {
                     <div className="inline-note">Tắt nếu camp chỉ có đúng 1 tin nhắn mà đã tiêu quá mức này.</div>
                   </div>
                   <div className="form-group">
+                    <label>TN rẻ dưới giá (ngày)</label>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input type="number" min="0" placeholder="0" value={autoLimits.dailyCheapCost} onChange={e => setAutoLimits({ ...autoLimits, dailyCheapCost: e.target.value })} style={{ flex: 1 }} />
+                      <span style={{ fontSize: '12px', color: 'var(--muted2)', whiteSpace: 'nowrap' }}>đ/TN, chi tiêu đến</span>
+                      <input type="number" min="0" placeholder="0" value={autoLimits.dailyCheapSpend} onChange={e => setAutoLimits({ ...autoLimits, dailyCheapSpend: e.target.value })} style={{ flex: 1 }} />
+                    </div>
+                    <div className="inline-note">Nếu giá TN thấp hơn ngưỡng này nhưng không có đơn, tắt khi đã tiêu đủ. Đặt 0 để bỏ qua.</div>
+                  </div>
+                  <div className="form-group">
                     <label>Giá TN tối đa</label>
                     <input type="number" min="0" placeholder="20000" value={autoLimits.dailyHighCost} onChange={e => setAutoLimits({ ...autoLimits, dailyHighCost: e.target.value })} />
                     <div className="inline-note">Ngưỡng giá mỗi tin nhắn để xét "TN đắt" — dùng kết hợp với chi tiêu tối đa bên dưới.</div>
@@ -330,6 +347,15 @@ export default function ConfigModal() {
                     <div className="inline-note">Áp dụng cho camp ngân sách trọn đời — tắt nếu chỉ có 1 TN mà đã tiêu quá mức này.</div>
                   </div>
                   <div className="form-group">
+                    <label>TN rẻ dưới giá (trọn đời)</label>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input type="number" min="0" placeholder="0" value={autoLimits.lifetimeCheapCost} onChange={e => setAutoLimits({ ...autoLimits, lifetimeCheapCost: e.target.value })} style={{ flex: 1 }} />
+                      <span style={{ fontSize: '12px', color: 'var(--muted2)', whiteSpace: 'nowrap' }}>đ/TN, chi tiêu đến</span>
+                      <input type="number" min="0" placeholder="0" value={autoLimits.lifetimeCheapSpend} onChange={e => setAutoLimits({ ...autoLimits, lifetimeCheapSpend: e.target.value })} style={{ flex: 1 }} />
+                    </div>
+                    <div className="inline-note">Nếu giá TN thấp hơn ngưỡng này nhưng không có đơn, tắt khi đã tiêu đủ. Đặt 0 để bỏ qua.</div>
+                  </div>
+                  <div className="form-group">
                     <label>Giá TN tối đa trọn đời</label>
                     <input type="number" min="0" placeholder="20000" value={autoLimits.lifetimeHighCost} onChange={e => setAutoLimits({ ...autoLimits, lifetimeHighCost: e.target.value })} />
                     <div className="inline-note">Ngưỡng giá TN để xét "đắt" cho camp trọn đời.</div>
@@ -357,12 +383,20 @@ export default function ConfigModal() {
             <button className="btn btn-p btn-sm" onClick={() => save('/auto-limits', {
               dailyZeroMessageSpendLimit: Number(autoLimits.dailyZero),
               dailyOneMessageSpendLimit: Number(autoLimits.dailyOne),
+              dailyFewMessageThreshold: 0,
+              dailyFewMessageSpendLimit: 0,
+              dailyCheapMessageCostLimit: Number(autoLimits.dailyCheapCost || 0),
+              dailyCheapMessageSpendLimit: Number(autoLimits.dailyCheapSpend || 0),
               dailyHighCostPerMessageLimit: Number(autoLimits.dailyHighCost),
               dailyHighCostSpendLimit: Number(autoLimits.dailyHighSpend),
               dailyClickLimit: Number(autoLimits.dailyClickLimit || 0),
               dailyCpcLimit: Number(autoLimits.dailyCpcLimit || 0),
               lifetimeZeroMessageSpendLimit: Number(autoLimits.lifetimeZero),
               lifetimeOneMessageSpendLimit: Number(autoLimits.lifetimeOne),
+              lifetimeFewMessageThreshold: Number(autoLimits.lifetimeFewThreshold || 0),
+              lifetimeFewMessageSpendLimit: Number(autoLimits.lifetimeFewSpend || 0),
+              lifetimeCheapMessageCostLimit: Number(autoLimits.lifetimeCheapCost || 0),
+              lifetimeCheapMessageSpendLimit: Number(autoLimits.lifetimeCheapSpend || 0),
               lifetimeHighCostPerMessageLimit: Number(autoLimits.lifetimeHighCost),
               lifetimeHighCostSpendLimit: Number(autoLimits.lifetimeHighSpend),
               lifetimeClickLimit: Number(autoLimits.lifetimeClickLimit || 0),
