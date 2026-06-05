@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx';
 import { ORDER_COLUMN_CONFIG } from '../types/order.types';
 import { formatDate } from './formatters';
 
@@ -11,11 +10,12 @@ function formatExportValue(value, type) {
   return value ?? '';
 }
 
-export function exportOrdersToExcel({
+export async function exportOrdersToExcel({
   groupedRows,
   visibility,
   filenameDate = new Date()
 }) {
+  const XLSX = await import('xlsx');
   const columns = getVisibleExportColumns(ORDER_COLUMN_CONFIG, visibility);
   const aoa = [];
 

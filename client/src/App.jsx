@@ -1,36 +1,48 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { Toaster } from 'react-hot-toast';
-import { ToastContainer } from 'react-toastify';
-import 'react-toastify/dist/ReactToastify.css';
 
 import { AppProvider, useAppContext } from './contexts/AppContext';
 import AuthScreen from './components/AuthScreen';
-import ModalContainer from './components/ModalContainer';
-import Sidebar from './components/Sidebar';
-import Topbar from './components/Topbar';
-import Accounts from './pages/Accounts';
-import Campaigns from './pages/Campaigns';
-import CloneCampaigns from './pages/CloneCampaigns';
-import CreaterPage from './pages/CreaterPage';
-import Dashboard from './pages/Dashboard';
-import DataPurchaseOrders from './pages/DataPurchaseOrders';
-import DealStopOrders from './pages/DealStopOrders';
-import GoogleSheets from './pages/GoogleSheets';
-import Inventory from './pages/Inventory';
-import InventorySummary from './pages/InventorySummary';
-import Logs from './pages/Logs';
-import OderDashboard from './pages/OderDashboard';
-import Orders from './pages/Orders';
-import CreateCampaign from './pages/Pages';
-import PurchaseOrders from './pages/PurchaseOrders';
-import ReturnSummary from './pages/ReturnSummary';
-import ShopeeCommission from './pages/ShopeeCommission';
-import ReportDashboard from './pages/ReportDashboard';
-import UserManagement from './pages/UserManagement';
+
+const ModalContainer = React.lazy(() => import('./components/ModalContainer'));
+const Sidebar = React.lazy(() => import('./components/Sidebar'));
+const Topbar = React.lazy(() => import('./components/Topbar'));
+const ToastLayer = React.lazy(() => import('./components/ToastLayer'));
+const Accounts = React.lazy(() => import('./pages/Accounts'));
+const Campaigns = React.lazy(() => import('./pages/Campaigns'));
+const CloneCampaigns = React.lazy(() => import('./pages/CloneCampaigns'));
+const CreaterPage = React.lazy(() => import('./pages/CreaterPage'));
+const Dashboard = React.lazy(() => import('./pages/Dashboard'));
+const DataPurchaseOrders = React.lazy(() => import('./pages/DataPurchaseOrders'));
+const DealStopOrders = React.lazy(() => import('./pages/DealStopOrders'));
+const GoogleSheets = React.lazy(() => import('./pages/GoogleSheets'));
+const Inventory = React.lazy(() => import('./pages/Inventory'));
+const InventorySummary = React.lazy(() => import('./pages/InventorySummary'));
+const Logs = React.lazy(() => import('./pages/Logs'));
+const OderDashboard = React.lazy(() => import('./pages/OderDashboard'));
+const Orders = React.lazy(() => import('./pages/Orders'));
+const CreateCampaign = React.lazy(() => import('./pages/Pages'));
+const PurchaseOrders = React.lazy(() => import('./pages/PurchaseOrders'));
+const ReturnSummary = React.lazy(() => import('./pages/ReturnSummary'));
+const ShopeeCommission = React.lazy(() => import('./pages/ShopeeCommission'));
+const ReportDashboard = React.lazy(() => import('./pages/ReportDashboard'));
+const UserManagement = React.lazy(() => import('./pages/UserManagement'));
+
+function RouteLoading() {
+  return (
+    <div className="empty">
+      <span className="spin">...</span>
+      <p>Dang tai...</p>
+    </div>
+  );
+}
+
+function ShellLoading() {
+  return <div className="empty"><span className="spin">...</span></div>;
+}
 
 function AppContent() {
-  const { isAuthenticated, provider, currentUser } = useAppContext();
+  const { isAuthenticated, provider, currentUser, modalState } = useAppContext();
   const isOder = provider === 'oder';
   const isKho = provider === 'kho';
   const isFacebook = provider === 'facebook';
@@ -92,60 +104,70 @@ function AppContent() {
 
   return (
     <div className="app-shell">
-      <Sidebar />
+      <Suspense fallback={<ShellLoading />}>
+        <Sidebar />
+      </Suspense>
       <div className="main">
-        <Topbar title={getPageTitle()} />
+        <Suspense fallback={<ShellLoading />}>
+          <Topbar title={getPageTitle()} />
+        </Suspense>
         <div className="content">
-          <Routes>
-            {isOder ? (
-              <>
-                <Route path="/oder-dashboard" element={<OderDashboard />} />
-                <Route path="/purchase-orders" element={<PurchaseOrders />} />
-                <Route path="/deal-stop-orders" element={<DealStopOrders />} />
-                <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
-                <Route path="/return-summary" element={<Navigate to="/oder-dashboard" replace />} />
-                <Route path="*" element={<Navigate to="/oder-dashboard" replace />} />
-              </>
-            ) : isKho ? (
-              <>
-                <Route path="/purchase-orders" element={<PurchaseOrders />} />
-                <Route path="/deal-stop-orders" element={<DealStopOrders />} />
-                <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
-                <Route path="/oder-dashboard" element={<OderDashboard />} />
-                <Route path="/return-summary" element={<Navigate to="/inventory" replace />} />
-                <Route path="/inventory" element={<Inventory />} />
-                <Route path="/inventory-summary" element={<InventorySummary />} />
-                <Route path="/google-sheets" element={<GoogleSheets />} />
-                <Route path="*" element={<Navigate to="/inventory" replace />} />
-              </>
-            ) : (
-              <>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/oder-dashboard" element={<OderDashboard />} />
-                <Route path="/return-summary" element={isFacebook ? <ReturnSummary /> : <Navigate to="/" replace />} />
-                <Route path="/accounts" element={<Accounts />} />
-                <Route path="/campaigns" element={<Campaigns />} />
-                <Route path="/clone-campaigns" element={<CloneCampaigns />} />
-                <Route path="/orders" element={<Orders />} />
-                <Route path="/purchase-orders" element={<PurchaseOrders />} />
-                <Route path="/deal-stop-orders" element={<DealStopOrders />} />
-                <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
-                <Route path="/inventory" element={<Inventory />} />
-                <Route path="/inventory-summary" element={<InventorySummary />} />
-                <Route path="/shopee-commission" element={<ShopeeCommission />} />
-                <Route path="/report-dashboard" element={<ReportDashboard />} />
-                <Route path="/google-sheets" element={<GoogleSheets />} />
-                <Route path="/creater-page" element={<CreaterPage />} />
-                <Route path="/logs" element={<Logs />} />
-                <Route path="/create-campaign" element={<CreateCampaign />} />
-                <Route path="/user-management" element={isAdmin ? <UserManagement /> : <Navigate to="/" replace />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </>
-            )}
-          </Routes>
+          <Suspense fallback={<RouteLoading />}>
+            <Routes>
+              {isOder ? (
+                <>
+                  <Route path="/oder-dashboard" element={<OderDashboard />} />
+                  <Route path="/purchase-orders" element={<PurchaseOrders />} />
+                  <Route path="/deal-stop-orders" element={<DealStopOrders />} />
+                  <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
+                  <Route path="/return-summary" element={<Navigate to="/oder-dashboard" replace />} />
+                  <Route path="*" element={<Navigate to="/oder-dashboard" replace />} />
+                </>
+              ) : isKho ? (
+                <>
+                  <Route path="/purchase-orders" element={<PurchaseOrders />} />
+                  <Route path="/deal-stop-orders" element={<DealStopOrders />} />
+                  <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
+                  <Route path="/oder-dashboard" element={<OderDashboard />} />
+                  <Route path="/return-summary" element={<Navigate to="/inventory" replace />} />
+                  <Route path="/inventory" element={<Inventory />} />
+                  <Route path="/inventory-summary" element={<InventorySummary />} />
+                  <Route path="/google-sheets" element={<GoogleSheets />} />
+                  <Route path="*" element={<Navigate to="/inventory" replace />} />
+                </>
+              ) : (
+                <>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/oder-dashboard" element={<OderDashboard />} />
+                  <Route path="/return-summary" element={isFacebook ? <ReturnSummary /> : <Navigate to="/" replace />} />
+                  <Route path="/accounts" element={<Accounts />} />
+                  <Route path="/campaigns" element={<Campaigns />} />
+                  <Route path="/clone-campaigns" element={<CloneCampaigns />} />
+                  <Route path="/orders" element={<Orders />} />
+                  <Route path="/purchase-orders" element={<PurchaseOrders />} />
+                  <Route path="/deal-stop-orders" element={<DealStopOrders />} />
+                  <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
+                  <Route path="/inventory" element={<Inventory />} />
+                  <Route path="/inventory-summary" element={<InventorySummary />} />
+                  <Route path="/shopee-commission" element={<ShopeeCommission />} />
+                  <Route path="/report-dashboard" element={<ReportDashboard />} />
+                  <Route path="/google-sheets" element={<GoogleSheets />} />
+                  <Route path="/creater-page" element={<CreaterPage />} />
+                  <Route path="/logs" element={<Logs />} />
+                  <Route path="/create-campaign" element={<CreateCampaign />} />
+                  <Route path="/user-management" element={isAdmin ? <UserManagement /> : <Navigate to="/" replace />} />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </>
+              )}
+            </Routes>
+          </Suspense>
         </div>
       </div>
-      <ModalContainer />
+      {modalState.type && (
+        <Suspense fallback={null}>
+          <ModalContainer />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -156,8 +178,9 @@ export default function App() {
       <Router>
         <AppContent />
       </Router>
-      <ToastContainer position="bottom-right" autoClose={3000} hideProgressBar theme="dark" />
-      <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
+      <Suspense fallback={null}>
+        <ToastLayer />
+      </Suspense>
     </AppProvider>
   );
 }

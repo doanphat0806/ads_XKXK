@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { api, cachedApi, readResponseCache, todayString } from '../lib/api';
-import { toast } from 'react-toastify';
 import { setGeminiKeyStatus } from '../lib/gemini';
+import { notify } from '../lib/notify';
 
 const AppContext = createContext();
 
@@ -47,10 +47,10 @@ export const AppProvider = ({ children }) => {
       setCurrentUser(result.user || null);
       setIsAuthenticated(true);
       setProvider(result.user?.provider || type);
-      toast.success('Dang nhap thanh cong');
+      notify.success('Dang nhap thanh cong');
       return true;
     } catch (error) {
-      toast.error(error.message || 'Sai tai khoan hoac mat khau');
+      notify.error(error.message || 'Sai tai khoan hoac mat khau');
       return false;
     }
   };
@@ -155,7 +155,7 @@ export const AppProvider = ({ children }) => {
 
   const refreshAll = useCallback(async (isManual = true) => {
     try {
-      if (isManual) toast.info('Dang lam moi du lieu...');
+      if (isManual) notify.info('Dang lam moi du lieu...');
       const accounts = await api('GET', '/accounts');
       let skippedCount = 0;
       let failedCount = 0;
@@ -170,12 +170,12 @@ export const AppProvider = ({ children }) => {
       }
       await loadAll();
       if (isManual && (failedCount || skippedCount)) {
-        toast.warn(`Da tai xong, bo qua ${failedCount + skippedCount} tai khoan dang loi tam thoi`);
+        notify.warn(`Da tai xong, bo qua ${failedCount + skippedCount} tai khoan dang loi tam thoi`);
         return;
       }
-      if (isManual) toast.success('Da tai du lieu moi nhat');
+      if (isManual) notify.success('Da tai du lieu moi nhat');
     } catch (e) {
-      if (isManual) toast.error('Loi lam moi: ' + e.message);
+      if (isManual) notify.error('Loi lam moi: ' + e.message);
     }
   }, [loadAll]);
 

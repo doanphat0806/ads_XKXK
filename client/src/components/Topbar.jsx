@@ -1,7 +1,6 @@
 import React from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import { api } from '../lib/api';
-import { toast } from 'react-toastify';
 import {
   hasGeminiApiKey,
   loadGeminiApiKeyStatus,
@@ -9,6 +8,7 @@ import {
   removeGeminiApiKey,
   saveGeminiApiKey
 } from '../lib/gemini';
+import { notify } from '../lib/notify';
 
 export default function Topbar({ title }) {
   const { provider, currentUser, logout, refreshAll, loadAccounts, openModal } = useAppContext();
@@ -33,7 +33,7 @@ export default function Topbar({ title }) {
 
   const saveGeminiKey = async () => {
     if (!geminiKeyInput.trim()) {
-      toast.error('Vui lòng nhập Gemini API Key');
+      notify.error('Vui long nhap Gemini API Key');
       return;
     }
 
@@ -42,19 +42,19 @@ export default function Topbar({ title }) {
       await saveGeminiApiKey(geminiKeyInput);
       setGeminiKeyInput('');
       setGeminiReady(true);
-      toast.success('Gemini API Key hợp lệ và đã lưu vào database');
+      notify.success('Gemini API Key hop le va da luu vao database');
     } catch (error) {
       console.error('Gemini key save failed:', error);
       if (error?.status === 401) {
         setGeminiReady(false);
-        toast.error('API Key không hợp lệ hoặc không dùng được với Gemini API');
+        notify.error('API Key khong hop le hoac khong dung duoc voi Gemini API');
         return;
       }
       if (error?.status === 429) {
-        toast.error('Đã vượt rate limit, thử lại sau 60 giây');
+        notify.error('Da vuot rate limit, thu lai sau 60 giay');
         return;
       }
-      toast.error(`Lưu Gemini key lỗi: ${error.message}`);
+      notify.error(`Luu Gemini key loi: ${error.message}`);
     } finally {
       setTestingGeminiKey(false);
     }
@@ -66,9 +66,9 @@ export default function Topbar({ title }) {
       await removeGeminiApiKey();
       setGeminiKeyInput('');
       setGeminiReady(false);
-      toast.success('Đã xóa Gemini API Key khỏi database');
+      notify.success('Da xoa Gemini API Key khoi database');
     } catch (error) {
-      toast.error(`Xóa Gemini key lỗi: ${error.message}`);
+      notify.error(`Xoa Gemini key loi: ${error.message}`);
     }
   };
 
@@ -77,7 +77,7 @@ export default function Topbar({ title }) {
     setDiscovering(true);
 
     try {
-      toast.info('Dang dong bo tai khoan duoc gan trong BM...');
+      notify.info('Dang dong bo tai khoan duoc gan trong BM...');
       const result = await api('POST', '/accounts/auto-discover', {
         provider,
         fast: true,
@@ -86,13 +86,13 @@ export default function Topbar({ title }) {
         timeoutMs: 90000
       });
       await loadAccounts();
-      toast.success(result.message || 'Da dong bo tai khoan duoc gan trong BM');
+      notify.success(result.message || 'Da dong bo tai khoan duoc gan trong BM');
     } catch (e) {
       if (e.rateLimited || e.status === 429) {
-        toast.info('Facebook dang gioi han Auto Discover. Doi vai phut roi bam lai.');
+        notify.info('Facebook dang gioi han Auto Discover. Doi vai phut roi bam lai.');
         return;
       }
-      toast.error('Loi: ' + e.message);
+      notify.error('Loi: ' + e.message);
     } finally {
       setDiscovering(false);
     }

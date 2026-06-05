@@ -1,5 +1,4 @@
 import React from 'react';
-import * as XLSX from 'xlsx';
 import toast from 'react-hot-toast';
 import ConfirmDialog from '../components/Common/ConfirmDialog';
 import AddOrderModal from '../components/Settings/AddOrderModal';
@@ -110,6 +109,7 @@ function parseActualQtyRows(rows = []) {
 }
 
 async function readActualQtyImportFile(file) {
+  const XLSX = await import('xlsx');
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -180,28 +180,6 @@ function cleanManualOverrides(row = {}) {
       .filter(field => manualOverrides[field] === true)
       .map(field => [field, true])
   );
-}
-
-function getComparableRow(row = {}) {
-  return Object.keys(row || {})
-    .sort()
-    .reduce((acc, key) => {
-      if (typeof row[key] === 'undefined') return acc;
-      acc[key] = key === '_manualOverrides' ? cleanManualOverrides(row) : row[key];
-      return acc;
-    }, {});
-}
-
-function areDealStopRowsEqual(leftRows = [], rightRows = []) {
-  if (leftRows.length !== rightRows.length) return false;
-
-  for (let index = 0; index < leftRows.length; index += 1) {
-    if (JSON.stringify(getComparableRow(leftRows[index])) !== JSON.stringify(getComparableRow(rightRows[index]))) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 function markManualOverride(row = {}, field = '') {
@@ -672,7 +650,7 @@ export default function DealStopOrders() {
     } finally {
       setImportingActualQty(false);
     }
-  }, [applyActualQtyByCode, importingActualQty]);
+  }, [actualQtyByCode, applyActualQtyByCode, importingActualQty]);
 
   const clearActualQtyImport = React.useCallback(() => {
     applyActualQtyByCode({});
@@ -837,7 +815,7 @@ export default function DealStopOrders() {
     setExporting(true);
     setExportDone(false);
     try {
-      exportOrdersToExcel({
+      await exportOrdersToExcel({
         groupedRows,
         visibility: columnVisibility,
         filenameDate: new Date()

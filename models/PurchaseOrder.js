@@ -18,7 +18,15 @@ const PurchaseOrderSchema = new mongoose.Schema({
 
 PurchaseOrderSchema.index(
   { sourceId: 1, sourceName: 1, orderId: 1 },
-  { unique: true, name: 'purchase_order_source_order_unique' }
+  {
+    unique: true,
+    name: 'purchase_order_source_order_unique',
+    partialFilterExpression: {
+      sourceId: { $type: 'string' },
+      sourceName: { $type: 'string' },
+      orderId: { $type: 'string' }
+    }
+  }
 );
 PurchaseOrderSchema.index(
   { sourceId: 1, sourceName: 1, orderId: 1, status: 1 },

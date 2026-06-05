@@ -1,10 +1,20 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { useAppContext } from '../contexts/AppContext';
-import AccountModal from './Modals/AccountModal';
-import AutomationModal from './Modals/AutomationModal';
-import ConfigModal from './Modals/ConfigModal';
-import BulkAddModal from './Modals/BulkAddModal';
-import ShopeePagesModal from './Modals/ShopeePagesModal';
+
+const AccountModal = React.lazy(() => import('./Modals/AccountModal'));
+const AutomationModal = React.lazy(() => import('./Modals/AutomationModal'));
+const ConfigModal = React.lazy(() => import('./Modals/ConfigModal'));
+const BulkAddModal = React.lazy(() => import('./Modals/BulkAddModal'));
+const ShopeePagesModal = React.lazy(() => import('./Modals/ShopeePagesModal'));
+
+function ModalLoading() {
+  return (
+    <div className="empty">
+      <span className="spin">...</span>
+      <p>Đang tải...</p>
+    </div>
+  );
+}
 
 export default function ModalContainer() {
   const { modalState, closeModal } = useAppContext();
@@ -31,7 +41,9 @@ export default function ModalContainer() {
   return (
     <div className="modal-overlay open" onClick={closeModal}>
       <div className="modal-content" onClick={e => e.stopPropagation()}>
-        {renderModalContent()}
+        <Suspense fallback={<ModalLoading />}>
+          {renderModalContent()}
+        </Suspense>
       </div>
     </div>
   );
