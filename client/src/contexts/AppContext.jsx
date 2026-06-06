@@ -8,6 +8,10 @@ const AppContext = createContext();
 export const useAppContext = () => useContext(AppContext);
 
 const AUTO_REFRESH_MS = 60000;
+const REFRESH_ALL_BATCH_SIZE = {
+  facebook: 2,
+  shopee: 3
+};
 
 export const AppProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem('adsctrl-token')));
@@ -156,17 +160,22 @@ export const AppProvider = ({ children }) => {
   const refreshAll = useCallback(async (isManual = true) => {
     try {
       if (isManual) notify.info('Dang lam moi du lieu...');
-      const accounts = await api('GET', '/accounts');
+      const accounts = await api('GET', `/accounts?provider=${provider}`);
       let skippedCount = 0;
       let failedCount = 0;
-      for (const acc of accounts) {
-        try {
-          const result = await api('POST', `/accounts/${acc._id}/refresh`);
-          if (result?.skipped) skippedCount += 1;
-        } catch (err) {
+      const batchSize = REFRESH_ALL_BATCH_SIZE[provider] || 2;
+      for (let i = 0; i < accounts.length; i += batchSize) {
+        const batch = accounts.slice(i, i + batchSize);
+        const results = await Promise.allSettled(batch.map(acc => api('POST', `/accounts/${acc._id}/refresh`)));
+        results.forEach((result, index) => {
+          const acc = batch[index];
+          if (result.status === 'fulfilled') {
+            if (result.value?.skipped) skippedCount += 1;
+            return;
+          }
           failedCount += 1;
-          console.warn(`Khong the refresh tai khoan ${acc.name}:`, err);
-        }
+          console.warn(`Khong the refresh tai khoan ${acc.name}:`, result.reason);
+        });
       }
       await loadAll();
       if (isManual && (failedCount || skippedCount)) {
@@ -177,7 +186,7 @@ export const AppProvider = ({ children }) => {
     } catch (e) {
       if (isManual) notify.error('Loi lam moi: ' + e.message);
     }
-  }, [loadAll]);
+  }, [loadAll, provider]);
 
   useEffect(() => {
     if (isAuthenticated) {

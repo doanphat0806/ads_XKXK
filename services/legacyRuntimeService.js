@@ -143,6 +143,9 @@ function createLegacyRuntime(app) {
     FINAL_SPEND_CRON,
     FINAL_SPEND_TIMEZONE,
     TODAY_CAMPAIGN_SYNC_INTERVAL_MS,
+    TODAY_CAMPAIGN_SYNC_CONCURRENCY,
+    SHOPEE_TODAY_CAMPAIGN_SYNC_INTERVAL_MS,
+    SHOPEE_TODAY_CAMPAIGN_SYNC_CONCURRENCY,
     REDIS_URL,
     REDIS_QUEUE_ENABLED,
     REDIS_HOST,
@@ -3265,8 +3268,8 @@ function createLegacyRuntime(app) {
   let facebookTokenCronTask = null;
   let finalSpendCronTask = null;
   let shopeeReactivateCronTask = null;
-  let todayCampaignSpendSyncTimer = null;
-  let todayCampaignSpendSyncRunning = false;
+  const todayCampaignSpendSyncTimers = {};
+  const todayCampaignSpendSyncRunning = {};
   let backgroundOrderSyncRunning = false;
   let isShuttingDown = false;
   let sheetRefreshTimer = null;
@@ -3499,6 +3502,17 @@ function createLegacyRuntime(app) {
   function isMongoReady() {
     return !isShuttingDown && mongoose.connection.readyState === 1;
   }
+
+  function tryStartAccountRun(accountId) {
+    const key = String(accountId || '');
+    if (!key || accountRuns[key]) return false;
+    accountRuns[key] = true;
+    return true;
+  }
+
+  function finishAccountRun(accountId) {
+    delete accountRuns[String(accountId || '')];
+  }
   
   async function runAutoControlSafely(account, source = 'auto', options = {}) {
     const accountId = String(account._id);
@@ -3506,7 +3520,7 @@ function createLegacyRuntime(app) {
     if (accountRuns[accountId]) return;
     if (getAccountRateLimitDelayMs(accountId) > 0) return;
   
-    accountRuns[accountId] = true;
+    tryStartAccountRun(accountId);
     try {
       await runAutoControl(account, options);
     } catch (error) {
@@ -3514,7 +3528,7 @@ function createLegacyRuntime(app) {
         console.error(`${source} auto run failed for ${account.name}: ${error.message}`);
       }
     } finally {
-      delete accountRuns[accountId];
+      finishAccountRun(accountId);
     }
   }
   
@@ -3549,7 +3563,7 @@ function createLegacyRuntime(app) {
     if (!isMongoReady() || accountRuns[accountId]) return { skipped: true };
     if (getAccountRateLimitDelayMs(accountId) > 0) return { skipped: true, rateLimitedCooldown: true };
   
-    accountRuns[accountId] = true;
+    tryStartAccountRun(accountId);
     try {
       if (account.provider === 'shopee') {
         await fetchShopeeAccountData(account);
@@ -3560,6 +3574,7 @@ function createLegacyRuntime(app) {
         lastChecked: new Date(),
         status: 'connected'
       });
+      clearCampaignReadCache();
       return { ok: true };
     } catch (error) {
       if (!isMongoReady()) return { skipped: true, error: error.message };
@@ -3580,50 +3595,76 @@ function createLegacyRuntime(app) {
       await addLog(account._id, account.name, 'error', `Loi dong bo chi tieu hom nay: ${error.message}`);
       return { ok: false, error: error.message };
     } finally {
-      delete accountRuns[accountId];
+      finishAccountRun(accountId);
     }
   }
   
-  async function syncTodayCampaignSpendAllAccounts(source = 'timer') {
-    if (!isMongoReady() || todayCampaignSpendSyncRunning) return;
+  function getTodayCampaignSyncOptions(provider) {
+    const normalizedProvider = normalizeProvider(provider);
+    return normalizedProvider === 'shopee'
+      ? {
+          provider: 'shopee',
+          intervalMs: SHOPEE_TODAY_CAMPAIGN_SYNC_INTERVAL_MS,
+          concurrency: SHOPEE_TODAY_CAMPAIGN_SYNC_CONCURRENCY
+        }
+      : {
+          provider: 'facebook',
+          intervalMs: TODAY_CAMPAIGN_SYNC_INTERVAL_MS,
+          concurrency: TODAY_CAMPAIGN_SYNC_CONCURRENCY
+        };
+  }
   
-    todayCampaignSpendSyncRunning = true;
+  async function syncTodayCampaignSpendAccounts(provider, source = 'timer') {
+    const options = getTodayCampaignSyncOptions(provider);
+    if (!isMongoReady() || todayCampaignSpendSyncRunning[options.provider]) return;
+  
+    todayCampaignSpendSyncRunning[options.provider] = true;
     try {
-      const accounts = await Account.find({
-        $or: [
-          buildAccountProviderFilter('facebook'),
-          buildAccountProviderFilter('shopee')
-        ]
-      });
+      const accounts = await Account.find(buildAccountProviderFilter(options.provider));
       let synced = 0;
       let skipped = 0;
       let failed = 0;
   
-      for (const account of accounts) {
-        if (isShuttingDown) break;
-        const result = await syncTodayCampaignSpendForAccount(account);
+      const results = await mapWithConcurrency(accounts, async (account) => {
+        if (isShuttingDown) return { skipped: true };
+        return syncTodayCampaignSpendForAccount(account);
+      }, options.concurrency);
+  
+      for (const result of results) {
         if (result?.ok) synced += 1;
         else if (result?.skipped) skipped += 1;
         else failed += 1;
       }
   
-      console.log(`Today campaign spend sync (${source}): synced=${synced}, skipped=${skipped}, failed=${failed}`);
+      console.log(`Today campaign spend sync ${options.provider} (${source}): accounts=${accounts.length}, concurrency=${options.concurrency}, synced=${synced}, skipped=${skipped}, failed=${failed}`);
     } catch (error) {
       if (!isShuttingDown) {
-        console.error(`Today campaign spend sync failed: ${error.message}`);
+        console.error(`Today campaign spend sync ${options.provider} failed: ${error.message}`);
       }
     } finally {
-      todayCampaignSpendSyncRunning = false;
+      todayCampaignSpendSyncRunning[options.provider] = false;
     }
   }
   
   function startTodayCampaignSpendSync() {
-    if (todayCampaignSpendSyncTimer) clearInterval(todayCampaignSpendSyncTimer);
-    console.log(`Today campaign spend sync scheduled every ${Math.round(TODAY_CAMPAIGN_SYNC_INTERVAL_MS / 1000)}s`);
-    setTimeout(() => syncTodayCampaignSpendAllAccounts('startup'), Math.min(TODAY_CAMPAIGN_SYNC_INTERVAL_MS, 5 * 60 * 1000));
-    todayCampaignSpendSyncTimer = setInterval(() => {
-      syncTodayCampaignSpendAllAccounts('timer');
-    }, TODAY_CAMPAIGN_SYNC_INTERVAL_MS);
+    for (const timer of Object.values(todayCampaignSpendSyncTimers)) {
+      clearInterval(timer);
+    }
+    for (const key of Object.keys(todayCampaignSpendSyncTimers)) {
+      delete todayCampaignSpendSyncTimers[key];
+    }
+  
+    for (const provider of ['facebook', 'shopee']) {
+      const options = getTodayCampaignSyncOptions(provider);
+      console.log(`Today campaign spend sync ${options.provider} scheduled every ${Math.round(options.intervalMs / 1000)}s with concurrency=${options.concurrency}`);
+      setTimeout(
+        () => syncTodayCampaignSpendAccounts(options.provider, 'startup'),
+        Math.min(options.intervalMs, 5 * 60 * 1000)
+      );
+      todayCampaignSpendSyncTimers[options.provider] = setInterval(() => {
+        syncTodayCampaignSpendAccounts(options.provider, 'timer');
+      }, options.intervalMs);
+    }
   }
   
   function stopAccountScheduler(accountId) {
@@ -3819,10 +3860,14 @@ function createLegacyRuntime(app) {
       fetchLiveCampaignRowsForReportByAccounts,
       fetchShopeeAccountData,
       fetchAccountData,
+      getAccountRateLimitDelayMs,
+      markAccountRateLimited,
       startCampaignDuplicateWorker,
       startCampaignSyncWorker,
       processOrderSheetSyncJob,
       isMongoReady,
+      tryStartAccountRun,
+      finishAccountRun,
       runAutoControlSafely,
       startAccountScheduler,
       stopAccountScheduler
@@ -4084,8 +4129,8 @@ function createLegacyRuntime(app) {
     if (shopeeReactivateCronTask) {
       shopeeReactivateCronTask.stop();
     }
-    if (todayCampaignSpendSyncTimer) {
-      clearInterval(todayCampaignSpendSyncTimer);
+    for (const timer of Object.values(todayCampaignSpendSyncTimers)) {
+      clearInterval(timer);
     }
     if (sheetRefreshTimer) {
       clearInterval(sheetRefreshTimer);

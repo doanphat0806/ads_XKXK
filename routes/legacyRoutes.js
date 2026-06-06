@@ -600,9 +600,18 @@ app.post('/api/accounts/delete-bulk', async (req, res) => {
 });
 
 app.post('/api/accounts/:id/refresh', async (req, res) => {
+  let account = null;
+  let runStarted = false;
   try {
-    const account = await Account.findOne(withUserFilter(req, { _id: req.params.id }));
+    account = await Account.findOne(withUserFilter(req, { _id: req.params.id }));
     if (!account) return res.status(404).json({ error: 'Not found' });
+    if (getAccountRateLimitDelayMs && getAccountRateLimitDelayMs(account._id) > 0) {
+      return res.json({ ok: false, skipped: true, transient: true, rateLimitedCooldown: true, accountId: account._id });
+    }
+    if (tryStartAccountRun && !tryStartAccountRun(account._id)) {
+      return res.json({ ok: false, skipped: true, inFlight: true, accountId: account._id });
+    }
+    runStarted = true;
 
     const result = account.provider === 'shopee'
       ? await fetchShopeeAccountData(account)
@@ -612,13 +621,15 @@ app.post('/api/accounts/:id/refresh', async (req, res) => {
       lastChecked: new Date(),
       status: 'connected'
     });
+    clearCampaignReadCache();
 
     res.json({ ok: true, ...result });
   } catch (error) {
-    const account = await Account.findOne(withUserFilter(req, { _id: req.params.id })).catch(() => null);
+    if (!account) account = await Account.findOne(withUserFilter(req, { _id: req.params.id })).catch(() => null);
     if (error.transient) {
       if (account) {
         if (error.rateLimited) {
+          if (markAccountRateLimited) markAccountRateLimited(account._id);
           await Account.findByIdAndUpdate(account._id, {
             lastChecked: new Date(),
             status: 'connected'
@@ -633,6 +644,8 @@ app.post('/api/accounts/:id/refresh', async (req, res) => {
       await Account.findByIdAndUpdate(account._id, { status: 'error' });
     }
     res.status(400).json({ error: error.message });
+  } finally {
+    if (runStarted && finishAccountRun) finishAccountRun(req.params.id);
   }
 });
 
