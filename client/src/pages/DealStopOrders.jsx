@@ -12,7 +12,7 @@ import StatsCards from '../components/Toolbar/StatsCards';
 import { useChuaCoConfig } from '../hooks/useChuaCoConfig';
 import { useColorRules } from '../hooks/useColorRules';
 import { useOrderTable } from '../hooks/useOrderTable';
-import { api } from '../lib/api';
+import { api, apiUrl, getAuthToken } from '../lib/api';
 import {
   DEFAULT_COLUMN_VISIBILITY,
   DEFAULT_STAFF_LIST,
@@ -40,7 +40,9 @@ const DEAL_STOP_STATE_API = '/deal-stop/state';
 const DEAL_STOP_DATA_VERSION = 4;
 const DEAL_STOP_AUTO_REFRESH_MS = 60 * 1000;
 const DEAL_STOP_STATE_POLL_MS = 30 * 1000;
+const DEAL_STOP_ROW_SAVE_DEBOUNCE_MS = 250;
 const SOURCE_OVERRIDE_COLUMNS = new Set(['slKhachDat', 'tiLeHoan', 'dangGuiHang', 'tongDaShip', 'slHuy']);
+const DIRECT_INPUT_COLUMNS = new Set(['orderSizeS', 'orderSizeM', 'orderSizeL', 'orderSizeXL', 'orderSizeFZ']);
 
 function getDefaultExpanded(staffList) {
   return staffList.reduce((acc, staff) => {
@@ -64,10 +66,43 @@ function getNextEditableCell(visibleColumns, rows, currentRowId, currentColumnId
   return null;
 }
 
-const DIRECT_INPUT_COLUMNS = new Set(['orderSizeS', 'orderSizeM', 'orderSizeL', 'orderSizeXL', 'orderSizeFZ']);
-
 function normalizeCode(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+function getDirectInputRowPayload(row = {}) {
+  return {
+    id: row.id,
+    ma: row.ma,
+    slKhachDat: row.slKhachDat,
+    orderSizeS: row.orderSizeS ?? '',
+    orderSizeM: row.orderSizeM ?? '',
+    orderSizeL: row.orderSizeL ?? '',
+    orderSizeXL: row.orderSizeXL ?? '',
+    orderSizeFZ: row.orderSizeFZ ?? ''
+  };
+}
+
+function sendDealStopRowKeepalive(activeTab, row = {}) {
+  if (typeof window === 'undefined') return;
+  const token = getAuthToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  try {
+    window.fetch(apiUrl('/deal-stop/state/row'), {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        tabId: activeTab,
+        ma: normalizeCode(row.ma),
+        row: getDirectInputRowPayload(row)
+      }),
+      keepalive: true
+    }).catch(() => {});
+  } catch {
+    // Browsers can reject keepalive on shutdown; normal debounced saves still cover active tabs.
+  }
 }
 
 function normalizeImportHeader(value = '') {
@@ -342,6 +377,8 @@ export default function DealStopOrders() {
   const isReloadingRef = React.useRef(false);
   const pollTimerRef = React.useRef(null);
   const autoRefreshTimerRef = React.useRef(null);
+  const rowSaveTimersRef = React.useRef(new Map());
+  const pendingDirectRowsRef = React.useRef(new Map());
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -430,6 +467,66 @@ export default function DealStopOrders() {
       saveSharedState(latestStateRef.current, { silent: true });
     }, 600);
   }, [saveSharedState, stateReady]);
+
+  const saveDirectInputRow = React.useCallback((row) => {
+    const code = normalizeCode(row?.ma);
+    if (!code || !stateReady) return Promise.resolve();
+
+    return api('PATCH', '/deal-stop/state/row', {
+      tabId: activeTab,
+      ma: code,
+      row: getDirectInputRowPayload(row)
+    }, { timeoutMs: 30000 })
+      .then(res => {
+        if (res?.state?.updatedAt) {
+          remoteUpdatedAtRef.current = res.state.updatedAt;
+        }
+        pendingDirectRowsRef.current.delete(code);
+        return res;
+      })
+      .catch(error => {
+        pendingDirectRowsRef.current.set(code, row);
+        throw error;
+      });
+  }, [activeTab, stateReady]);
+
+  const scheduleDirectInputRowSave = React.useCallback((row) => {
+    const code = normalizeCode(row?.ma);
+    if (!code) return;
+
+    pendingDirectRowsRef.current.set(code, row);
+    const existingTimer = rowSaveTimersRef.current.get(code);
+    if (existingTimer) window.clearTimeout(existingTimer);
+
+    const timer = window.setTimeout(() => {
+      rowSaveTimersRef.current.delete(code);
+      const latestRow = pendingDirectRowsRef.current.get(code);
+      if (!latestRow) return;
+      saveDirectInputRow(latestRow).catch(error => {
+        toast.error(`Lưu ĐH ${latestRow.ma || code} lỗi: ${error.message}`);
+      });
+    }, DEAL_STOP_ROW_SAVE_DEBOUNCE_MS);
+
+    rowSaveTimersRef.current.set(code, timer);
+  }, [saveDirectInputRow]);
+
+  React.useEffect(() => () => {
+    rowSaveTimersRef.current.forEach(timer => window.clearTimeout(timer));
+    rowSaveTimersRef.current.clear();
+  }, []);
+
+  React.useEffect(() => {
+    const flushPendingDirectRows = () => {
+      rowSaveTimersRef.current.forEach(timer => window.clearTimeout(timer));
+      rowSaveTimersRef.current.clear();
+      pendingDirectRowsRef.current.forEach(row => sendDealStopRowKeepalive(activeTab, row));
+    };
+
+    window.addEventListener('beforeunload', flushPendingDirectRows);
+    return () => {
+      window.removeEventListener('beforeunload', flushPendingDirectRows);
+    };
+  }, [activeTab]);
 
   React.useEffect(() => {
     scheduleSaveSharedState();
@@ -658,15 +755,17 @@ export default function DealStopOrders() {
   }, [applyActualQtyByCode]);
 
   const handleDirectInputChange = React.useCallback((rowId, columnId, nextValue) => {
-    updateRows(currentRows => currentRows.map(row => (
-      row.id !== rowId
-        ? row
-        : recalculateRow({
-            ...row,
-            [columnId]: String(nextValue ?? '')
-          }, config)
-    )));
-  }, [config, updateRows]);
+    updateRows(currentRows => currentRows.map(row => {
+      if (row.id !== rowId) return row;
+
+      const nextRow = recalculateRow({
+        ...row,
+        [columnId]: String(nextValue ?? '')
+      }, config);
+      scheduleDirectInputRowSave(nextRow);
+      return nextRow;
+    }));
+  }, [config, scheduleDirectInputRowSave, updateRows]);
 
   const startEdit = (rowId, columnId, currentValue) => {
     setEditingCell({ rowId, columnId });

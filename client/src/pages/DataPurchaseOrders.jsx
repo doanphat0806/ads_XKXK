@@ -139,7 +139,7 @@ export default function DataPurchaseOrders() {
       const formData = new FormData();
       formData.set('file', file);
       const result = await uploadForm('/data-purchase-orders/import-csv', formData, { timeoutMs: 10 * 60 * 1000 });
-      toast.success(`Đã lưu ${formatNumber(result.imported)} dòng CSV vào database`);
+      toast.success(`Đã ghi đè ${formatNumber(result.imported)} dòng CSV theo ${formatNumber(result.replacedOrderCount || 0)} mã 订单号`);
       await loadRows({ nextPage: 1 });
     } catch (err) {
       setError(err.message);
@@ -230,7 +230,7 @@ export default function DataPurchaseOrders() {
               />
             </div>
             <div className="data-po-import-note">
-              Hỗ trợ CSV đủ cột A:AH hoặc CSV đã lọc sẵn 11 cột theo query.
+              Hỗ trợ CSV đủ cột A:AH hoặc CSV đã lọc sẵn 11 cột theo query. Import sẽ ghi đè dữ liệu cũ theo cột 订单号.
             </div>
           </div>
         </div>

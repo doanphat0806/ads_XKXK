@@ -16,6 +16,7 @@ const PRESETS = [
   { label: 'Tuần trước', value: 'lastWeek' },
   { label: 'Tháng này', value: 'thisMonth' },
   { label: 'Tháng trước', value: 'lastMonth' },
+  { label: 'Năm nay', value: 'thisYear' },
 ];
 
 const getRangeFromPreset = (preset) => {
@@ -63,6 +64,9 @@ const getRangeFromPreset = (preset) => {
     case 'lastMonth':
       from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
       to = new Date(today.getFullYear(), today.getMonth(), 0);
+      break;
+    case 'thisYear':
+      from = new Date(today.getFullYear(), 0, 1);
       break;
     case 'lifetime':
       from = new Date('2026-02-22');

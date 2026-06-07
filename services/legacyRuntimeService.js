@@ -146,6 +146,7 @@ function createLegacyRuntime(app) {
     TODAY_CAMPAIGN_SYNC_CONCURRENCY,
     SHOPEE_TODAY_CAMPAIGN_SYNC_INTERVAL_MS,
     SHOPEE_TODAY_CAMPAIGN_SYNC_CONCURRENCY,
+    ORDER_SHEET_REFRESH_INTERVAL_MS,
     REDIS_URL,
     REDIS_QUEUE_ENABLED,
     REDIS_HOST,
@@ -3620,7 +3621,9 @@ function createLegacyRuntime(app) {
   
     todayCampaignSpendSyncRunning[options.provider] = true;
     try {
-      const accounts = await Account.find(buildAccountProviderFilter(options.provider));
+      const accounts = await Account.find(buildAccountProviderFilter(options.provider))
+        .select('_id ownerUserId name provider adAccountId fbToken geminiKey checkInterval')
+        .lean();
       let synced = 0;
       let skipped = 0;
       let failed = 0;
@@ -4065,7 +4068,9 @@ function createLegacyRuntime(app) {
   }
 
   async function resumeAutoAccounts() {
-    const autoAccounts = await Account.find({ autoEnabled: true });
+    const autoAccounts = await Account.find({ autoEnabled: true })
+      .select('_id ownerUserId name provider adAccountId fbToken geminiKey checkInterval autoEnabled')
+      .lean();
     for (const account of autoAccounts) {
       console.log(`Resuming auto for: ${account.name}`);
       startAccountScheduler(account);
@@ -4115,7 +4120,7 @@ function createLegacyRuntime(app) {
       } finally {
         sheetRefreshRunning = false;
       }
-    }, 60 * 1000);
+    }, ORDER_SHEET_REFRESH_INTERVAL_MS);
   }
 
   async function shutdownRuntime() {

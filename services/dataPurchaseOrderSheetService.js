@@ -444,6 +444,7 @@ async function persistDataPurchaseOrderRows({ headers, rows, sourceType, mode = 
     query: SHEET_QUERY,
     syncedAt: batchAt.toISOString(),
     sourceType,
+    batchId,
     mode: appendMode ? 'append' : 'replace',
     startRowNumber: appendMode ? firstRowNumber : 0,
     endRowNumber: appendMode ? firstRowNumber + rows.length - 1 : 0,
@@ -522,12 +523,45 @@ async function importDataPurchaseOrdersFromCsvText(csvText = '') {
     headers = headersLookLikeData(meta.headers) ? DEFAULT_HEADERS : meta.headers;
   }
 
-  return persistDataPurchaseOrderRows({
+  const rowsWithOrderId = result.rows.filter(row => toText(row.fields?.col3));
+  const skippedNoOrderId = result.rows.length - rowsWithOrderId.length;
+  if (!rowsWithOrderId.length) {
+    throw new Error('File CSV khong co cot 订单号 hop le de ghi de');
+  }
+
+  const imported = await persistDataPurchaseOrderRows({
     headers,
-    rows: result.rows,
+    rows: rowsWithOrderId,
     sourceType: `${shape === 'raw' ? 'csv_raw' : 'csv_selected'}${result.hasHeader ? '' : '_no_header'}`,
     mode: 'append'
   });
+
+  const orderIds = [...new Set(rowsWithOrderId.map(row => toText(row.fields?.col3)).filter(Boolean))];
+  const deleteResult = await DataPurchaseOrder.deleteMany({
+    sourceId: SHEET_ID,
+    sourceName: SHEET_NAME,
+    col3: { $in: orderIds },
+    batchId: { $ne: imported.batchId }
+  });
+  const totalCount = await DataPurchaseOrder.countDocuments({ sourceId: SHEET_ID, sourceName: SHEET_NAME });
+
+  await saveDataPurchaseOrderMeta({
+    headers,
+    lastSyncAt: imported.syncedAt,
+    lastSyncSourceType: imported.sourceType,
+    lastSyncCount: totalCount,
+    lastSyncDeleted: deleteResult.deletedCount || 0,
+    lastSyncError: ''
+  });
+
+  return {
+    ...imported,
+    deleted: deleteResult.deletedCount || 0,
+    replacedOrderCount: orderIds.length,
+    skippedNoOrderId,
+    mode: 'replace_by_order_id',
+    total: totalCount
+  };
 }
 
 function docToApiRow(doc) {

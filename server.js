@@ -28,7 +28,6 @@ const PORT = process.env.PORT || 3000;
 mongoose.connect(MONGO_URI).then(() => {
   console.log('MongoDB connected');
   app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
-  legacyRuntime.startSheetRefresh();
 
   (async () => {
     try {
@@ -38,8 +37,9 @@ mongoose.connect(MONGO_URI).then(() => {
     }
 
     await legacyRuntime.bootstrapFacebookToken();
-    legacyRuntime.startCronTasks();
     await legacyRuntime.initializeQueues();
+    legacyRuntime.startSheetRefresh();
+    legacyRuntime.startCronTasks();
     await legacyRuntime.resumeAutoAccounts();
   })().catch(error => {
     console.error(`Background startup failed: ${error.message}`);

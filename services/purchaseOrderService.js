@@ -47,6 +47,8 @@ const DASHBOARD_METRIC_KEYS = [
 
 const ARRIVED_STATUS_VALUES = new Set(['ve_du', 've_thieu', 'sai_hang', 've_thua']);
 const CONFIG_KEY = 'app';
+const FAST_TRACKING_SEARCH_MAX_TERMS = 50;
+const FAST_TRACKING_SEARCH_MIN_LENGTH = 6;
 
 function toText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -538,6 +540,41 @@ function escapeRegexStr(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function parseFastTrackingSearchTerms(search = '') {
+  const text = toText(search);
+  if (!text || text.length > 3000) return [];
+
+  const terms = text
+    .split(/[\s,;|]+/)
+    .map(term => normalizeTrackingText(term))
+    .filter(Boolean);
+  const uniqueTerms = [...new Set(terms)];
+
+  if (!uniqueTerms.length || uniqueTerms.length > FAST_TRACKING_SEARCH_MAX_TERMS) return [];
+  if (!uniqueTerms.every(term => (
+    term.length >= FAST_TRACKING_SEARCH_MIN_LENGTH
+    && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(term)
+  ))) {
+    return [];
+  }
+
+  return uniqueTerms;
+}
+
+function getTrackingSearchVariants(terms = []) {
+  return [...new Set(
+    terms.flatMap(term => [
+      term,
+      term.toUpperCase(),
+      term.toLowerCase()
+    ])
+  )];
+}
+
+function buildTrackingBoundaryRegex(term = '') {
+  return new RegExp(`(^|[\\s,;|])${escapeRegexStr(term)}($|[\\s,;|])`, 'i');
+}
+
 async function buildSearchSourceFilter(sourceFilter, searchTerm) {
   if (!searchTerm) return sourceFilter;
   const regex = { $regex: escapeRegexStr(searchTerm), $options: 'i' };
@@ -565,6 +602,75 @@ async function buildSearchSourceFilter(sourceFilter, searchTerm) {
   const manualIds = manualMatches.map(r => r.orderId).filter(Boolean);
   if (manualIds.length) orConditions.push({ col3: { $in: manualIds } });
   return { ...sourceFilter, $or: orConditions };
+}
+
+async function findOrderIdsByFastTrackingSearch(sourceFilter, terms = []) {
+  if (!terms.length) return [];
+
+  const variants = getTrackingSearchVariants(terms);
+  const manualTrackingConditions = [
+    { supplementalTrackingCode: { $in: variants } },
+    ...terms.map(term => ({ supplementalTrackingCode: buildTrackingBoundaryRegex(term) }))
+  ];
+
+  const [sourceOrderIds, manualRows] = await Promise.all([
+    DataPurchaseOrder.distinct('col3', {
+      ...sourceFilter,
+      $or: [
+        { logisticsTrackingCode: { $in: variants } },
+        { col25: { $in: variants } }
+      ]
+    }),
+    PurchaseOrder.find({
+      sourceId: SHEET_ID,
+      sourceName: SHEET_NAME,
+      $or: manualTrackingConditions
+    }).select('orderId').lean()
+  ]);
+
+  return [...new Set([
+    ...sourceOrderIds.map(toText).filter(Boolean),
+    ...manualRows.map(row => toText(row.orderId)).filter(Boolean)
+  ])];
+}
+
+async function getPurchaseOrdersByOrderIds({
+  sourceFilter,
+  orderIds,
+  fromDate,
+  toDate,
+  searchTerm,
+  safePage,
+  safeLimit
+}) {
+  const groupedRows = await DataPurchaseOrder.aggregate([
+    ...getPurchaseOrderGroupedPipeline({
+      ...sourceFilter,
+      col3: { $in: orderIds }
+    }),
+    { $sort: { orderDateKey: -1, rowNumber: 1 } }
+  ]).allowDiskUse(true);
+
+  const pageOrderIds = groupedRows.map(row => row.orderId).filter(Boolean);
+  const manualRows = await findManualPurchaseOrderRows(pageOrderIds);
+  const manualByOrderId = new Map(manualRows.map(row => [row.orderId, row]));
+
+  const rows = groupedRows
+    .map(row => mapPurchaseOrderApiRow(row, manualByOrderId))
+    .filter(row => isDateInRange(row.orderDate, fromDate, toDate));
+  const filteredRows = searchTerm ? rows.filter(row => rowMatchesSearch(row, searchTerm)) : rows;
+  const summary = buildSummary(filteredRows);
+  const start = (safePage - 1) * safeLimit;
+
+  return {
+    rows: filteredRows.slice(start, start + safeLimit),
+    summary,
+    statusOptions: STATUS_OPTIONS,
+    total: filteredRows.length,
+    page: safePage,
+    limit: safeLimit,
+    totalPages: Math.ceil(filteredRows.length / safeLimit) || 1
+  };
 }
 
 function buildSummary(rows) {
@@ -1220,7 +1326,23 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
     col3: { $nin: ['', null] }
   };
   if (dateFilter.orderDateKey) {
-    sourceFilter.col4 = { $regex: ORDER_DATE_TEXT_PATTERN };
+    sourceFilter.orderDateKey = dateFilter.orderDateKey;
+  }
+
+  const fastTrackingTerms = parseFastTrackingSearchTerms(searchTerm);
+  if (fastTrackingTerms.length) {
+    const orderIds = await findOrderIdsByFastTrackingSearch(sourceFilter, fastTrackingTerms);
+    if (orderIds.length) {
+      return getPurchaseOrdersByOrderIds({
+        sourceFilter,
+        orderIds,
+        fromDate,
+        toDate,
+        searchTerm: '',
+        safePage,
+        safeLimit
+      });
+    }
   }
 
   if (!searchTerm && !dateFilter.orderDateKey) {

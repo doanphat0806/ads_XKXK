@@ -62,6 +62,9 @@ export default function PurchaseOrders() {
   const [fromDate, setFromDate] = useState(todayString());
   const [toDate, setToDate] = useState(todayString());
   const [useDateFilter, setUseDateFilter] = useState(false);
+  const [activeFromDate, setActiveFromDate] = useState(todayString());
+  const [activeToDate, setActiveToDate] = useState(todayString());
+  const [activeUseDateFilter, setActiveUseDateFilter] = useState(false);
   const [search, setSearch] = useState('');
   const [activeSearch, setActiveSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -84,9 +87,9 @@ export default function PurchaseOrders() {
         page: String(nextPage),
         limit: String(limit)
       });
-      if (useDateFilter) {
-        params.set('fromDate', fromDate);
-        params.set('toDate', toDate);
+      if (activeUseDateFilter) {
+        params.set('fromDate', activeFromDate);
+        params.set('toDate', activeToDate);
       }
       if (activeSearch.trim()) params.set('search', activeSearch.trim());
 
@@ -291,14 +294,40 @@ export default function PurchaseOrders() {
     }
   };
 
+  const applyFilters = () => {
+    setActiveFromDate(fromDate);
+    setActiveToDate(toDate);
+    setActiveUseDateFilter(useDateFilter);
+    setActiveSearch(search.trim());
+    setPage(1);
+  };
+
+  const applyDateRangeFilter = (nextFrom, nextTo) => {
+    setFromDate(nextFrom);
+    setToDate(nextTo);
+    setUseDateFilter(true);
+    setActiveFromDate(nextFrom);
+    setActiveToDate(nextTo);
+    setActiveUseDateFilter(true);
+    setActiveSearch(search.trim());
+    setPage(1);
+  };
+
+  const applyAllDateFilter = () => {
+    setUseDateFilter(false);
+    setActiveUseDateFilter(false);
+    setActiveSearch(search.trim());
+    setPage(1);
+  };
+
   useEffect(() => {
     loadRows({ nextPage: page });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fromDate, toDate, useDateFilter, page, limit, activeSearch]);
+  }, [activeFromDate, activeToDate, activeUseDateFilter, page, limit, activeSearch]);
 
   useEffect(() => {
     setPage(1);
-  }, [fromDate, toDate, useDateFilter, limit, activeSearch]);
+  }, [activeFromDate, activeToDate, activeUseDateFilter, limit, activeSearch]);
 
   const summaryColumns = useMemo(() => ([
     { key: 'orderCount', label: 'Mã Đơn Hàng', value: formatNumber(summary.orderCount || 0) },
@@ -322,7 +351,7 @@ export default function PurchaseOrders() {
           <div>
             <div className="card-title">Đặt Hàng</div>
             <div className="purchase-source">
-              Nguồn: DATA ĐẶT HÀNG trong database | {useDateFilter ? `${fromDate} ~ ${toDate}` : 'Tất cả ngày đặt'}
+              Nguồn: DATA ĐẶT HÀNG trong database | {activeUseDateFilter ? `${activeFromDate} ~ ${activeToDate}` : 'Tất cả ngày đặt'}
             </div>
           </div>
           <div className="purchase-header-actions">
@@ -365,7 +394,7 @@ export default function PurchaseOrders() {
               <button
                 type="button"
                 className={`purchase-date-mode ${!useDateFilter ? 'active' : ''}`}
-                onClick={() => setUseDateFilter(false)}
+                onClick={applyAllDateFilter}
               >
                 Tất cả
               </button>
@@ -381,9 +410,7 @@ export default function PurchaseOrders() {
               fromDate={fromDate}
               toDate={toDate}
               onChange={(nextFrom, nextTo) => {
-                setFromDate(nextFrom);
-                setToDate(nextTo);
-                setUseDateFilter(true);
+                applyDateRangeFilter(nextFrom, nextTo);
               }}
               centered
             />
@@ -395,20 +422,24 @@ export default function PurchaseOrders() {
               value={search}
               onChange={handleSearchChange}
               onKeyDown={event => {
-                if (event.key === 'Enter') setActiveSearch(search.trim());
+                if (event.key === 'Enter') applyFilters();
               }}
               onPaste={event => {
                 setTimeout(() => {
                   const pastedValue = event.target.value;
                   setSearch(pastedValue);
+                  setActiveFromDate(fromDate);
+                  setActiveToDate(toDate);
+                  setActiveUseDateFilter(useDateFilter);
                   setActiveSearch(pastedValue.trim());
+                  setPage(1);
                 }, 0);
               }}
               placeholder="Mã đơn, MVD, mã SP, thuộc tính, tài khoản..."
             />
           </div>
 
-          <button className="btn btn-g purchase-search-btn" onClick={() => setActiveSearch(search.trim())} disabled={loading}>
+          <button className="btn btn-g purchase-search-btn" onClick={applyFilters} disabled={loading}>
             <Search size={14} />
             Lọc
           </button>
@@ -447,7 +478,7 @@ export default function PurchaseOrders() {
           ) : rows.length === 0 ? (
             <div className="empty">
               <div className="ei">0</div>
-              <p>{useDateFilter ? 'Không có đơn trong ngày đang chọn. Bấm Tất cả hoặc đổi ngày đặt.' : 'Chưa có dữ liệu đặt hàng. Bấm Đồng bộ DATA để lấy dữ liệu từ Sheet vào database.'}</p>
+              <p>{activeUseDateFilter ? 'Không có đơn trong ngày đang chọn. Bấm Tất cả hoặc đổi ngày đặt.' : 'Chưa có dữ liệu đặt hàng. Bấm Đồng bộ DATA để lấy dữ liệu từ Sheet vào database.'}</p>
             </div>
           ) : (
             <table className="tbl purchase-table">

@@ -33,17 +33,17 @@ app.get('/api/stats', async (req, res) => {
     const cached = getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
-    const [totalAccounts, connectedAccounts, accountList] = await Promise.all([
-      Account.countDocuments(filter),
-      Account.countDocuments({ ...filter, status: 'connected' }),
-      Account.find(filter).select('_id').lean()
-    ]);
+    const accountList = await Account.find(filter).select('_id status').lean();
+    const totalAccounts = accountList.length;
+    const connectedAccounts = accountList.reduce((total, account) => (
+      account.status === 'connected' ? total + 1 : total
+    ), 0);
 
     // Lọc campaign theo tài khoản thuộc provider
     let campaignQuery = { date: { $gte: fDate, $lte: tDate } };
     campaignQuery.accountId = { $in: accountList.map(account => account._id) };
 
-    const [campaignTotals = {}] = await Campaign.aggregate([
+    const [campaignTotals = {}] = accountList.length ? await Campaign.aggregate([
       { $match: campaignQuery },
       {
         $group: {
@@ -84,7 +84,7 @@ app.get('/api/stats', async (req, res) => {
           }
         }
       }
-    ]).allowDiskUse(true);
+    ]).allowDiskUse(true) : [{}];
 
     let totalOrders;
     let ordersError;
@@ -1598,6 +1598,19 @@ app.get('/api/campaigns/today', async (req, res) => {
     const accounts = await Account.find(withUserFilter(req, accountFilter))
       .select('_id name adAccountId provider fbToken ownerUserId')
       .lean();
+    if (!accounts.length) {
+      return res.json(includeLiveCampaigns || shouldFetchMetaInsights ? [] : setReadCache(cacheKey, []));
+    }
+
+    const accountById = new Map(accounts.map(account => [
+      String(account._id),
+      {
+        _id: account._id,
+        name: account.name,
+        adAccountId: account.adAccountId,
+        provider: account.provider
+      }
+    ]));
 
     let match = {
       date: { $gte: fDate, $lte: tDate }
@@ -1629,24 +1642,10 @@ app.get('/api/campaigns/today', async (req, res) => {
         }
       },
       {
-        $lookup: {
-          from: 'accounts',
-          localField: 'accountId',
-          foreignField: '_id',
-          as: 'accountInfo'
-        }
-      },
-      { $unwind: '$accountInfo' },
-      {
         $project: {
           _id: 0,
           campaignId: 1,
-          accountId: {
-            _id: '$accountInfo._id',
-            name: '$accountInfo.name',
-            adAccountId: '$accountInfo.adAccountId',
-            provider: '$accountInfo.provider'
-          },
+          accountId: 1,
           name: 1,
           adName: 1,
           status: 1,
@@ -1665,9 +1664,12 @@ app.get('/api/campaigns/today', async (req, res) => {
       { $sort: { spend: -1 } }
     ]);
 
-    let result = campaigns;
+    let result = campaigns.map(campaign => ({
+      ...campaign,
+      accountId: accountById.get(String(campaign.accountId)) || campaign.accountId
+    }));
     if (includeScheduledNoSpend && accounts.length > 0) {
-      const existingCampaignIds = new Set(campaigns.map(campaign => campaign.campaignId));
+      const existingCampaignIds = new Set(result.map(campaign => campaign.campaignId));
       const extraCampaigns = await fetchScheduledCampaignRowsFromDb(
         accounts.map(account => account._id),
         fDate,
@@ -2705,7 +2707,10 @@ app.get('/api/reports/export-spending', async (req, res) => {
     };
 
     const accountFilter = withUserFilter(req, provider ? buildAccountProviderFilter(provider) : {});
-    const accounts = await Account.find(accountFilter).select('_id');
+    const accounts = await Account.find(accountFilter).select('_id').lean();
+    if (!accounts.length) {
+      return res.status(404).json({ error: 'Khong co du lieu trong khoang thoi gian nay' });
+    }
     filter.accountId = { $in: accounts.map(a => a._id) };
 
     const campaigns = await Campaign.find(filter)
@@ -3196,6 +3201,7 @@ app.get('/api/logs', async (req, res) => {
     const accountFilter = withUserFilter(req, provider ? buildAccountProviderFilter(provider) : {});
     if (accountId) accountFilter._id = accountId;
     const accountIds = (await Account.find(accountFilter).select('_id').lean()).map(account => account._id);
+    if (!accountIds.length) return res.json([]);
     const query = { accountId: { $in: accountIds } };
     const safeLimit = parseBoundedInt(limit, 100, 1, 500);
     const logs = await Log.find(query).sort('-createdAt').limit(safeLimit).lean();
@@ -3211,6 +3217,7 @@ app.delete('/api/logs', async (req, res) => {
     const accountFilter = withUserFilter(req, provider ? buildAccountProviderFilter(provider) : {});
     if (accountId) accountFilter._id = accountId;
     const accountIds = (await Account.find(accountFilter).select('_id').lean()).map(account => account._id);
+    if (!accountIds.length) return res.json({ ok: true });
     const query = { accountId: { $in: accountIds } };
     await Log.deleteMany(query);
     res.json({ ok: true });

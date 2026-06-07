@@ -5,9 +5,19 @@ const Config = require('../models/Config');
 const { getAppConfig, clearAppConfigCache } = require('../services/configService');
 
 const router = express.Router();
+const DEAL_STOP_ROW_TEXT_LIMIT = 500;
+const DEAL_STOP_ORDER_SIZE_FIELDS = ['orderSizeS', 'orderSizeM', 'orderSizeL', 'orderSizeXL', 'orderSizeFZ'];
 
 function toPlainObject(value, fallback = {}) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
+}
+
+function normalizeDealStopCode(value = '') {
+  return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+function toBoundedText(value = '', limit = DEAL_STOP_ROW_TEXT_LIMIT) {
+  return String(value ?? '').slice(0, limit);
 }
 
 function normalizeDealStopStateRowsByTab(value = {}) {
@@ -45,6 +55,32 @@ function normalizeDealStopOrderState(value = {}) {
   };
 }
 
+function normalizeDealStopRowPatch(row = {}, existingRow = {}, code = '') {
+  const rowPatch = toPlainObject(row);
+  const currentRow = toPlainObject(existingRow);
+  const nextRow = {
+    ...currentRow,
+    ...rowPatch,
+    ma: code || normalizeDealStopCode(rowPatch.ma || currentRow.ma),
+    id: toBoundedText(rowPatch.id || currentRow.id || `source-${code}`, 150)
+  };
+
+  DEAL_STOP_ORDER_SIZE_FIELDS.forEach(field => {
+    nextRow[field] = toBoundedText(
+      Object.prototype.hasOwnProperty.call(rowPatch, field)
+        ? rowPatch[field]
+        : currentRow[field],
+      100
+    );
+  });
+
+  if (!Number.isFinite(Number(nextRow.slKhachDat)) || Number(nextRow.slKhachDat) < 2) {
+    nextRow.slKhachDat = 2;
+  }
+
+  return nextRow;
+}
+
 router.get('/state', async (req, res) => {
   try {
     const config = await getAppConfig();
@@ -52,6 +88,55 @@ router.get('/state', async (req, res) => {
       ok: true,
       state: normalizeDealStopOrderState(config?.dealStopOrderState || {})
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.patch('/state/row', async (req, res) => {
+  try {
+    const tabId = String(req.body?.tabId || '').slice(0, 100);
+    const rowPatch = toPlainObject(req.body?.row);
+    const code = normalizeDealStopCode(req.body?.ma || rowPatch.ma);
+
+    if (!tabId || !code) {
+      return res.status(400).json({ error: 'Thieu tab hoac ma san pham' });
+    }
+
+    const now = new Date();
+    const config = await getAppConfig();
+    const currentState = normalizeDealStopOrderState(config?.dealStopOrderState || {});
+    const rowsByTab = normalizeDealStopStateRowsByTab(currentState.rowsByTab);
+    const currentRows = Array.isArray(rowsByTab[tabId]) ? rowsByTab[tabId] : [];
+    const rowIndex = currentRows.findIndex(row => normalizeDealStopCode(row?.ma) === code);
+    const nextRow = normalizeDealStopRowPatch(rowPatch, rowIndex >= 0 ? currentRows[rowIndex] : {}, code);
+    const nextRows = rowIndex >= 0
+      ? currentRows.map((row, index) => (index === rowIndex ? nextRow : row))
+      : [nextRow, ...currentRows].slice(0, 5000);
+
+    const state = normalizeDealStopOrderState({
+      ...currentState,
+      rowsByTab: {
+        ...rowsByTab,
+        [tabId]: nextRows
+      },
+      updatedAt: now.toISOString(),
+      updatedBy: String(req.currentUser?.displayName || req.currentUser?.username || '').trim()
+    });
+
+    await Config.findOneAndUpdate(
+      { key: 'app' },
+      {
+        $set: {
+          dealStopOrderState: state,
+          updatedAt: now
+        }
+      },
+      { upsert: true, new: true }
+    ).lean();
+    clearAppConfigCache();
+
+    res.json({ ok: true, state, row: nextRow });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

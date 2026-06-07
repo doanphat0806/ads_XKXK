@@ -33,6 +33,7 @@ module.exports = {
   TODAY_CAMPAIGN_SYNC_CONCURRENCY: parseBoundedInt(process.env.TODAY_CAMPAIGN_SYNC_CONCURRENCY, 2, 1, 5),
   SHOPEE_TODAY_CAMPAIGN_SYNC_INTERVAL_MS: parseBoundedInt(process.env.SHOPEE_TODAY_CAMPAIGN_SYNC_INTERVAL_MS, 2 * 60 * 1000, 60 * 1000, 60 * 60 * 1000),
   SHOPEE_TODAY_CAMPAIGN_SYNC_CONCURRENCY: parseBoundedInt(process.env.SHOPEE_TODAY_CAMPAIGN_SYNC_CONCURRENCY, 3, 1, 8),
+  ORDER_SHEET_REFRESH_INTERVAL_MS: parseBoundedInt(process.env.ORDER_SHEET_REFRESH_INTERVAL_MS, 5 * 60 * 1000, 60 * 1000, 60 * 60 * 1000),
   REDIS_URL: String(process.env.REDIS_URL || process.env.BULLMQ_REDIS_URL || '').trim(),
   REDIS_QUEUE_ENABLED: ['1', 'true', 'yes'].includes(String(process.env.REDIS_QUEUE_ENABLED || '').trim().toLowerCase()) ||
     Boolean(String(process.env.REDIS_URL || process.env.BULLMQ_REDIS_URL || '').trim()),
