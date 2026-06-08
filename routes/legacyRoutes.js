@@ -1598,9 +1598,7 @@ app.get('/api/campaigns/today', async (req, res) => {
     const accounts = await Account.find(withUserFilter(req, accountFilter))
       .select('_id name adAccountId provider fbToken ownerUserId')
       .lean();
-    if (!accounts.length) {
-      return res.json(includeLiveCampaigns || shouldFetchMetaInsights ? [] : setReadCache(cacheKey, []));
-    }
+    if (!accounts.length) return res.json(setReadCache(cacheKey, []));
 
     const accountById = new Map(accounts.map(account => [
       String(account._id),
@@ -3578,16 +3576,18 @@ function buildCampaignSpendBySku(campaignRows = []) {
     const amount = Number(row.amount || 0);
     if (!amount) return;
 
+    // getCampaignSkuCandidates() da tu sinh ca hai dang "MS<ma>" va "<ma>" cho moi
+    // ma trich xuat duoc, nen khong duoc cong don them theo "withoutMs" o day -
+    // lam vay se cong trung chi phi cua cung mot chien dich vao cung mot ma SKU
+    // (vd: "MSPG..." -> cong vao "PG..." roi candidate "PG..." lai cong tiep),
+    // khien CPO bi nhan doi.
+    const seenForRow = new Set();
     getCampaignSkuCandidates(row.adName).forEach(candidate => {
       const normalized = normalizeSkuKey(candidate);
-      if (!normalized) return;
+      if (!normalized || seenForRow.has(normalized)) return;
+      seenForRow.add(normalized);
 
       spendBySku[normalized] = Number(spendBySku[normalized] || 0) + amount;
-
-      if (normalized.startsWith('MS') && normalized.length > 2) {
-        const withoutMs = normalized.slice(2);
-        spendBySku[withoutMs] = Number(spendBySku[withoutMs] || 0) + amount;
-      }
     });
   });
 
@@ -4097,6 +4097,9 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
       if (toDate) campaignMatch.date.$lte = toDate;
     }
 
+    const dealStopCampaignCacheKey = `deal-stop-campaign:${fromDate}:${toDate}:${accountIds.map(String).sort().join(',')}`;
+    const cachedCampaignRows = getDealStopCampaignCache(dealStopCampaignCacheKey);
+
     const [orderRows, campaignRows, purchasePlacedQtyByCode] = await Promise.all([
       useSheetOrders()
         ? getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
@@ -4104,7 +4107,7 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
           .select('orderId status rawData createdAt')
           .limit(200000)
           .lean(),
-      accountIds.length ? Campaign.aggregate([
+      cachedCampaignRows || (accountIds.length ? Campaign.aggregate([
         {
           $match: campaignMatch
         },
@@ -4116,7 +4119,7 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
           }
         },
         { $project: { _id: 0, adName: 1, amount: 1 } }
-      ]).allowDiskUse(true) : Promise.resolve([]),
+      ]).allowDiskUse(true).then(rows => setDealStopCampaignCache(dealStopCampaignCacheKey, rows)) : Promise.resolve(setDealStopCampaignCache(dealStopCampaignCacheKey, []))),
       buildPurchasePlacedQtyByCode()
     ]);
 

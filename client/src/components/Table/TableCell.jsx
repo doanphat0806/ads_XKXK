@@ -78,6 +78,12 @@ function CellInner({
           className="deal-inline-grid-input"
           value={value === '' || value === null || value === undefined ? '' : String(value)}
           onChange={event => onDirectInputChange?.(row.id, id, event.target.value)}
+          onKeyDown={event => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            onDirectInputChange?.(row.id, id, event.target.value, { commitNow: true });
+            event.target.blur();
+          }}
           type="text"
         />
       </td>

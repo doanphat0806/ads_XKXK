@@ -60,6 +60,32 @@ function clearPurchaseOrderReadCache() {
   purchaseOrderReadCache.clear();
 }
 
+const DEAL_STOP_CAMPAIGN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const dealStopCampaignCache = new Map();
+
+function getDealStopCampaignCache(key) {
+  const cached = dealStopCampaignCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.createdAt > DEAL_STOP_CAMPAIGN_CACHE_TTL_MS) {
+    dealStopCampaignCache.delete(key);
+    return null;
+  }
+  return cached.data;
+}
+
+function setDealStopCampaignCache(key, data) {
+  dealStopCampaignCache.set(key, { data, createdAt: Date.now() });
+  if (dealStopCampaignCache.size > 20) {
+    const oldestKey = dealStopCampaignCache.keys().next().value;
+    dealStopCampaignCache.delete(oldestKey);
+  }
+  return data;
+}
+
+function clearDealStopCampaignCache() {
+  dealStopCampaignCache.clear();
+}
+
 module.exports = {
   readCache,
   purchaseOrderReadCache,
@@ -69,5 +95,8 @@ module.exports = {
   clearAllReadCache,
   getPurchaseOrderReadCache,
   setPurchaseOrderReadCache,
-  clearPurchaseOrderReadCache
+  clearPurchaseOrderReadCache,
+  getDealStopCampaignCache,
+  setDealStopCampaignCache,
+  clearDealStopCampaignCache
 };

@@ -142,11 +142,41 @@ router.patch('/state/row', async (req, res) => {
   }
 });
 
+function preserveOrderSizeFields(incomingRowsByTab = {}, currentRowsByTab = {}) {
+  return Object.fromEntries(
+    Object.entries(incomingRowsByTab).map(([tabId, rows]) => {
+      const currentRows = Array.isArray(currentRowsByTab[tabId]) ? currentRowsByTab[tabId] : [];
+      const currentByCode = new Map(currentRows.map(row => [normalizeDealStopCode(row?.ma), row]));
+
+      const mergedRows = rows.map(row => {
+        const currentRow = currentByCode.get(normalizeDealStopCode(row?.ma));
+        if (!currentRow) return row;
+
+        const merged = { ...row };
+        DEAL_STOP_ORDER_SIZE_FIELDS.forEach(field => {
+          merged[field] = currentRow[field] ?? '';
+        });
+        return merged;
+      });
+
+      return [tabId, mergedRows];
+    })
+  );
+}
+
 router.put('/state', async (req, res) => {
   try {
     const now = new Date();
+    const config = await getAppConfig();
+    const currentState = normalizeDealStopOrderState(config?.dealStopOrderState || {});
+    const incomingState = normalizeDealStopOrderState(req.body?.state || {});
+
     const state = normalizeDealStopOrderState({
-      ...(req.body?.state || {}),
+      ...incomingState,
+      // Cac truong orderSize* duoc luu rieng qua PATCH /state/row voi do tre thap hon,
+      // nen gia tri tren server luon moi hon snapshot day du tu client. Giu nguyen
+      // gia tri server de tranh bi ghi de boi snapshot cu (vd: tu dong refresh nguon).
+      rowsByTab: preserveOrderSizeFields(incomingState.rowsByTab, currentState.rowsByTab),
       updatedAt: now.toISOString(),
       updatedBy: String(req.currentUser?.displayName || req.currentUser?.username || '').trim()
     });

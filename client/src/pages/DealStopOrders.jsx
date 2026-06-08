@@ -277,6 +277,49 @@ function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, ac
   return mergedSourceRows;
 }
 
+function shallowRowsEqual(a = {}, b = {}) {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+
+  return aKeys.every(key => {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+    const av = a[key];
+    const bv = b[key];
+    if (av && bv && typeof av === 'object' && typeof bv === 'object') {
+      return JSON.stringify(av) === JSON.stringify(bv);
+    }
+    return av === bv;
+  });
+}
+
+// Merge dong tu server vao danh sach local theo ma SP, thay vi thay nguyen ca mang:
+// - Dong dang duoc chinh sua / cho luu cuc bo thi giu nguyen ban local (khong bi ghi de giua chung).
+// - Dong giong het thi giu nguyen tham chieu cu de React khong render lai (tranh "giat"/mat vi tri cuon).
+// - Dong khac thi lay theo ban tu server, dong moi xuat hien tu server thi them vao.
+function mergeRemoteRowsWithLocal(remoteRows = [], localRows = [], isRowLocked = () => false) {
+  const localByCode = new Map(localRows.map(row => [normalizeCode(row.ma), row]));
+  const remoteCodes = new Set();
+
+  const mergedRows = remoteRows.map(remoteRow => {
+    const code = normalizeCode(remoteRow.ma);
+    remoteCodes.add(code);
+    const localRow = localByCode.get(code);
+    if (!localRow) return remoteRow;
+    if (isRowLocked(localRow, code)) return localRow;
+    return shallowRowsEqual(localRow, remoteRow) ? localRow : remoteRow;
+  });
+
+  localRows.forEach(localRow => {
+    const code = normalizeCode(localRow.ma);
+    if (!remoteCodes.has(code) && isRowLocked(localRow, code)) {
+      mergedRows.push(localRow);
+    }
+  });
+
+  return mergedRows;
+}
+
 function migrateDealStopRows(rows = [], currentVersion = 1) {
   if (currentVersion >= DEAL_STOP_DATA_VERSION) return rows;
 
@@ -510,6 +553,11 @@ export default function DealStopOrders() {
     rowSaveTimersRef.current.set(code, timer);
   }, [saveDirectInputRow]);
 
+  // Dong dang duoc nguoi dung chinh sua hoac dang cho luu thi khong cho dong bo tu xa ghi de.
+  const isRowLocked = React.useCallback((row, code) => (
+    Boolean(editingCell && editingCell.rowId === row.id) || pendingDirectRowsRef.current.has(code)
+  ), [editingCell]);
+
   React.useEffect(() => () => {
     rowSaveTimersRef.current.forEach(timer => window.clearTimeout(timer));
     rowSaveTimersRef.current.clear();
@@ -605,14 +653,28 @@ export default function DealStopOrders() {
         hasPersistedDealStopState(remoteState, activeTab) ? remoteState : latestStateRef.current,
         activeTab
       );
+
+      // Tron du lieu theo tung dong thay vi thay nguyen ca mang: dong nao giong het thi giu
+      // nguyen tham chieu cu (khong render lai / khong "giat" bang), dong dang sua dang thi
+      // giu ban local, dong moi tu server thi duoc them vao — khong can "reload" ca bang.
+      const mergedActiveRows = mergeRemoteRowsWithLocal(
+        nextState.rowsByTab[activeTab] || [],
+        latestStateRef.current.rowsByTab[activeTab] || [],
+        isRowLocked
+      );
+      const mergedState = {
+        ...nextState,
+        rowsByTab: { ...nextState.rowsByTab, [activeTab]: mergedActiveRows }
+      };
+
       remoteUpdatedAtRef.current = remoteState.updatedAt || '';
-      replaceConfig(nextState.config);
-      setStaffList(nextState.staffList);
-      setActualQtyByCode(nextState.actualQtyByCode);
-      setRowsByTab(nextState.rowsByTab);
-      setHiddenCodes(nextState.hiddenCodes);
-      setColumnVisibility(nextState.columnVisibility);
-      latestStateRef.current = nextState;
+      replaceConfig(mergedState.config);
+      setStaffList(mergedState.staffList);
+      setActualQtyByCode(mergedState.actualQtyByCode);
+      setRowsByTab(mergedState.rowsByTab);
+      setHiddenCodes(mergedState.hiddenCodes);
+      setColumnVisibility(mergedState.columnVisibility);
+      latestStateRef.current = mergedState;
       await loadSourceRows();
       const updatedBy = remoteState.updatedBy ? ` từ ${remoteState.updatedBy}` : '';
       toast(`🔄 Đã đồng bộ dữ liệu mới${updatedBy}`, { duration: 3000 });
@@ -621,7 +683,7 @@ export default function DealStopOrders() {
     } finally {
       isReloadingRef.current = false;
     }
-  }, [activeTab, loadSourceRows, replaceConfig]);
+  }, [activeTab, isRowLocked, loadSourceRows, replaceConfig]);
 
   React.useEffect(() => {
     if (!stateReady) return;
@@ -754,7 +816,7 @@ export default function DealStopOrders() {
     toast.success('Đã xóa dữ liệu import SL Thực Đặt');
   }, [applyActualQtyByCode]);
 
-  const handleDirectInputChange = React.useCallback((rowId, columnId, nextValue) => {
+  const handleDirectInputChange = React.useCallback((rowId, columnId, nextValue, { commitNow = false } = {}) => {
     updateRows(currentRows => currentRows.map(row => {
       if (row.id !== rowId) return row;
 
@@ -762,10 +824,26 @@ export default function DealStopOrders() {
         ...row,
         [columnId]: String(nextValue ?? '')
       }, config);
-      scheduleDirectInputRowSave(nextRow);
+
+      if (commitNow) {
+        // Nguoi dung bam Enter: huy debounce va luu ngay, khong cho doi 250ms.
+        const code = normalizeCode(nextRow.ma);
+        const existingTimer = rowSaveTimersRef.current.get(code);
+        if (existingTimer) {
+          window.clearTimeout(existingTimer);
+          rowSaveTimersRef.current.delete(code);
+        }
+        pendingDirectRowsRef.current.set(code, nextRow);
+        saveDirectInputRow(nextRow).catch(error => {
+          toast.error(`Lưu ĐH ${nextRow.ma || code} lỗi: ${error.message}`);
+        });
+      } else {
+        scheduleDirectInputRowSave(nextRow);
+      }
+
       return nextRow;
     }));
-  }, [config, scheduleDirectInputRowSave, updateRows]);
+  }, [config, saveDirectInputRow, scheduleDirectInputRowSave, updateRows]);
 
   const startEdit = (rowId, columnId, currentValue) => {
     setEditingCell({ rowId, columnId });

@@ -25,7 +25,8 @@ const {
 } = require('../utils/googleOAuth');
 const {
   getReadCache, setReadCache, clearCampaignReadCache, clearAllReadCache,
-  getPurchaseOrderReadCache, setPurchaseOrderReadCache, clearPurchaseOrderReadCache
+  getPurchaseOrderReadCache, setPurchaseOrderReadCache, clearPurchaseOrderReadCache,
+  getDealStopCampaignCache, setDealStopCampaignCache
 } = require('../utils/cacheManager');
 const {
   fbGet, fbPost, fetchAllFbEdge,
@@ -3715,6 +3716,8 @@ function createLegacyRuntime(app) {
       getPurchaseOrderReadCache,
       setPurchaseOrderReadCache,
       clearPurchaseOrderReadCache,
+      getDealStopCampaignCache,
+      setDealStopCampaignCache,
       fbGet,
       fbPost,
       fetchAllFbEdge,
