@@ -232,6 +232,7 @@ function markManualOverride(row = {}, field = '') {
 function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, actualQtyByCode = {}) {
   const hidden = new Set(hiddenCodes.map(normalizeCode));
   const localByCode = new Map(localRows.map(row => [normalizeCode(row.ma), row]));
+  const sourceCodes = new Set(sourceRows.map(row => normalizeCode(row.ma)));
 
   const mergedSourceRows = sourceRows
     .filter(row => !hidden.has(normalizeCode(row.ma)))
@@ -274,7 +275,17 @@ function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, ac
       }, config);
     });
 
-  return mergedSourceRows;
+  // Giu lai cac dong chi co o local (vd: ma vua them thu cong nhung nguon don
+  // hang chua kip co du lieu) - neu khong se bi "mat" roi "hien lai" moi khi
+  // nguon refresh va merge de.
+  const localOnlyRows = localRows
+    .filter(row => {
+      const code = normalizeCode(row.ma);
+      return Boolean(code) && !hidden.has(code) && !sourceCodes.has(code);
+    })
+    .map(row => recalculateRow({ ...row, slThucDat: getRowActualQty(row, actualQtyByCode) }, config));
+
+  return [...localOnlyRows, ...mergedSourceRows];
 }
 
 function shallowRowsEqual(a = {}, b = {}) {

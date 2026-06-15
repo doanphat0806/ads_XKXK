@@ -622,6 +622,7 @@ app.post('/api/accounts/:id/refresh', async (req, res) => {
       status: 'connected'
     });
     clearCampaignReadCache();
+    clearDealStopCampaignCache();
 
     res.json({ ok: true, ...result });
   } catch (error) {
@@ -1824,6 +1825,7 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
     const result = await Campaign.deleteMany(pruneFilter);
     if (result.deletedCount) {
       clearCampaignReadCache();
+      clearDealStopCampaignCache();
       await addLog(account._id, account.name, 'info', `Chot ngay ${fromDate}: xoa ${result.deletedCount} camp cu khong con trong snapshot`);
     }
   }

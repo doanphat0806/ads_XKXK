@@ -26,7 +26,7 @@ const {
 const {
   getReadCache, setReadCache, clearCampaignReadCache, clearAllReadCache,
   getPurchaseOrderReadCache, setPurchaseOrderReadCache, clearPurchaseOrderReadCache,
-  getDealStopCampaignCache, setDealStopCampaignCache
+  getDealStopCampaignCache, setDealStopCampaignCache, clearDealStopCampaignCache
 } = require('../utils/cacheManager');
 const {
   fbGet, fbPost, fetchAllFbEdge,
@@ -3718,6 +3718,7 @@ function createLegacyRuntime(app) {
       clearPurchaseOrderReadCache,
       getDealStopCampaignCache,
       setDealStopCampaignCache,
+      clearDealStopCampaignCache,
       fbGet,
       fbPost,
       fetchAllFbEdge,

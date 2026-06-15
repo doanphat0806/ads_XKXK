@@ -561,8 +561,10 @@ app.get('/api/pages', async (req, res) => {
     let url = 'me/accounts';
     let params = { fields: 'name,id,access_token,category,picture{url},fan_count', limit: 100 };
 
-    // First page
-    const first = await fbGet(fbToken, url, params);
+    // Single attempt (~30s max) - nginx's default proxy_read_timeout for this
+    // route is 60s, so retrying on FB rate limits would blow past that and
+    // return a generic 504 instead of the real FB error.
+    const first = await fbGet(fbToken, url, params, { retries: 0, rateLimitRetries: 0 });
     if (first.data) allPages = allPages.concat(first.data);
 
     // Paginate
