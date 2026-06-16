@@ -1186,6 +1186,11 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
     const shopeeBidAmount = Number.isFinite(requestedBidAmount) && requestedBidAmount > 0
       ? Math.round(requestedBidAmount)
       : SHOPEE_AD_SET_BID_AMOUNT;
+    const fbBidMode = req.body.fbBidMode === 'bid' ? 'bid' : 'normal';
+    const requestedFbBidAmount = Number(req.body.fbBidAmount);
+    const fbBidAmount = Number.isFinite(requestedFbBidAmount) && requestedFbBidAmount > 0
+      ? Math.round(requestedFbBidAmount)
+      : 0;
     const { ageMin, ageMax } = parseCampaignAgeRange(
       req.body.ageMin,
       req.body.ageMax,
@@ -1195,7 +1200,9 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
     const objective = isShopee ? 'OUTCOME_TRAFFIC' : DEFAULT_CAMPAIGN_OBJECTIVE;
     const destinationType = isShopee ? 'UNDEFINED' : DEFAULT_AD_SET_DESTINATION_TYPE;
     const optimizationGoal = isShopee ? 'LINK_CLICKS' : DEFAULT_AD_SET_OPTIMIZATION_GOAL;
-    const campaignBidStrategy = isShopee ? SHOPEE_CAMPAIGN_BID_STRATEGY : DEFAULT_CAMPAIGN_BID_STRATEGY;
+    const campaignBidStrategy = isShopee
+      ? SHOPEE_CAMPAIGN_BID_STRATEGY
+      : (fbBidMode === 'bid' ? 'LOWEST_COST_WITH_BID_CAP' : DEFAULT_CAMPAIGN_BID_STRATEGY);
     const shopeeCallToActionType = normalizeShopeeCallToActionType(req.body.callToActionType);
     const campaignGender = isShopee ? parseCampaignGender(req.body.gender) : 'female';
     const genderTargeting = getMetaGenderTargeting(campaignGender);
@@ -1284,7 +1291,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
           billing_event: 'IMPRESSIONS',
           optimization_goal: nextOptimizationGoal,
           ...(isShopee ? {} : { optimization_sub_event: 'NONE' }),
-          ...(isShopee ? { bid_amount: shopeeBidAmount } : {}),
+          ...(isShopee ? { bid_amount: shopeeBidAmount } : (fbBidMode === 'bid' && fbBidAmount > 0 ? { bid_amount: fbBidAmount } : {})),
           ...(nextDestinationType === 'MESSENGER'
             ? { promoted_object: { page_id: pageId, smart_pse_enabled: false } }
             : {}),
@@ -1344,7 +1351,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
           adName: finalAdName,
           status: 'ACTIVE',
           dailyBudget,
-          bidAmount: isShopee ? shopeeBidAmount : 0,
+          bidAmount: isShopee ? shopeeBidAmount : (fbBidMode === 'bid' ? fbBidAmount : 0),
           budgetType: 'DAILY',
           isScheduled: true,
           scheduledStartTime: scheduledStart.fbStartTime,

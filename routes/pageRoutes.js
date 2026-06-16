@@ -24,6 +24,8 @@ function registerPageRoutes(app, deps) {
   } = deps;
 
 const POST_CACHE_TTL_MS = 5 * 60 * 1000;
+const PAGES_CACHE_TTL_MS = 10 * 60 * 1000;
+const pagesCache = new Map(); // key: tokenHash -> { pages, fetchedAt }
 const PAGE_VIDEO_MAX_MB = 200;
 const PAGE_VIDEO_MAX_BYTES = PAGE_VIDEO_MAX_MB * 1024 * 1024;
 const PAGE_VIDEO_CHUNK_MAX_BYTES = 768 * 1024;
@@ -552,35 +554,60 @@ async function resolvePagesToken(req, getAppConfig) {
   return String(user?.fbToken || config?.fbToken || '').trim();
 }
 
+async function fetchPagesFromFacebook(fbToken, axios) {
+  let allPages = [];
+  const url = 'me/accounts';
+  const params = { fields: 'name,id,access_token,category,picture{url},fan_count', limit: 100 };
+
+  const first = await fbGet(fbToken, url, params, { retries: 0, rateLimitRetries: 0 });
+  if (first.data) allPages = allPages.concat(first.data);
+
+  let nextUrl = first.paging?.next;
+  while (nextUrl) {
+    try {
+      const resp = await axios.get(nextUrl, { timeout: 30000 });
+      if (resp.data?.data) allPages = allPages.concat(resp.data.data);
+      nextUrl = resp.data?.paging?.next || null;
+    } catch {
+      break;
+    }
+  }
+  return allPages;
+}
+
 app.get('/api/pages', async (req, res) => {
+  const fbToken = await resolvePagesToken(req, getAppConfig).catch(() => '');
+  if (!fbToken) return res.status(400).json({ error: 'Chưa cấu hình Facebook Token dùng chung' });
+
+  const tokenHash = crypto.createHash('md5').update(fbToken).digest('hex');
+  const forceRefresh = req.query.refresh === '1';
+
   try {
-    const fbToken = await resolvePagesToken(req, getAppConfig);
-    if (!fbToken) return res.status(400).json({ error: 'Chưa cấu hình Facebook Token dùng chung' });
+    const cached = pagesCache.get(tokenHash);
+    const now = Date.now();
+    const isStale = !cached || (now - cached.fetchedAt) > PAGES_CACHE_TTL_MS;
 
-    let allPages = [];
-    let url = 'me/accounts';
-    let params = { fields: 'name,id,access_token,category,picture{url},fan_count', limit: 100 };
-
-    // Single attempt (~30s max) - nginx's default proxy_read_timeout for this
-    // route is 60s, so retrying on FB rate limits would blow past that and
-    // return a generic 504 instead of the real FB error.
-    const first = await fbGet(fbToken, url, params, { retries: 0, rateLimitRetries: 0 });
-    if (first.data) allPages = allPages.concat(first.data);
-
-    // Paginate
-    let nextUrl = first.paging?.next;
-    while (nextUrl) {
-      try {
-        const resp = await axios.get(nextUrl, { timeout: 30000 });
-        if (resp.data?.data) allPages = allPages.concat(resp.data.data);
-        nextUrl = resp.data?.paging?.next || null;
-      } catch {
-        break;
+    // Return cached data immediately (stale-while-revalidate)
+    if (cached && !forceRefresh) {
+      res.json({ ok: true, pages: cached.pages, total: cached.pages.length, cached: true });
+      if (isStale) {
+        fetchPagesFromFacebook(fbToken, axios)
+          .then(pages => pagesCache.set(tokenHash, { pages, fetchedAt: Date.now() }))
+          .catch(() => {});
       }
+      return;
     }
 
+    // No cache yet or force refresh — fetch and wait
+    const allPages = await fetchPagesFromFacebook(fbToken, axios);
+    pagesCache.set(tokenHash, { pages: allPages, fetchedAt: now });
     res.json({ ok: true, pages: allPages, total: allPages.length });
   } catch (error) {
+    // Fetch failed — return stale cache rather than error if available
+    const cached = pagesCache.get(tokenHash);
+    if (cached) {
+      return res.json({ ok: true, pages: cached.pages, total: cached.pages.length, cached: true, stale: true });
+    }
     res.status(400).json(getPostFetchError(error));
   }
 });

@@ -26,6 +26,11 @@ const SHOPEE_GENDER_OPTIONS = [
 ];
 const AD_NAME_PREFIX_OPTIONS = ['PHAT', 'BINH', 'HIEU'];
 const AD_STATUS_OPTIONS = ['Sale', 'Sẵn', 'Win', 'Test'];
+const FACEBOOK_DEFAULT_BID_AMOUNT = 5000;
+const FB_BID_MODE_OPTIONS = [
+  { value: 'normal', label: 'Bình thường' },
+  { value: 'bid', label: 'Đặt giá thầu' }
+];
 
 function getDefaultCampaignStartTime() {
   const start = new Date(Date.now() + 7 * 60 * 60 * 1000);
@@ -136,6 +141,8 @@ export default function CreateCampaign() {
     isInitialShopeeProvider ? SHOPEE_DEFAULT_DAILY_BUDGET : FACEBOOK_DEFAULT_DAILY_BUDGET
   );
   const [bidAmount, setBidAmount] = useState(SHOPEE_DEFAULT_BID_AMOUNT);
+  const [fbBidMode, setFbBidMode] = useState('normal');
+  const [fbBidAmount, setFbBidAmount] = useState(FACEBOOK_DEFAULT_BID_AMOUNT);
   const [campaignStartTime, setCampaignStartTime] = useState(getDefaultCampaignStartTime);
   const [ageMin, setAgeMin] = useState(
     isInitialShopeeProvider ? SHOPEE_DEFAULT_AGE_MIN : FACEBOOK_DEFAULT_AGE_MIN
@@ -443,7 +450,7 @@ export default function CreateCampaign() {
         ageMax,
         ...(selectedProvider === 'shopee'
           ? { bidAmount, callToActionType: shopeeCallToActionType, gender: shopeeGender }
-          : { adNamePrefix, adNameStatus }),
+          : { adNamePrefix, adNameStatus, fbBidMode, ...(fbBidMode === 'bid' ? { fbBidAmount } : {}) }),
         pageId: selectedPage?.id || ''
       }, {
         timeoutMs: 15 * 60 * 1000
@@ -688,6 +695,24 @@ export default function CreateCampaign() {
                       <option key={status} value={status}>{status}</option>
                     ))}
                   </select>
+                  <label style={{ marginTop: '8px' }}>Chế độ giá thầu</label>
+                  <select value={fbBidMode} onChange={e => setFbBidMode(e.target.value)}>
+                    {FB_BID_MODE_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                  {fbBidMode === 'bid' && (
+                    <>
+                      <label style={{ marginTop: '8px' }}>Giá thầu (VND)</label>
+                      <input
+                        type="number"
+                        min="1000"
+                        step="1000"
+                        value={fbBidAmount}
+                        onChange={e => setFbBidAmount(Number(e.target.value || 0))}
+                      />
+                    </>
+                  )}
                 </>
               )}
             </div>
