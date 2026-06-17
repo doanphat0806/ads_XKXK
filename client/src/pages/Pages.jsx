@@ -25,7 +25,7 @@ const SHOPEE_GENDER_OPTIONS = [
   { value: 'male', label: 'Nam' }
 ];
 const AD_NAME_PREFIX_OPTIONS = ['PHAT', 'BINH', 'HIEU'];
-const AD_STATUS_OPTIONS = ['Sale', 'Sẵn', 'Win', 'Test'];
+const AD_STATUS_OPTIONS = ['Sale', 'Sẵn', 'Win', 'Test', 'XA'];
 const FACEBOOK_DEFAULT_BID_AMOUNT = 5000;
 const FB_BID_MODE_OPTIONS = [
   { value: 'normal', label: 'Bình thường' },

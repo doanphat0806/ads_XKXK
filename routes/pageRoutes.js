@@ -23,8 +23,8 @@ function registerPageRoutes(app, deps) {
     META_POST_REQUEST_LIMIT
   } = deps;
 
-const POST_CACHE_TTL_MS = 5 * 60 * 1000;
-const PAGES_CACHE_TTL_MS = 10 * 60 * 1000;
+const POST_CACHE_TTL_MS = 15 * 60 * 1000;
+const PAGES_CACHE_TTL_MS = 15 * 60 * 1000;
 const pagesCache = new Map(); // key: tokenHash -> { pages, fetchedAt }
 const PAGE_VIDEO_MAX_MB = 200;
 const PAGE_VIDEO_MAX_BYTES = PAGE_VIDEO_MAX_MB * 1024 * 1024;
@@ -48,11 +48,8 @@ function getPostCache(key, refresh = false) {
   if (refresh) return null;
   const cached = postCache.get(key);
   if (!cached) return null;
-  if (Date.now() - cached.createdAt > POST_CACHE_TTL_MS) {
-    postCache.delete(key);
-    return null;
-  }
-  return cached.value;
+  const isStale = Date.now() - cached.createdAt > POST_CACHE_TTL_MS;
+  return { value: cached.value, isStale };
 }
 
 function isPagePermissionError(error) {
@@ -522,10 +519,11 @@ async function fetchRecentPostsForPage(page, fallbackToken, options = {}) {
   const limit = parseBoundedInt(options.limit, maxLimit, 1, maxLimit);
   const maxPages = parseBoundedInt(options.maxPages, 4, 1, 5);
   const requestLimit = Math.min(limit, META_POST_REQUEST_LIMIT);
+  const fbGetOptions = options.fbGetOptions || {};
   const fields = 'id,message,created_time,permalink_url,full_picture,shares,likes.summary(true),comments.summary(true)';
   let posts = [];
 
-  const first = await fbGet(token, `${page.id}/posts`, { fields, limit: requestLimit });
+  const first = await fbGet(token, `${page.id}/posts`, { fields, limit: requestLimit }, fbGetOptions);
   if (first.data) posts = posts.concat(first.data);
 
   let fetchedPages = 1;
@@ -541,6 +539,25 @@ async function fetchRecentPostsForPage(page, fallbackToken, options = {}) {
   const mappedPosts = limitedPosts.map(post => mapFacebookPost(post, page));
   await saveFacebookPosts(mappedPosts, limitedPosts);
   return mappedPosts;
+}
+
+async function doFetchAndCachePosts(pageId, fbToken, options, cacheKey) {
+  const { limit, maxPages, postLimit, fbGetOptions = {} } = options;
+  let pageToken = fbToken;
+  let pageInfo = { id: pageId };
+  try {
+    pageInfo = await fbGet(fbToken, pageId, { fields: 'name,id,access_token,picture{url}' }, { retries: 1, rateLimitRetries: 0, ...fbGetOptions });
+    if (pageInfo.access_token) pageToken = pageInfo.access_token;
+  } catch {}
+
+  const posts = await fetchRecentPostsForPage(
+    { ...pageInfo, id: pageId, access_token: pageToken },
+    fbToken,
+    { limit, maxPages, maxLimit: postLimit, fbGetOptions }
+  );
+  const payload = { ok: true, posts, total: posts.length, limit, maxPages };
+  setPostCache(cacheKey, payload);
+  return payload;
 }
 
 async function resolvePagesToken(req, getAppConfig) {
@@ -657,9 +674,9 @@ app.get('/api/pages/all-posts', async (req, res) => {
     const maxPages = parseBoundedInt(req.query.maxPages, 4, 1, 5);
     const refresh = req.query.refresh === '1';
     const cacheKey = `all-posts:${normalizeProvider(req.query.provider)}:${perPage}:${requestedTotalLimit || 'auto'}:${maxPages}`;
-    const cached = getPostCache(cacheKey, refresh);
-    if (cached) {
-      return res.json({ ...cached, cached: true });
+    const cacheResult = getPostCache(cacheKey, refresh);
+    if (cacheResult) {
+      return res.json({ ...cacheResult.value, cached: true });
     }
     // 1. Get all pages
     let allPages = [];
@@ -726,27 +743,37 @@ app.get('/api/pages/:pageId/posts', async (req, res) => {
     const maxPages = parseBoundedInt(req.query.maxPages, 4, 1, 5);
     const refresh = req.query.refresh === '1';
     const cacheKey = `page-posts:${normalizeProvider(req.query.provider)}:${pageId}:${limit}:${maxPages}`;
-    const cached = getPostCache(cacheKey, refresh);
-    if (cached) {
-      return res.json({ ...cached, cached: true });
+
+    // Stale-while-revalidate: trả cache ngay (dù stale), refresh background
+    const cacheResult = getPostCache(cacheKey, refresh);
+    if (cacheResult) {
+      res.json({ ...cacheResult.value, cached: true });
+      if (cacheResult.isStale) {
+        doFetchAndCachePosts(pageId, fbToken, { limit, maxPages, postLimit }, cacheKey).catch(() => {});
+      }
+      return;
     }
 
-    // First get the page access token
-    let pageToken = fbToken;
-    let pageInfo = { id: pageId };
+    // Không có cache: fetch từ Facebook, retry ít hơn để không block proxy
     try {
-      pageInfo = await fbGet(fbToken, pageId, { fields: 'name,id,access_token,picture{url}' });
-      if (pageInfo.access_token) pageToken = pageInfo.access_token;
-    } catch {}
-
-    const posts = await fetchRecentPostsForPage(
-      { ...pageInfo, id: pageId, access_token: pageToken },
-      fbToken,
-      { limit, maxPages, maxLimit: postLimit }
-    );
-    const payload = { ok: true, posts, total: posts.length, limit, maxPages };
-
-    res.json(setPostCache(cacheKey, payload));
+      const payload = await doFetchAndCachePosts(
+        pageId, fbToken,
+        { limit, maxPages, postLimit, fbGetOptions: { retries: 1, rateLimitRetries: 0 } },
+        cacheKey
+      );
+      res.json(payload);
+    } catch (error) {
+      // Fallback: trả posts đã lưu trong DB nếu Facebook API lỗi
+      const savedPosts = await FacebookPost.find({ pageId: String(pageId) })
+        .sort({ createdTime: -1 })
+        .limit(limit)
+        .lean()
+        .then(posts => posts.map(mapSavedFacebookPost));
+      if (savedPosts.length > 0) {
+        return res.json({ ok: true, posts: savedPosts, total: savedPosts.length, limit, maxPages, fromSaved: true });
+      }
+      res.status(400).json({ error: error.message });
+    }
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
