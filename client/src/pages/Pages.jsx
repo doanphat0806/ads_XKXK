@@ -251,8 +251,18 @@ export default function CreateCampaign() {
     setLoadingPages(true);
     try {
       const data = await api('GET', '/pages');
-      setPages(data.pages || []);
+      const pages = data.pages || [];
+      setPages(pages);
+      try { localStorage.setItem('adsctrl:pages-cache', JSON.stringify(pages)); } catch {}
     } catch (e) {
+      try {
+        const saved = localStorage.getItem('adsctrl:pages-cache');
+        if (saved) {
+          setPages(JSON.parse(saved));
+          toast.warn('Facebook dang bi gioi han API. Dang dung danh sach Pages da luu.');
+          return;
+        }
+      } catch {}
       toast.error('Loi tai Pages: ' + e.message);
     } finally {
       setLoadingPages(false);

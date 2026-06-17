@@ -105,11 +105,25 @@ export default function CreaterPage() {
       const data = await api('GET', '/pages');
       const nextPages = data.pages || [];
       setPages(nextPages);
+      try { localStorage.setItem('adsctrl:pages-cache', JSON.stringify(nextPages)); } catch {}
       setSelectedPageId(currentId => {
         if (currentId && nextPages.some(page => String(page.id) === String(currentId))) return currentId;
         return nextPages[0]?.id ? String(nextPages[0].id) : '';
       });
     } catch (error) {
+      try {
+        const saved = localStorage.getItem('adsctrl:pages-cache');
+        if (saved) {
+          const nextPages = JSON.parse(saved);
+          setPages(nextPages);
+          setSelectedPageId(currentId => {
+            if (currentId && nextPages.some(page => String(page.id) === String(currentId))) return currentId;
+            return nextPages[0]?.id ? String(nextPages[0].id) : '';
+          });
+          toast.warn('Facebook dang bi gioi han API. Dang dung danh sach Pages da luu.');
+          return;
+        }
+      } catch {}
       toast.error('Loi tai danh sach page: ' + error.message);
     } finally {
       setLoadingPages(false);
