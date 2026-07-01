@@ -852,7 +852,6 @@ app.post('/api/campaigns/bulk-bid-update', async (req, res) => {
     }
 
     if (!uniqueItems.length) return res.status(400).json({ error: 'Chua chon campaign' });
-    if (uniqueItems.length > 200) return res.status(400).json({ error: 'Chi cho phep xu ly toi da 200 campaign moi lan' });
 
     const accountIds = [...new Set(uniqueItems.map(item => item.accountId))];
     const accounts = await Account.find(withUserFilter(req, { _id: { $in: accountIds } }));

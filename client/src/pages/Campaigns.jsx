@@ -384,7 +384,7 @@ export default function Campaigns() {
           accountId: getCampaignAccountId(campaign)
         }))
       };
-      const result = await api('POST', '/campaigns/bulk-bid-update', payload, { timeoutMs: 5 * 60 * 1000 });
+      const result = await api('POST', '/campaigns/bulk-bid-update', payload, { timeoutMs: 15 * 60 * 1000 });
       if (result?.logMessage) setLastToggleLog(result.logMessage);
       const changedText = `${formatNumber(result?.changed || 0)}/${formatNumber(result?.requested || selectedCampaigns.length)}`;
       if (result?.failed > 0) {
