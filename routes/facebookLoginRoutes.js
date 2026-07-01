@@ -2,11 +2,36 @@ const axios = require('axios');
 const Config = require('../models/Config');
 const { exchangeToken } = require('../utils/fbApi');
 
-const FB_REDIRECT_URI = 'https://xekoxukashop.id.vn/auth/facebook/callback';
+const DEFAULT_FB_REDIRECT_URI = 'https://xekoxukashop.id.vn/auth/facebook/callback';
+
+/**
+ * Lấy redirect URI cho Facebook OAuth, ưu tiên cấu hình env nếu cùng host
+ * (hoặc cả hai đều là localhost), ngược lại suy ra từ request hiện tại.
+ */
+function getFbRedirectUri(req) {
+  const runtimeRedirectUri = `${req.protocol}://${req.get('host')}/auth/facebook/callback`;
+  const configuredRedirectUri = String(process.env.FB_REDIRECT_URI || DEFAULT_FB_REDIRECT_URI).trim();
+
+  try {
+    const configuredUrl = new URL(configuredRedirectUri);
+    const runtimeUrl = new URL(runtimeRedirectUri);
+    const configuredIsLocalhost = ['localhost', '127.0.0.1'].includes(configuredUrl.hostname.toLowerCase());
+    const runtimeIsLocalhost = ['localhost', '127.0.0.1'].includes(runtimeUrl.hostname.toLowerCase());
+
+    if (configuredUrl.host.toLowerCase() === runtimeUrl.host.toLowerCase() || (configuredIsLocalhost && runtimeIsLocalhost)) {
+      return configuredRedirectUri;
+    }
+  } catch {
+    return configuredRedirectUri;
+  }
+
+  return runtimeRedirectUri;
+}
 
 function registerFacebookLoginRoutes(app) {
   app.get('/auth/facebook', (req, res) => {
-    const url = `https://www.facebook.com/v24.0/dialog/oauth?client_id=${process.env.FB_APP_ID}&redirect_uri=${encodeURIComponent(FB_REDIRECT_URI)}&scope=public_profile,email`;
+    const redirectUri = getFbRedirectUri(req);
+    const url = `https://www.facebook.com/v24.0/dialog/oauth?client_id=${process.env.FB_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=public_profile,email`;
     return res.redirect(url);
   });
 
@@ -14,7 +39,7 @@ function registerFacebookLoginRoutes(app) {
     const { code, error } = req.query;
 
     if (error) {
-      return res.redirect('https://xekoxukashop.id.vn/');
+      return res.redirect('/');
     }
 
     if (!code) {
@@ -22,13 +47,14 @@ function registerFacebookLoginRoutes(app) {
     }
 
     try {
+      const redirectUri = getFbRedirectUri(req);
       const tokenRes = await axios.get(
         'https://graph.facebook.com/v24.0/oauth/access_token',
         {
           params: {
             client_id: process.env.FB_APP_ID,
             client_secret: process.env.FB_APP_SECRET,
-            redirect_uri: FB_REDIRECT_URI,
+            redirect_uri: redirectUri,
             code
           }
         }

@@ -72,6 +72,8 @@ export default function Campaigns() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCampaignKeys, setSelectedCampaignKeys] = useState(() => new Set());
   const [bulkToggling, setBulkToggling] = useState('');
+  const [bidUpdateAmount, setBidUpdateAmount] = useState(500);
+  const [bulkBidUpdating, setBulkBidUpdating] = useState(false);
 
   const [syncFromDate, setSyncFromDate] = useState(yesterdayString());
   const [syncToDate, setSyncToDate] = useState(yesterdayString());
@@ -354,6 +356,54 @@ export default function Campaigns() {
     setSelectedCampaignKeys(new Set());
   }, []);
 
+  const quickSelectBudget500k = useCallback(() => {
+    const keys = filteredCampaigns
+      .filter(campaign => {
+        const budget = campaign.budgetType === 'LIFETIME' ? campaign.lifetimeBudget : campaign.dailyBudget;
+        return budget >= 500000 && isCampaignActiveStatus(campaign.status);
+      })
+      .map(campaign => getCampaignSelectionKey(campaign))
+      .filter(Boolean);
+    setSelectedCampaignKeys(new Set(keys));
+  }, [filteredCampaigns]);
+
+  const bulkUpdateBidForSelected = async () => {
+    const bid = Math.round(Number(bidUpdateAmount));
+    if (!bid || bid <= 0) { toast.error('Nhap gia bid hop le'); return; }
+    if (!selectedCampaigns.length || bulkBidUpdating) return;
+    if (!window.confirm(`Cap nhat bid ${bid.toLocaleString()}d cho ${selectedCampaigns.length} camp da chon?`)) return;
+
+    setBulkBidUpdating(true);
+    try {
+      const payload = {
+        bidAmount: bid,
+        fromDate: filterFromDate,
+        toDate: filterToDate,
+        items: selectedCampaigns.map(campaign => ({
+          campaignId: campaign.campaignId,
+          accountId: getCampaignAccountId(campaign)
+        }))
+      };
+      const result = await api('POST', '/campaigns/bulk-bid-update', payload, { timeoutMs: 5 * 60 * 1000 });
+      if (result?.logMessage) setLastToggleLog(result.logMessage);
+      const changedText = `${formatNumber(result?.changed || 0)}/${formatNumber(result?.requested || selectedCampaigns.length)}`;
+      if (result?.failed > 0) {
+        toast.warn(`Da cap nhat bid ${changedText} camp, loi ${formatNumber(result.failed)}`);
+      } else {
+        toast.success(`Da cap nhat bid ${changedText} camp`);
+      }
+      const updatedKeys = new Set(selectedCampaigns.map(campaign => getCampaignSelectionKey(campaign)).filter(Boolean));
+      setCampaigns(items => items.map(item => (
+        updatedKeys.has(getCampaignSelectionKey(item)) ? { ...item, bidAmount: bid } : item
+      )));
+      clearSelection();
+    } catch (error) {
+      toast.error('Loi cap nhat bid: ' + error.message);
+    } finally {
+      setBulkBidUpdating(false);
+    }
+  };
+
   const bulkToggleSelectedCampaigns = async (targetStatus) => {
     const targetLabel = targetStatus === 'PAUSED' ? 'tat' : 'bat';
     if (!selectedCampaigns.length || bulkToggling) return;
@@ -581,10 +631,44 @@ export default function Campaigns() {
             <button
               className="btn btn-ghost btn-sm"
               onClick={clearSelection}
-              disabled={Boolean(bulkToggling)}
+              disabled={Boolean(bulkToggling) || bulkBidUpdating}
             >
               Bo chon
             </button>
+          )}
+          {provider === 'shopee' && (
+            <>
+              <span style={{ borderLeft: '1px solid var(--border)', marginLeft: '4px', paddingLeft: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={quickSelectBudget500k}
+                  disabled={bulkBidUpdating}
+                  title="Chon tat ca camp co ngan sach 500,000d trong danh sach da loc"
+                >
+                  Chon camp 500k
+                </button>
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ fontSize: '11px', color: 'var(--muted2)', fontFamily: 'var(--mono)' }}>Bid:</span>
+                <input
+                  type="number"
+                  value={bidUpdateAmount}
+                  onChange={e => setBidUpdateAmount(e.target.value)}
+                  style={{ width: '72px', fontSize: '12px', padding: '2px 6px', fontFamily: 'var(--mono)', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--bg2)', color: 'var(--text)' }}
+                  placeholder="500"
+                  min="1"
+                  disabled={bulkBidUpdating}
+                />
+              </span>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={bulkUpdateBidForSelected}
+                disabled={selectedCampaigns.length === 0 || bulkBidUpdating}
+                title="Cap nhat gia bid cho cac camp da chon"
+              >
+                {bulkBidUpdating ? 'Dang cap nhat bid...' : `Tang bid (${selectedCampaigns.length})`}
+              </button>
+            </>
           )}
         </div>
         <div className="tbl-wrap">

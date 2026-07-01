@@ -825,6 +825,105 @@ app.post('/api/campaigns/bulk-toggle', async (req, res) => {
   }
 });
 
+app.post('/api/campaigns/bulk-bid-update', async (req, res) => {
+  try {
+    const bidAmount = Math.round(Number(req.body.bidAmount || 0));
+    if (!Number.isFinite(bidAmount) || bidAmount <= 0) {
+      return res.status(400).json({ error: 'Gia bid khong hop le' });
+    }
+
+    const fromDate = normalizeCampaignDate(req.body.fromDate || req.body.date);
+    const toDate = normalizeCampaignDate(req.body.toDate || req.body.date || fromDate);
+    const rawItems = Array.isArray(req.body.items) ? req.body.items : [];
+    const requestedItems = rawItems
+      .map(item => ({
+        accountId: String(item?.accountId || '').trim(),
+        campaignId: String(item?.campaignId || '').trim()
+      }))
+      .filter(item => item.campaignId && mongoose.Types.ObjectId.isValid(item.accountId));
+
+    const uniqueItems = [];
+    const seen = new Set();
+    for (const item of requestedItems) {
+      const key = `${item.accountId}:${item.campaignId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      uniqueItems.push(item);
+    }
+
+    if (!uniqueItems.length) return res.status(400).json({ error: 'Chua chon campaign' });
+    if (uniqueItems.length > 200) return res.status(400).json({ error: 'Chi cho phep xu ly toi da 200 campaign moi lan' });
+
+    const accountIds = [...new Set(uniqueItems.map(item => item.accountId))];
+    const accounts = await Account.find(withUserFilter(req, { _id: { $in: accountIds } }));
+    const accountsById = new Map(accounts.map(account => [String(account._id), account]));
+    const tokenByAccountId = new Map();
+    const results = [];
+    const errors = [];
+
+    for (const item of uniqueItems) {
+      const account = accountsById.get(item.accountId);
+      if (!account) {
+        errors.push({ ...item, error: 'Account not found' });
+        continue;
+      }
+
+      try {
+        let fbToken = tokenByAccountId.get(item.accountId);
+        if (fbToken === undefined) {
+          const secrets = await getEffectiveSecrets(account);
+          fbToken = secrets.fbToken || '';
+          tokenByAccountId.set(item.accountId, fbToken);
+        }
+        if (!fbToken) throw new Error('Thieu Facebook Access Token');
+
+        const { items: adSets } = await fetchAllFbEdge(fbToken, `${item.campaignId}/adsets`, {
+          fields: 'id,bid_amount',
+          limit: 20
+        });
+
+        if (!adSets.length) throw new Error('Khong tim thay adset cho campaign nay');
+
+        for (const adSet of adSets) {
+          await fbPost(fbToken, adSet.id, { bid_amount: bidAmount });
+        }
+
+        await Campaign.updateMany(
+          { accountId: item.accountId, campaignId: item.campaignId, date: { $gte: fromDate, $lte: toDate } },
+          { $set: { bidAmount, updatedAt: new Date() } }
+        );
+
+        results.push({ ...item, accountName: account.name, adSetsUpdated: adSets.length });
+      } catch (error) {
+        errors.push({ ...item, accountName: account?.name, error: error.message });
+      }
+    }
+
+    const changed = results.length;
+    if (changed > 0) clearCampaignReadCache();
+
+    const logMessage = `Cap nhat bid ${bidAmount.toLocaleString()}d cho ${changed}/${uniqueItems.length} camp${errors.length ? `, loi ${errors.length}` : ''}`;
+    for (const account of accounts) {
+      const accountChanged = results.filter(r => String(r.accountId) === String(account._id)).length;
+      if (accountChanged <= 0) continue;
+      await addLog(account._id, account.name, 'success', `${logMessage} (${accountChanged} camp trong tai khoan nay)`);
+    }
+
+    res.json({
+      ok: errors.length === 0,
+      bidAmount,
+      requested: uniqueItems.length,
+      changed,
+      failed: errors.length,
+      results,
+      errors,
+      logMessage
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.post('/api/campaigns/:campaignId/toggle', async (req, res) => {
   try {
     const { accountId, currentStatus } = req.body;
