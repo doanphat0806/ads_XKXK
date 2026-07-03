@@ -4,6 +4,7 @@ function registerReportRoutes(app, deps = {}) {
     buildAccountProviderFilter,
     generateExcelReport,
     getReportData,
+    getShopeeStatsData,
     normalizeCampaignDate,
     todayStr,
     withUserFilter
@@ -87,6 +88,31 @@ app.get('/api/reports/data', async (req, res) => {
     res.json(data);
   } catch (err) {
     console.error('[Report] Error fetching report data:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── SHOPEE STATS (multi-day, per-account) ─────────────────
+app.get('/api/reports/shopee-stats', async (req, res) => {
+  try {
+    if (!req.currentUser?._id) return res.status(401).json({ error: 'Unauthorized' });
+
+    const today = todayStr();
+    const defaultFrom = `${today.slice(0, 7)}-01`;
+    const fromDate = normalizeCampaignDate(req.query.from || defaultFrom);
+    const toDate = normalizeCampaignDate(req.query.to || today);
+    if (!fromDate || !toDate) return res.status(400).json({ error: 'Invalid date' });
+    if (fromDate > toDate) return res.status(400).json({ error: '"from" phải trước "to"' });
+
+    const accounts = await Account.find(withUserFilter(req, buildAccountProviderFilter('shopee')))
+      .select('_id name adAccountId').lean();
+    if (!accounts.length) return res.status(404).json({ error: 'Không tìm thấy tài khoản Shopee nào' });
+
+    const accountIds = accounts.map(a => a._id);
+    const data = await getShopeeStatsData({ ownerUserId: req.currentUser._id, fromDate, toDate, accountIds });
+    res.json(data);
+  } catch (err) {
+    console.error('[Report] Error fetching shopee stats:', err);
     res.status(500).json({ error: err.message });
   }
 });

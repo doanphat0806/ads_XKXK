@@ -2110,6 +2110,38 @@
       vertical-align: middle;
     }
 
+    .text-right {
+      text-align: right;
+    }
+
+    .text-center {
+      text-align: center;
+    }
+
+    #page-shopee-stats table {
+      table-layout: fixed;
+    }
+
+    /* Shopee stats specific tweaks to avoid column misalignment */
+    #page-shopee-stats thead th,
+    #page-shopee-stats tbody td {
+      padding: 8px 12px;
+      vertical-align: middle;
+      box-sizing: border-box;
+    }
+
+    /* allow header text to wrap so it doesn't push columns out of alignment */
+    #page-shopee-stats thead th {
+      white-space: normal;
+      font-size: 11px;
+    }
+
+    /* ensure monospace cells use consistent font and don't affect layout */
+    #page-shopee-stats .mono-sm {
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+
     /* Ã¢â€â‚¬Ã¢â€â‚¬ Campaigns Page Overrides Ã¢â€â‚¬Ã¢â€â‚¬ */
     #page-oder-dashboard .row-week-total,
     #page-oder-dashboard .row-month-total {

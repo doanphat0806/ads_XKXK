@@ -61,7 +61,9 @@ function createLegacyRuntime(app) {
   const PurchaseOrder = require('../models/PurchaseOrder');
   const ShopeeCommission = require('../models/ShopeeCommission');
   const ShopeeCommissionOrder = require('../models/ShopeeCommissionOrder');
-  const { generateExcelReport, importCommissionOrders, getReportData } = require('../services/reportService');
+  const ShopeeAffAccount = require('../models/ShopeeAffAccount');
+  const { registerShopeeAffAccountRoutes } = require('../routes/shopeeAffAccountRoutes');
+  const { generateExcelReport, importCommissionOrders, getReportData, getShopeeStatsData } = require('../services/reportService');
   const {
     buildOrderQuery,
     getOrderItemsFromRaw,
@@ -4006,6 +4008,7 @@ function createLegacyRuntime(app) {
       PurchaseOrder.createIndexes(),
       ShopeeCommission.createIndexes(),
       ShopeeCommissionOrder.createIndexes(),
+      ShopeeAffAccount.createIndexes(),
       Config.createIndexes(),
       ensureUserIndexes(),
       FacebookToken.createIndexes()
@@ -4035,8 +4038,15 @@ function createLegacyRuntime(app) {
     buildAccountProviderFilter,
     generateExcelReport,
     getReportData,
+    getShopeeStatsData,
     normalizeCampaignDate,
     todayStr,
+    withUserFilter
+  });
+
+  registerShopeeAffAccountRoutes(app, {
+    ShopeeAffAccount,
+    Account,
     withUserFilter
   });
 

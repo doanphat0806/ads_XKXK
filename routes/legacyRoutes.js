@@ -482,7 +482,6 @@ app.put('/api/accounts/:id', async (req, res) => {
     if (req.body.linkedPageIds !== undefined) {
       updates.linkedPageIds = Array.isArray(req.body.linkedPageIds) ? req.body.linkedPageIds : [];
     }
-
     const account = await Account.findOneAndUpdate(withUserFilter(req, { _id: req.params.id }), updates, { new: true });
     if (!account) return res.status(404).json({ error: 'Not found' });
 

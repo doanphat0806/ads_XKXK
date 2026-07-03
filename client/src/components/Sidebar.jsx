@@ -4,9 +4,11 @@ import {
   BarChart3,
   BookText,
   Boxes,
+  CalendarRange,
   ChevronDown,
   CirclePlus,
   Coins,
+  Contact,
   CopyPlus,
   FileSpreadsheet,
   LayoutDashboard,
@@ -125,6 +127,12 @@ export default function Sidebar() {
           </NavLink>
           <NavLink to="/report-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Bao Cao Giam Sat">
             <span className="icon"><BarChart3 size={16} strokeWidth={2} /></span><span>Báo Cáo Ads</span>
+          </NavLink>
+          <NavLink to="/shopee-stats" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Thong Ke Shopee">
+            <span className="icon"><CalendarRange size={16} strokeWidth={2} /></span><span>Thống Kê</span>
+          </NavLink>
+          <NavLink to="/shopee-aff-accounts" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Tai khoan AFF">
+            <span className="icon"><Contact size={16} strokeWidth={2} /></span><span>Tài khoản AFF</span>
           </NavLink>
         </>
       )}

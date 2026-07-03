@@ -5,6 +5,7 @@ const Campaign = require('../models/Campaign');
 const ShopeeCommission = require('../models/ShopeeCommission');
 const ShopeeCommissionOrder = require('../models/ShopeeCommissionOrder');
 const Account = require('../models/Account');
+const ShopeeAffAccount = require('../models/ShopeeAffAccount');
 const { normalizeCsvHeader, parseCsvNumber } = require('../utils/csvImport');
 
 // ============================================================
@@ -1100,4 +1101,158 @@ async function getReportData({ ownerUserId, targetDate, accountIds }) {
   };
 }
 
-module.exports = { generateExcelReport, importCommissionOrders, getReportData };
+// ============================================================
+// SHOPEE STATS (multi-day, per-account, cumulative tax split)
+// ============================================================
+
+const TAX_THRESHOLD = 1200000000;
+
+// Extracts the alphabetic code from a subId2 (e.g. "1102PH01" -> "PH", "1102PHAT01" -> "PHAT"),
+// stripping a leading numeric date prefix if present. Used to attribute commission to a
+// Shopee account via that account's configured `shopeeSubId2Codes` (exact match, not substring).
+function extractSubId2Code(subId2) {
+  const s = String(subId2 || '').trim().toUpperCase().replace(/^\d+/, '');
+  const match = s.match(/^[A-Z]+/);
+  return match ? match[0] : '';
+}
+
+async function getShopeeStatsData({ ownerUserId, fromDate, toDate, accountIds }) {
+  const accounts = await Account.find({ _id: { $in: accountIds } })
+    .select('_id name adAccountId').lean();
+  const accountMap = new Map(accounts.map(a => [String(a._id), a]));
+
+  const affAccounts = await ShopeeAffAccount.find({ ownerUserId })
+    .select('_id name shopeeSubId2Codes').lean();
+  const affAccountMap = new Map(affAccounts.map(a => [String(a._id), a]));
+
+  const codeToAffId = new Map(); // code -> affId (string)
+  for (const aff of affAccounts) {
+    for (const code of aff.shopeeSubId2Codes || []) {
+      const c = String(code || '').trim().toUpperCase();
+      if (c) codeToAffId.set(c, String(aff._id));
+    }
+  }
+
+  // Ads spend / active-camp counts within the requested range, attributed per-campaign to
+  // its AFF account via the code extracted from Campaign.name (same convention as subId2),
+  // since a single Số TKQC can run campaigns belonging to several different AFF accounts.
+  const rangeCamps = await Campaign.find({
+    accountId: { $in: accountIds },
+    date: { $gte: fromDate, $lte: toDate },
+  }).select('accountId date spend status name').lean();
+
+  const adsByAffDate = new Map();  // affId -> Map(date -> spend)
+  const campsByAffDate = new Map(); // affId -> Map(date -> activeCount)
+  const accountsSeenByAff = new Map(); // affId -> Set(accountId)
+
+  for (const camp of rangeCamps) {
+    const affId = codeToAffId.get(extractSubId2Code(camp.name));
+    if (!affId) continue;
+    if (!adsByAffDate.has(affId)) adsByAffDate.set(affId, new Map());
+    const adsMap = adsByAffDate.get(affId);
+    adsMap.set(camp.date, (adsMap.get(camp.date) || 0) + Number(camp.spend || 0));
+
+    if (String(camp.status || '').toUpperCase() === 'ACTIVE') {
+      if (!campsByAffDate.has(affId)) campsByAffDate.set(affId, new Map());
+      const campsMap = campsByAffDate.get(affId);
+      campsMap.set(camp.date, (campsMap.get(camp.date) || 0) + 1);
+    }
+
+    if (!accountsSeenByAff.has(affId)) accountsSeenByAff.set(affId, new Set());
+    accountsSeenByAff.get(affId).add(String(camp.accountId));
+  }
+
+  // Full commission history (all-time) for the owner, matched to AFF accounts via their
+  // configured subId2 codes — needed to compute the lifetime-cumulative 1.2B threshold correctly.
+  const allComm = await ShopeeCommission.find({ ownerUserId })
+    .select('subId2 date commission').sort({ date: 1 }).lean();
+
+  const commByAffDate = new Map(); // affId -> Map(date -> commission)
+  for (const c of allComm) {
+    const affId = codeToAffId.get(extractSubId2Code(c.subId2));
+    if (!affId) continue;
+    if (!commByAffDate.has(affId)) commByAffDate.set(affId, new Map());
+    const m = commByAffDate.get(affId);
+    m.set(c.date, (m.get(c.date) || 0) + Number(c.commission || 0));
+  }
+
+  // Per-AFF-account: walk full commission history chronologically to compute the
+  // cumulative 1.2B tax-bracket split, keeping only rows within [fromDate, toDate].
+  const taxByAffDate = new Map(); // affId -> Map(date -> { amount30, amount35 })
+  for (const [affId, dateMap] of commByAffDate) {
+    const dates = [...dateMap.keys()].sort();
+    let cumulative = 0;
+    const taxMap = new Map();
+    for (const date of dates) {
+      const dayComm = dateMap.get(date) || 0;
+      const cumBefore = cumulative;
+      const cumAfter = cumBefore + dayComm;
+      let amount30 = 0;
+      let amount35 = 0;
+      if (cumAfter <= TAX_THRESHOLD) {
+        amount30 = dayComm;
+      } else if (cumBefore >= TAX_THRESHOLD) {
+        amount35 = dayComm;
+      } else {
+        amount30 = TAX_THRESHOLD - cumBefore;
+        amount35 = cumAfter - TAX_THRESHOLD;
+      }
+      cumulative = cumAfter;
+      taxMap.set(date, { amount30, amount35 });
+    }
+    taxByAffDate.set(affId, taxMap);
+  }
+
+  // Build display rows: one row per (date, AFF account), unioning dates in range with ads or commission.
+  const rows = [];
+  for (const affId of new Set([...adsByAffDate.keys(), ...commByAffDate.keys()])) {
+    const aff = affAccountMap.get(affId);
+    if (!aff) continue;
+    const adsMap = adsByAffDate.get(affId) || new Map();
+    const commMap = commByAffDate.get(affId) || new Map();
+    const campsMap = campsByAffDate.get(affId) || new Map();
+    const taxMap = taxByAffDate.get(affId) || new Map();
+    const seenAccountIds = [...(accountsSeenByAff.get(affId) || [])];
+    const adAccountIdList = seenAccountIds.map(id => accountMap.get(id)?.adAccountId).filter(Boolean).join(', ');
+    const accountCount = seenAccountIds.length;
+
+    const dateSet = new Set();
+    for (const d of adsMap.keys()) if (d >= fromDate && d <= toDate) dateSet.add(d);
+    for (const d of commMap.keys()) if (d >= fromDate && d <= toDate) dateSet.add(d);
+
+    for (const date of dateSet) {
+      const ads = adsMap.get(date) || 0;
+      const commission = commMap.get(date) || 0;
+      const camps = campsMap.get(date) || 0;
+      const tax = taxMap.get(date) || { amount30: 0, amount35: 0 };
+      rows.push({
+        date,
+        affAccountId: affId,
+        accountName: aff.name,
+        adAccountId: adAccountIdList,
+        accountCount,
+        campsRunning: camps,
+        ads,
+        commission,
+        adsPerHH: commission > 0 ? ads / commission : null,
+        hhAfterTax30: tax.amount30 * 0.7,
+        hhAfterTax35: tax.amount35 * 0.35,
+      });
+    }
+  }
+
+  rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.accountName.localeCompare(b.accountName)));
+
+  const totals = rows.reduce((t, r) => {
+    t.ads += r.ads;
+    t.commission += r.commission;
+    t.hhAfterTax30 += r.hhAfterTax30;
+    t.hhAfterTax35 += r.hhAfterTax35;
+    return t;
+  }, { ads: 0, commission: 0, hhAfterTax30: 0, hhAfterTax35: 0 });
+  totals.adsPerHH = totals.commission > 0 ? totals.ads / totals.commission : null;
+
+  return { rows, totals };
+}
+
+module.exports = { generateExcelReport, importCommissionOrders, getReportData, getShopeeStatsData };
