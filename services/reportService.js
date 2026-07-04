@@ -1133,35 +1133,30 @@ async function getShopeeStatsData({ ownerUserId, fromDate, toDate, accountIds })
     }
   }
 
-  // Ads spend / active-camp counts within the requested range, attributed per-campaign to
+  // Ads spend / active campaigns within the requested range, attributed per-campaign to
   // its AFF account via the code extracted from Campaign.name (same convention as subId2),
   // since a single Số TKQC can run campaigns belonging to several different AFF accounts.
   const rangeCamps = await Campaign.find({
     accountId: { $in: accountIds },
     date: { $gte: fromDate, $lte: toDate },
-  }).select('accountId date spend status name').lean();
+  }).select('accountId spend status name').lean();
 
-  const adsByAffDate = new Map();  // affId -> Map(date -> spend)
-  const campsByAffDate = new Map(); // affId -> Map(date -> activeCount)
-  const accountsSeenByAffDate = new Map(); // affId -> Map(date -> Set(accountId))
+  const adsByAff = new Map();           // affId -> total spend in range
+  const activeCampIdsByAff = new Map(); // affId -> Set(campaign _id)
+  const accountsSeenByAff = new Map();  // affId -> Set(accountId)
 
   for (const camp of rangeCamps) {
     const affId = codeToAffId.get(extractSubId2Code(camp.name));
     if (!affId) continue;
-    if (!adsByAffDate.has(affId)) adsByAffDate.set(affId, new Map());
-    const adsMap = adsByAffDate.get(affId);
-    adsMap.set(camp.date, (adsMap.get(camp.date) || 0) + Number(camp.spend || 0));
+    adsByAff.set(affId, (adsByAff.get(affId) || 0) + Number(camp.spend || 0));
 
     if (String(camp.status || '').toUpperCase() === 'ACTIVE') {
-      if (!campsByAffDate.has(affId)) campsByAffDate.set(affId, new Map());
-      const campsMap = campsByAffDate.get(affId);
-      campsMap.set(camp.date, (campsMap.get(camp.date) || 0) + 1);
+      if (!activeCampIdsByAff.has(affId)) activeCampIdsByAff.set(affId, new Set());
+      activeCampIdsByAff.get(affId).add(String(camp._id));
     }
 
-    if (!accountsSeenByAffDate.has(affId)) accountsSeenByAffDate.set(affId, new Map());
-    const accsMap = accountsSeenByAffDate.get(affId);
-    if (!accsMap.has(camp.date)) accsMap.set(camp.date, new Set());
-    accsMap.get(camp.date).add(String(camp.accountId));
+    if (!accountsSeenByAff.has(affId)) accountsSeenByAff.set(affId, new Set());
+    accountsSeenByAff.get(affId).add(String(camp.accountId));
   }
 
   // Full commission history (all-time) for the owner, matched to AFF accounts via their
@@ -1205,46 +1200,47 @@ async function getShopeeStatsData({ ownerUserId, fromDate, toDate, accountIds })
     taxByAffDate.set(affId, taxMap);
   }
 
-  // Build display rows: one row per (date, AFF account), unioning dates in range with ads or commission.
+  // Build one summary row per AFF account for the entire [fromDate, toDate] range.
   const rows = [];
-  for (const affId of new Set([...adsByAffDate.keys(), ...commByAffDate.keys()])) {
+  for (const affId of new Set([...adsByAff.keys(), ...commByAffDate.keys()])) {
     const aff = affAccountMap.get(affId);
     if (!aff) continue;
-    const adsMap = adsByAffDate.get(affId) || new Map();
+
+    const ads = adsByAff.get(affId) || 0;
+
     const commMap = commByAffDate.get(affId) || new Map();
-    const campsMap = campsByAffDate.get(affId) || new Map();
     const taxMap = taxByAffDate.get(affId) || new Map();
-    const accsByDate = accountsSeenByAffDate.get(affId) || new Map();
-
-    const dateSet = new Set();
-    for (const d of adsMap.keys()) if (d >= fromDate && d <= toDate) dateSet.add(d);
-    for (const d of commMap.keys()) if (d >= fromDate && d <= toDate) dateSet.add(d);
-
-    for (const date of dateSet) {
-      const ads = adsMap.get(date) || 0;
-      const commission = commMap.get(date) || 0;
-      const camps = campsMap.get(date) || 0;
+    let commission = 0;
+    let hhAfterTax30 = 0;
+    let hhAfterTax35 = 0;
+    for (const [date, dayComm] of commMap) {
+      if (date < fromDate || date > toDate) continue;
+      commission += dayComm;
       const tax = taxMap.get(date) || { amount30: 0, amount35: 0 };
-      const seenAccountIds = [...(accsByDate.get(date) || [])];
-      const adAccountIdList = seenAccountIds.map(id => accountMap.get(id)?.adAccountId).filter(Boolean).join(', ');
-      const accountCount = seenAccountIds.length;
-      rows.push({
-        date,
-        affAccountId: affId,
-        accountName: aff.name,
-        adAccountId: adAccountIdList,
-        accountCount,
-        campsRunning: camps,
-        ads,
-        commission,
-        adsPerHH: commission > 0 ? ads / commission : null,
-        hhAfterTax30: tax.amount30 * 0.7,
-        hhAfterTax35: tax.amount35 * 0.65,
-      });
+      hhAfterTax30 += tax.amount30 * 0.7;
+      hhAfterTax35 += tax.amount35 * 0.65;
     }
+
+    const seenAccountIds = [...(accountsSeenByAff.get(affId) || [])];
+    const adAccountIdList = seenAccountIds.map(id => accountMap.get(id)?.adAccountId).filter(Boolean).join(', ');
+    const accountCount = seenAccountIds.length;
+    const campsRunning = (activeCampIdsByAff.get(affId) || new Set()).size;
+
+    rows.push({
+      affAccountId: affId,
+      accountName: aff.name,
+      adAccountId: adAccountIdList,
+      accountCount,
+      campsRunning,
+      ads,
+      commission,
+      adsPerHH: commission > 0 ? ads / commission : null,
+      hhAfterTax30,
+      hhAfterTax35,
+    });
   }
 
-  rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.accountName.localeCompare(b.accountName)));
+  rows.sort((a, b) => a.accountName.localeCompare(b.accountName));
 
   const totals = rows.reduce((t, r) => {
     t.ads += r.ads;

@@ -9,11 +9,6 @@ function pctRatio(v) {
   if (v === null || v === undefined) return '-';
   return `${(Number(v) * 100).toFixed(1)}%`;
 }
-function fmtDate(d) {
-  if (!d) return '';
-  const [yr, mm, dd] = d.split('-');
-  return `${dd}/${mm}/${yr}`;
-}
 function firstDayOfMonth() {
   return `${todayString().slice(0, 7)}-01`;
 }
@@ -43,11 +38,10 @@ export default function ShopeeStats() {
   async function handleExportExcel() {
     if (!data?.rows?.length) return;
     const XLSX = await import('xlsx');
-    const headers = ['Ngày Tháng', 'Tên Tk', 'Số TKQC', 'Camps Đang Chạy', 'Ads', 'HH', 'Ads/HH', 'HH sau thuế 30', 'HH sau thuế 35'];
+    const headers = ['Tên Tk', 'Số TKQC', 'Camps Đang Chạy', 'Ads', 'HH', 'Ads/HH', 'HH sau thuế 30', 'HH sau thuế 35'];
     const aoa = [headers];
     for (const r of data.rows) {
       aoa.push([
-        fmtDate(r.date),
         r.accountName,
         r.accountCount,
         r.campsRunning,
@@ -100,19 +94,17 @@ export default function ShopeeStats() {
           <div className="tbl-wrap">
             <table className="tbl">
               <colgroup>
+                <col style={{ width: '14%' }} />
                 <col style={{ width: '10%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '15%' }} />
                 <col style={{ width: '10%' }} />
-                <col style={{ width: '8%' }} />
-                <col style={{ width: '10%' }} />
-                <col style={{ width: '13%' }} />
-                <col style={{ width: '13%' }} />
-                <col style={{ width: '9%' }} />
-                <col style={{ width: '13.5%' }} />
-                <col style={{ width: '13.5%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '12%' }} />
               </colgroup>
               <thead>
                 <tr>
-                  <th>Ngày Tháng</th>
                   <th>Tên Tk</th>
                   <th>Số TKQC</th>
                   <th className="text-right">Camps Đang Chạy</th>
@@ -125,8 +117,7 @@ export default function ShopeeStats() {
               </thead>
               <tbody>
                 {data.rows.map((r, i) => (
-                  <tr key={`${r.affAccountId}-${r.date}`} style={i % 2 === 0 ? {} : { background: 'rgba(255,255,255,0.025)' }}>
-                    <td className="mono-sm">{fmtDate(r.date)}</td>
+                  <tr key={r.affAccountId} style={i % 2 === 0 ? {} : { background: 'rgba(255,255,255,0.025)' }}>
                     <td>{r.accountName}</td>
                     <td className="mono-sm" title={r.adAccountId}>{r.accountCount}</td>
                     <td className="text-right mono-sm">{num(r.campsRunning)}</td>
@@ -138,7 +129,7 @@ export default function ShopeeStats() {
                   </tr>
                 ))}
                 {!data.rows.length && (
-                  <tr><td colSpan={9} style={{ textAlign: 'center', padding: 20, color: 'var(--muted2)' }}>Không có dữ liệu trong khoảng ngày đã chọn</td></tr>
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20, color: 'var(--muted2)' }}>Không có dữ liệu trong khoảng ngày đã chọn</td></tr>
                 )}
               </tbody>
             </table>
