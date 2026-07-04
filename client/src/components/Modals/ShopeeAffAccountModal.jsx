@@ -32,9 +32,12 @@ export default function ShopeeAffAccountModal({ data }) {
       toast.error('Tên tài khoản AFF không được để trống');
       return;
     }
+    const codes = parseSubId2Codes(formData.codesText);
+    const autoCode = name.split(/\s+/)[0].toUpperCase().replace(/[^A-Z]/g, '');
+    if (autoCode && !codes.includes(autoCode)) codes.unshift(autoCode);
     const payload = {
       name,
-      shopeeSubId2Codes: parseSubId2Codes(formData.codesText)
+      shopeeSubId2Codes: codes
     };
     try {
       if (isEdit) {
