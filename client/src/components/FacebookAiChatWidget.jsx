@@ -50,6 +50,14 @@ function extractAiText(response) {
     .trim();
 }
 
+function detectProviderFromKey(key) {
+  const trimmed = String(key || '').trim();
+  if (/^sk-ant-/i.test(trimmed)) return 'claude';
+  if (/^AIza/.test(trimmed)) return 'gemini';
+  if (/^sk-/.test(trimmed)) return 'openai';
+  return null;
+}
+
 function getAiErrorMessage(error) {
   if (error?.status === 401) return 'API Key không hợp lệ, vui lòng kiểm tra lại';
   if (error?.status === 429) return 'Đã vượt rate limit, thử lại sau 60 giây';
@@ -119,15 +127,22 @@ export default function FacebookAiChatWidget() {
   };
 
   const saveKey = async () => {
-    if (!keyInput.trim()) {
-      toast.error(`Vui lòng nhập ${activeProvider.label} API Key`);
+    const trimmedKey = keyInput.trim();
+    if (!trimmedKey) {
+      toast.error('Vui lòng nhập API Key');
+      return;
+    }
+    const detected = detectProviderFromKey(trimmedKey);
+    if (!detected) {
+      toast.error('Không nhận dạng được API Key này thuộc Gemini, Claude hay ChatGPT');
       return;
     }
     setSavingKey(true);
     try {
-      await activeProvider.saveKey(keyInput);
+      await PROVIDERS[detected].saveKey(trimmedKey);
       setKeyInput('');
-      toast.success(`${activeProvider.label} API Key hợp lệ và đã lưu vào database`);
+      setProvider(detected);
+      toast.success(`Đã nhận dạng ${PROVIDERS[detected].label} API Key và lưu vào database`);
     } catch (error) {
       toast.error(getAiErrorMessage(error));
     } finally {
@@ -204,13 +219,13 @@ export default function FacebookAiChatWidget() {
             <div className="fbai-key-row">
               <input
                 type="password"
-                placeholder={`${activeProvider.label} API Key...`}
+                placeholder="Dán API Key (Gemini / Claude / ChatGPT)..."
                 value={keyInput}
                 onChange={event => setKeyInput(event.target.value)}
                 onKeyDown={event => {
                   if (event.key === 'Enter') saveKey();
                 }}
-                aria-label={`${activeProvider.label} API Key`}
+                aria-label="API Key"
               />
               <button className="btn btn-ghost btn-sm" onClick={saveKey} disabled={savingKey}>
                 {savingKey ? 'Đang lưu...' : 'Lưu'}

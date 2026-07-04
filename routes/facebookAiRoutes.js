@@ -101,7 +101,7 @@ router.post('/chat', async (req, res) => {
     if (!userMessage) return res.status(400).json({ error: 'Thieu noi dung chat' });
 
     const { from, to } = resolveRange(req.body);
-    const context = await buildFacebookContext({ ownerUserId: req.currentUser._id, from, to });
+    const context = await buildFacebookContext({ req, from, to });
     const system = buildFacebookSystemPrompt(context, 'chat');
 
     const history = await FacebookAiChatMessage.find({ ownerUserId: req.currentUser._id, provider: providerKey })
@@ -142,7 +142,7 @@ router.post('/report', async (req, res) => {
     if (!apiKey) return res.status(400).json({ error: `Vui long nhap ${provider.label} API Key` });
 
     const { from, to } = resolveRange(req.body);
-    const context = await buildFacebookContext({ ownerUserId: req.currentUser._id, from, to });
+    const context = await buildFacebookContext({ req, from, to });
     const system = buildFacebookSystemPrompt(context, 'report');
 
     const { text, model } = await provider.call({
