@@ -20,6 +20,7 @@ const {
 const { getInventoryFilter, getInventoryOwnerUserId } = require('../lib/helpers');
 const { getGoogleAccessTokenForUser, requireGoogleOAuthConfig } = require('../utils/googleOAuth');
 const { fetchInventorySheetRowsWithGoogleAccess } = require('./inventorySheetService');
+const { getPurchaseOrderDashboard } = require('./purchaseOrderService');
 
 const TOP_CAMPAIGN_LIMIT = 10;
 const RECENT_POST_LIMIT = 20;
@@ -211,6 +212,23 @@ async function buildInventoryContext({ req, demandByProductCode }) {
   };
 }
 
+async function buildPurchaseOrderContext({ from, to }) {
+  const { totals } = await getPurchaseOrderDashboard({ fromDate: from, toDate: to });
+
+  return {
+    totalOrders: totals.maDonHang,
+    totalQuantity: totals.slHang,
+    trackingCodeCount: totals.maVanDon,
+    arrivedCount: totals.mvdVe,
+    missingTrackingCodeCount: totals.chuaCoMvd,
+    canceledCount: totals.huy,
+    missingCount: totals.thieuHang,
+    wrongCount: totals.saiHang,
+    extraCount: totals.veThua,
+    lostCount: totals.thatLac
+  };
+}
+
 async function buildFacebookContext({ req, from, to }) {
   const ownerUserId = req.currentUser._id;
   const accounts = await Account.find({ ownerUserId, provider: 'facebook' })
@@ -266,7 +284,7 @@ async function buildFacebookContext({ req, from, to }) {
       costPerMessage: campaign.messages > 0 ? Math.round(campaign.spend / campaign.messages) : 0
     }));
 
-  const [recentPosts, orderResult] = await Promise.all([
+  const [recentPosts, orderResult, purchaseOrders] = await Promise.all([
     linkedPageIds.length
       ? FacebookPost.find({
         pageId: { $in: linkedPageIds },
@@ -277,7 +295,8 @@ async function buildFacebookContext({ req, from, to }) {
         .select('pageName message createdTime likes comments shares permalink')
         .lean()
       : [],
-    buildOrderContext({ from, to })
+    buildOrderContext({ from, to }),
+    buildPurchaseOrderContext({ from, to })
   ]);
 
   const inventory = await buildInventoryContext({ req, demandByProductCode: orderResult.demandByProductCode });
@@ -307,16 +326,18 @@ async function buildFacebookContext({ req, from, to }) {
     topCampaigns,
     recentPosts: rankedPosts,
     orders: orderResult.orders,
-    inventory
+    inventory,
+    purchaseOrders
   };
 }
 
 function buildFacebookSystemPrompt(context, mode = 'chat') {
   const dataJson = JSON.stringify(context, null, 2);
-  const baseInstructions = `Bạn là trợ lý AI phân tích dữ liệu quảng cáo Facebook, bài đăng, đơn hàng, tỉ lệ hoàn và tồn kho của người dùng (không bao gồm dữ liệu Shopee).
+  const baseInstructions = `Bạn là trợ lý AI phân tích dữ liệu quảng cáo Facebook, bài đăng, đơn hàng, tỉ lệ hoàn, tồn kho và đặt hàng nhập kho của người dùng (không bao gồm dữ liệu Shopee).
 Chỉ được trả lời dựa trên dữ liệu JSON cung cấp bên dưới (khoảng thời gian ${context.range.from} đến ${context.range.to}). Nếu dữ liệu không đủ để trả lời, hãy nói rõ là không đủ dữ liệu thay vì bịa số liệu.
 Trong dữ liệu, mục "orders" chứa tổng số đơn, số đơn đã ship, tỉ lệ ship, số đơn đang/đã hoàn, tỉ lệ hoàn tổng và danh sách sản phẩm (SKU) có tỉ lệ hoàn cao nhất.
 Mục "inventory" chứa tổng số mã sản phẩm, tổng tồn kho, và "restockAlerts" là danh sách sản phẩm có nhu cầu bán gần đây (recentDemand) vượt hoặc gần bằng tồn kho hiện tại (stockQuantity) — đây là các sản phẩm nên cân nhắc nhập thêm hàng. "pendingQuantity" là số lượng đang có trong các đơn chờ hàng (chưa về kho). Nếu "sheetConnected" là false, số liệu tồn kho chỉ lấy từ dữ liệu quét kho thủ công (không có pendingQuantity đầy đủ), hãy lưu ý điều này khi trả lời.
+Mục "purchaseOrders" chứa số liệu đặt hàng nhập kho từ nhà cung cấp trong khoảng thời gian trên: "totalOrders" (tổng số đơn đặt hàng), "totalQuantity" (tổng số lượng hàng đặt), "trackingCodeCount" (số đơn đã có mã vận đơn), "arrivedCount" (số đơn đã về kho), "missingTrackingCodeCount" (số đơn chưa có mã vận đơn), "canceledCount" (số đơn đã hủy), "missingCount"/"wrongCount"/"extraCount"/"lostCount" lần lượt là số đơn về thiếu hàng, sai hàng, về thừa hàng và thất lạc.
 Luôn trả lời bằng tiếng Việt.
 
 Dữ liệu:
@@ -331,7 +352,8 @@ Hãy viết một báo cáo ngắn gọn gồm:
 3. Hiệu quả tương tác các bài đăng nổi bật (nếu có)
 4. Tổng quan đơn hàng và tỉ lệ hoàn, sản phẩm nào hoàn nhiều nhất cần lưu ý
 5. Tình hình tồn kho và danh sách sản phẩm nên nhập thêm hàng (dựa vào restockAlerts)
-6. 2-3 đề xuất hành động cụ thể tiếp theo`;
+6. Tình hình đặt hàng nhập kho (dựa vào purchaseOrders): số đơn đã về/chưa có mã vận đơn, số đơn hủy, và các vấn đề về thiếu/sai/thừa/thất lạc hàng
+7. 2-3 đề xuất hành động cụ thể tiếp theo`;
   }
 
   return baseInstructions;
