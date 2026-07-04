@@ -1143,7 +1143,7 @@ async function getShopeeStatsData({ ownerUserId, fromDate, toDate, accountIds })
 
   const adsByAffDate = new Map();  // affId -> Map(date -> spend)
   const campsByAffDate = new Map(); // affId -> Map(date -> activeCount)
-  const accountsSeenByAff = new Map(); // affId -> Set(accountId)
+  const accountsSeenByAffDate = new Map(); // affId -> Map(date -> Set(accountId))
 
   for (const camp of rangeCamps) {
     const affId = codeToAffId.get(extractSubId2Code(camp.name));
@@ -1158,8 +1158,10 @@ async function getShopeeStatsData({ ownerUserId, fromDate, toDate, accountIds })
       campsMap.set(camp.date, (campsMap.get(camp.date) || 0) + 1);
     }
 
-    if (!accountsSeenByAff.has(affId)) accountsSeenByAff.set(affId, new Set());
-    accountsSeenByAff.get(affId).add(String(camp.accountId));
+    if (!accountsSeenByAffDate.has(affId)) accountsSeenByAffDate.set(affId, new Map());
+    const accsMap = accountsSeenByAffDate.get(affId);
+    if (!accsMap.has(camp.date)) accsMap.set(camp.date, new Set());
+    accsMap.get(camp.date).add(String(camp.accountId));
   }
 
   // Full commission history (all-time) for the owner, matched to AFF accounts via their
@@ -1212,9 +1214,7 @@ async function getShopeeStatsData({ ownerUserId, fromDate, toDate, accountIds })
     const commMap = commByAffDate.get(affId) || new Map();
     const campsMap = campsByAffDate.get(affId) || new Map();
     const taxMap = taxByAffDate.get(affId) || new Map();
-    const seenAccountIds = [...(accountsSeenByAff.get(affId) || [])];
-    const adAccountIdList = seenAccountIds.map(id => accountMap.get(id)?.adAccountId).filter(Boolean).join(', ');
-    const accountCount = seenAccountIds.length;
+    const accsByDate = accountsSeenByAffDate.get(affId) || new Map();
 
     const dateSet = new Set();
     for (const d of adsMap.keys()) if (d >= fromDate && d <= toDate) dateSet.add(d);
@@ -1225,6 +1225,9 @@ async function getShopeeStatsData({ ownerUserId, fromDate, toDate, accountIds })
       const commission = commMap.get(date) || 0;
       const camps = campsMap.get(date) || 0;
       const tax = taxMap.get(date) || { amount30: 0, amount35: 0 };
+      const seenAccountIds = [...(accsByDate.get(date) || [])];
+      const adAccountIdList = seenAccountIds.map(id => accountMap.get(id)?.adAccountId).filter(Boolean).join(', ');
+      const accountCount = seenAccountIds.length;
       rows.push({
         date,
         affAccountId: affId,
@@ -1236,7 +1239,7 @@ async function getShopeeStatsData({ ownerUserId, fromDate, toDate, accountIds })
         commission,
         adsPerHH: commission > 0 ? ads / commission : null,
         hhAfterTax30: tax.amount30 * 0.7,
-        hhAfterTax35: tax.amount35 * 0.35,
+        hhAfterTax35: tax.amount35 * 0.65,
       });
     }
   }
