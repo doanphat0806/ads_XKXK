@@ -11,6 +11,8 @@ const UserSchema = new mongoose.Schema({
   fbTokenLastDebugTime: { type: Date },
   fbTokenLastRefreshError: { type: String, default: '' },
   geminiKey: { type: String, default: '' },
+  claudeKey: { type: String, default: '' },
+  openaiKey: { type: String, default: '' },
   googleAccessToken: { type: String, default: '' },
   googleRefreshToken: { type: String, default: '' },
   googleTokenExpiresAt: { type: Date },

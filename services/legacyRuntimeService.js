@@ -528,7 +528,7 @@ function createLegacyRuntime(app) {
   
   function normalizeAdNameStatus(value) {
     const raw = String(value || 'Test').trim();
-    const allowed = ['Sale', 'Săn', 'Win', 'Test'];
+    const allowed = ['Sale', 'Sẵn', 'Win', 'Test', 'XA'];
     return allowed.find(item => item.toLowerCase() === raw.toLowerCase()) || 'Test';
   }
   

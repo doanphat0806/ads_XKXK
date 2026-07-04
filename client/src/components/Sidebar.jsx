@@ -18,6 +18,7 @@ import {
   RotateCcw,
   ShoppingCart,
   Settings,
+  Sparkles,
   Users,
   UserCog
 } from 'lucide-react';
@@ -92,6 +93,12 @@ export default function Sidebar() {
           <NavLink to="/clone-campaigns" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Nhan Camp">
             <span className="icon"><CopyPlus size={16} strokeWidth={2} /></span><span>Nhan Camp</span>
           </NavLink>
+
+          {isFacebook && (
+            <NavLink to="/ai-insights" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="AI Insights">
+              <span className="icon"><Sparkles size={16} strokeWidth={2} /></span><span>AI Insights</span>
+            </NavLink>
+          )}
         </>
       )}
 

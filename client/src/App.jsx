@@ -15,6 +15,8 @@ const CreaterPage = React.lazy(() => import('./pages/CreaterPage'));
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 const DataPurchaseOrders = React.lazy(() => import('./pages/DataPurchaseOrders'));
 const DealStopOrders = React.lazy(() => import('./pages/DealStopOrders'));
+const FacebookAiChatWidget = React.lazy(() => import('./components/FacebookAiChatWidget'));
+const FacebookAiInsights = React.lazy(() => import('./pages/FacebookAiInsights'));
 const GoogleSheets = React.lazy(() => import('./pages/GoogleSheets'));
 const Inventory = React.lazy(() => import('./pages/Inventory'));
 const InventorySummary = React.lazy(() => import('./pages/InventorySummary'));
@@ -99,6 +101,8 @@ function AppContent() {
         return 'Đăng bài';
       case '/create-campaign':
         return 'Page';
+      case '/ai-insights':
+        return 'AI Insights';
       default:
         return 'Dashboard';
     }
@@ -149,6 +153,7 @@ function AppContent() {
                   <Route path="/accounts" element={<Accounts />} />
                   <Route path="/campaigns" element={<Campaigns />} />
                   <Route path="/clone-campaigns" element={<CloneCampaigns />} />
+                  <Route path="/ai-insights" element={isFacebook ? <FacebookAiInsights /> : <Navigate to="/" replace />} />
                   <Route path="/orders" element={<Orders />} />
                   <Route path="/purchase-orders" element={<PurchaseOrders />} />
                   <Route path="/deal-stop-orders" element={<DealStopOrders />} />
@@ -174,6 +179,11 @@ function AppContent() {
       {modalState.type && (
         <Suspense fallback={null}>
           <ModalContainer />
+        </Suspense>
+      )}
+      {isFacebook && (
+        <Suspense fallback={null}>
+          <FacebookAiChatWidget />
         </Suspense>
       )}
     </div>
