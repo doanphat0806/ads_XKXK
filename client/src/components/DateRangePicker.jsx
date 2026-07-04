@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { Calendar as CalendarIcon } from 'lucide-react';
 
 const formatDate = (d) => {
@@ -149,13 +149,32 @@ export default function DateRangePicker({ fromDate, toDate, onChange, centered =
   const [activePreset, setActivePreset] = useState(null);
   const [viewDate, setViewDate] = useState(new Date(fromDate));
   const [hoverDate, setHoverDate] = useState(null);
+  const [popoverStyle, setPopoverStyle] = useState({});
   const containerRef = useRef(null);
+  const triggerRef = useRef(null);
+  const popoverRef = useRef(null);
 
   useEffect(() => {
     setTempFrom(fromDate);
     setTempTo(toDate);
     setViewDate(new Date(fromDate));
   }, [fromDate, toDate, isOpen]);
+
+  const updatePopoverPosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const popoverWidth = popoverRef.current?.offsetWidth || 760;
+    const minLeft = 16;
+    const maxLeft = viewportWidth - 16 - popoverWidth;
+    const left = Math.max(minLeft, Math.min(rect.left, maxLeft));
+
+    setPopoverStyle({
+      top: rect.bottom + 10,
+      left,
+      right: 'auto'
+    });
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -166,6 +185,18 @@ export default function DateRangePicker({ fromDate, toDate, onChange, centered =
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!isOpen || centered) return;
+    updatePopoverPosition();
+
+    window.addEventListener('resize', updatePopoverPosition);
+    window.addEventListener('scroll', updatePopoverPosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePopoverPosition);
+      window.removeEventListener('scroll', updatePopoverPosition, true);
+    };
+  }, [isOpen, centered, updatePopoverPosition]);
 
   const handleSelectDate = (date) => {
     setActivePreset(null);
@@ -217,7 +248,7 @@ export default function DateRangePicker({ fromDate, toDate, onChange, centered =
 
   return (
     <div className="drp-container" ref={containerRef}>
-      <div className={`drp-trigger ${isOpen ? 'active' : ''}`} onClick={() => setIsOpen(!isOpen)}>
+      <div className={`drp-trigger ${isOpen ? 'active' : ''}`} ref={triggerRef} onClick={() => setIsOpen(!isOpen)}>
         <CalendarIcon size={14} className="icon" />
         <span>{mainDisplay}</span>
       </div>
@@ -225,7 +256,11 @@ export default function DateRangePicker({ fromDate, toDate, onChange, centered =
       {isOpen && (
         <>
           {centered && <div className="drp-backdrop" onClick={() => setIsOpen(false)} />}
-          <div className={`drp-popover ${centered ? 'centered' : ''}`}>
+          <div
+            ref={popoverRef}
+            className={`drp-popover ${centered ? 'centered' : 'fixed'}`}
+            style={centered ? undefined : popoverStyle}
+          >
           <div className="drp-sidebar">
             <div className="drp-sidebar-title">Ngày đặt sẵn</div>
             <div className="drp-presets-list">

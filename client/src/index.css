@@ -3892,6 +3892,10 @@
       max-width: calc(100vw - 32px);
     }
 
+    .drp-popover.fixed {
+      position: fixed;
+    }
+
     .drp-popover.centered {
       position: fixed;
       top: 50%;
