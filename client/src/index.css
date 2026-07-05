@@ -4665,6 +4665,13 @@
       box-shadow: none;
     }
 
+    #page-shopee-stats .shopee-stats-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
     #page-return-summary .return-toolbar-card {
       padding: 0;
       overflow: hidden;
@@ -5004,12 +5011,17 @@
       #page-orders .orders-filter-action {
         align-items: flex-start;
       }
+
+      #page-shopee-stats .shopee-stats-summary-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
     }
 
     @media (max-width: 640px) {
       #page-return-summary .return-summary-grid,
       #page-orders .orders-filter-grid,
-      #page-orders .orders-summary-grid {
+      #page-orders .orders-summary-grid,
+      #page-shopee-stats .shopee-stats-summary-grid {
         grid-template-columns: 1fr;
       }
 

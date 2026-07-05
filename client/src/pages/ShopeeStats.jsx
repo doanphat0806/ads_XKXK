@@ -85,6 +85,31 @@ export default function ShopeeStats() {
         </div>
       </div>
 
+      {data?.totals && (
+        <div className="shopee-stats-summary-grid">
+          <div className="stat o">
+            <div className="stat-label">Tổng Ads</div>
+            <div className="stat-value stat-value-compact">{vnd(data.totals.ads)}</div>
+          </div>
+          <div className="stat g">
+            <div className="stat-label">Tổng HH</div>
+            <div className="stat-value stat-value-compact">{vnd(data.totals.commission)}</div>
+          </div>
+          <div className="stat teal">
+            <div className="stat-label">Ads/HH</div>
+            <div className="stat-value">{pctRatio(data.totals.adsPerHH)}</div>
+          </div>
+          <div className="stat b">
+            <div className="stat-label">HH sau thuế 30</div>
+            <div className="stat-value stat-value-compact">{vnd(data.totals.hhAfterTax30)}</div>
+          </div>
+          <div className="stat p">
+            <div className="stat-label">HH sau thuế 35</div>
+            <div className="stat-value stat-value-compact">{vnd(data.totals.hhAfterTax35)}</div>
+          </div>
+        </div>
+      )}
+
       {!data && !loading && (
         <div className="empty"><div className="ei">📊</div><p>Chọn khoảng ngày và nhấn "Tải lại" để xem thống kê</p></div>
       )}
