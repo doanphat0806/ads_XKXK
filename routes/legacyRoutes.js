@@ -3788,9 +3788,11 @@ async function buildPurchasePlacedQtyByCode() {
 
   groupedRows.forEach(row => {
     const manual = manualByOrderId.get(String(row.orderId || '').trim()) || {};
-    const codes = String(manual.skuManual || '').split(/\r?\n/)
-      .map(line => normalizeDealStopCode(line))
-      .filter(Boolean);
+    const codes = [...new Set(
+      String(manual.skuManual || '').split(/\r?\n/)
+        .map(line => normalizeDealStopCode(line))
+        .filter(Boolean)
+    )];
     if (!codes.length) return;
 
     const quantityText = getFirstQuantityText(row.quantityRaw, row.quantityFallback);
