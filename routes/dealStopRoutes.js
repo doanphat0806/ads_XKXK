@@ -74,6 +74,12 @@ function normalizeDealStopRowPatch(row = {}, existingRow = {}, code = '') {
     );
   });
 
+  if (Object.prototype.hasOwnProperty.call(rowPatch, 'ghiChu') || Object.prototype.hasOwnProperty.call(currentRow, 'ghiChu')) {
+    nextRow.ghiChu = toBoundedText(
+      Object.prototype.hasOwnProperty.call(rowPatch, 'ghiChu') ? rowPatch.ghiChu : currentRow.ghiChu
+    );
+  }
+
   if (!Number.isFinite(Number(nextRow.slKhachDat)) || Number(nextRow.slKhachDat) < 2) {
     nextRow.slKhachDat = 2;
   }
@@ -142,7 +148,9 @@ router.patch('/state/row', async (req, res) => {
   }
 });
 
-function preserveOrderSizeFields(incomingRowsByTab = {}, currentRowsByTab = {}) {
+const DEAL_STOP_FAST_SAVE_FIELDS = [...DEAL_STOP_ORDER_SIZE_FIELDS, 'ghiChu'];
+
+function preserveFastSaveFields(incomingRowsByTab = {}, currentRowsByTab = {}) {
   return Object.fromEntries(
     Object.entries(incomingRowsByTab).map(([tabId, rows]) => {
       const currentRows = Array.isArray(currentRowsByTab[tabId]) ? currentRowsByTab[tabId] : [];
@@ -153,7 +161,7 @@ function preserveOrderSizeFields(incomingRowsByTab = {}, currentRowsByTab = {}) 
         if (!currentRow) return row;
 
         const merged = { ...row };
-        DEAL_STOP_ORDER_SIZE_FIELDS.forEach(field => {
+        DEAL_STOP_FAST_SAVE_FIELDS.forEach(field => {
           merged[field] = currentRow[field] ?? '';
         });
         return merged;
@@ -173,10 +181,10 @@ router.put('/state', async (req, res) => {
 
     const state = normalizeDealStopOrderState({
       ...incomingState,
-      // Cac truong orderSize* duoc luu rieng qua PATCH /state/row voi do tre thap hon,
+      // Cac truong orderSize* va ghiChu duoc luu rieng qua PATCH /state/row voi do tre thap hon,
       // nen gia tri tren server luon moi hon snapshot day du tu client. Giu nguyen
       // gia tri server de tranh bi ghi de boi snapshot cu (vd: tu dong refresh nguon).
-      rowsByTab: preserveOrderSizeFields(incomingState.rowsByTab, currentState.rowsByTab),
+      rowsByTab: preserveFastSaveFields(incomingState.rowsByTab, currentState.rowsByTab),
       updatedAt: now.toISOString(),
       updatedBy: String(req.currentUser?.displayName || req.currentUser?.username || '').trim()
     });

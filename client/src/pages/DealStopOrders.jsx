@@ -79,7 +79,8 @@ function getDirectInputRowPayload(row = {}) {
     orderSizeM: row.orderSizeM ?? '',
     orderSizeL: row.orderSizeL ?? '',
     orderSizeXL: row.orderSizeXL ?? '',
-    orderSizeFZ: row.orderSizeFZ ?? ''
+    orderSizeFZ: row.orderSizeFZ ?? '',
+    ghiChu: row.ghiChu ?? ''
   };
 }
 
@@ -232,60 +233,76 @@ function markManualOverride(row = {}, field = '') {
 function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, actualQtyByCode = {}) {
   const hidden = new Set(hiddenCodes.map(normalizeCode));
   const localByCode = new Map(localRows.map(row => [normalizeCode(row.ma), row]));
-  const sourceCodes = new Set(sourceRows.map(row => normalizeCode(row.ma)));
+  const sourceByCode = new Map(sourceRows.map(row => [normalizeCode(row.ma), row]));
 
-  const mergedSourceRows = sourceRows
-    .filter(row => !hidden.has(normalizeCode(row.ma)))
-    .map(sourceRow => {
-      const localRow = localByCode.get(normalizeCode(sourceRow.ma));
-      const manualOverrides = cleanManualOverrides(localRow);
-      const getLocalText = (field) => (
-        localRow && Object.prototype.hasOwnProperty.call(localRow, field)
-          ? localRow[field]
-          : ''
-      );
-      const overrideNumber = (field, fallback) => (
-        manualOverrides[field] === true && Object.prototype.hasOwnProperty.call(localRow || {}, field)
-          ? toSafeNumber(localRow[field])
-          : Number(fallback || 0)
-      );
+  const buildMergedSourceRow = (sourceRow) => {
+    const localRow = localByCode.get(normalizeCode(sourceRow.ma));
+    const manualOverrides = cleanManualOverrides(localRow);
+    const getLocalText = (field) => (
+      localRow && Object.prototype.hasOwnProperty.call(localRow, field)
+        ? localRow[field]
+        : ''
+    );
+    const overrideNumber = (field, fallback) => (
+      manualOverrides[field] === true && Object.prototype.hasOwnProperty.call(localRow || {}, field)
+        ? toSafeNumber(localRow[field])
+        : Number(fallback || 0)
+    );
 
-      return recalculateRow({
-        ...sourceRow,
-        ma: sourceRow.ma,
-        ghiChu: getLocalText('ghiChu'),
-        cpo: Number(sourceRow.cpo || 0),
-        campaignAmount: Number(sourceRow.campaignAmount || 0),
-        hasCampaign: Boolean(sourceRow.hasCampaign),
-        slKhachDat: overrideNumber('slKhachDat', sourceRow.slKhachDat),
-        slHuy: overrideNumber('slHuy', 0),
-        slThucDat: getRowActualQty(sourceRow, actualQtyByCode),
-        tiLeHoan: overrideNumber('tiLeHoan', sourceRow.tiLeHoan),
-        daNhan: Number(sourceRow.daNhan || 0),
-        dangHoan: Number(sourceRow.dangHoan || 0),
-        daHoan: Number(sourceRow.daHoan || 0),
-        dangGuiHang: overrideNumber('dangGuiHang', sourceRow.dangGuiHang),
-        tongDaShip: overrideNumber('tongDaShip', sourceRow.tongDaShip),
-        orderSizeS: getLocalText('orderSizeS'),
-        orderSizeM: getLocalText('orderSizeM'),
-        orderSizeL: getLocalText('orderSizeL'),
-        orderSizeXL: getLocalText('orderSizeXL'),
-        orderSizeFZ: getLocalText('orderSizeFZ'),
-        _manualOverrides: manualOverrides
-      }, config);
-    });
+    return recalculateRow({
+      ...sourceRow,
+      ma: sourceRow.ma,
+      ghiChu: getLocalText('ghiChu'),
+      cpo: Number(sourceRow.cpo || 0),
+      campaignAmount: Number(sourceRow.campaignAmount || 0),
+      hasCampaign: Boolean(sourceRow.hasCampaign),
+      slKhachDat: overrideNumber('slKhachDat', sourceRow.slKhachDat),
+      slHuy: overrideNumber('slHuy', 0),
+      slThucDat: getRowActualQty(sourceRow, actualQtyByCode),
+      tiLeHoan: overrideNumber('tiLeHoan', sourceRow.tiLeHoan),
+      daNhan: Number(sourceRow.daNhan || 0),
+      dangHoan: Number(sourceRow.dangHoan || 0),
+      daHoan: Number(sourceRow.daHoan || 0),
+      dangGuiHang: overrideNumber('dangGuiHang', sourceRow.dangGuiHang),
+      tongDaShip: overrideNumber('tongDaShip', sourceRow.tongDaShip),
+      orderSizeS: getLocalText('orderSizeS'),
+      orderSizeM: getLocalText('orderSizeM'),
+      orderSizeL: getLocalText('orderSizeL'),
+      orderSizeXL: getLocalText('orderSizeXL'),
+      orderSizeFZ: getLocalText('orderSizeFZ'),
+      _manualOverrides: manualOverrides
+    }, config);
+  };
 
-  // Giu lai cac dong chi co o local (vd: ma vua them thu cong nhung nguon don
-  // hang chua kip co du lieu) - neu khong se bi "mat" roi "hien lai" moi khi
-  // nguon refresh va merge de.
-  const localOnlyRows = localRows
-    .filter(row => {
-      const code = normalizeCode(row.ma);
-      return Boolean(code) && !hidden.has(code) && !sourceCodes.has(code);
-    })
-    .map(row => recalculateRow({ ...row, slThucDat: getRowActualQty(row, actualQtyByCode) }, config));
+  const buildLocalOnlyRow = (row) => recalculateRow(
+    { ...row, slThucDat: getRowActualQty(row, actualQtyByCode) },
+    config
+  );
 
-  return [...localOnlyRows, ...mergedSourceRows];
+  // Giu nguyen thu tu dang hien thi tren man hinh (localRows) thay vi build
+  // lai theo thu tu tu server moi lan merge - neu khong bang se tu "nhay"
+  // lai vi tri moi khi co du lieu moi (auto-refresh 60s hoac an them ma).
+  const seenCodes = new Set();
+  const orderedRows = [];
+
+  localRows.forEach(row => {
+    const code = normalizeCode(row.ma);
+    if (!code || hidden.has(code) || seenCodes.has(code)) return;
+    seenCodes.add(code);
+    const sourceRow = sourceByCode.get(code);
+    orderedRows.push(sourceRow ? buildMergedSourceRow(sourceRow) : buildLocalOnlyRow(row));
+  });
+
+  // Ma moi hoan toan (chua tung xuat hien trong localRows) duoc them vao
+  // cuoi bang, theo dung thu tu tra ve tu server.
+  sourceRows.forEach(sourceRow => {
+    const code = normalizeCode(sourceRow.ma);
+    if (!code || hidden.has(code) || seenCodes.has(code)) return;
+    seenCodes.add(code);
+    orderedRows.push(buildMergedSourceRow(sourceRow));
+  });
+
+  return orderedRows;
 }
 
 function shallowRowsEqual(a = {}, b = {}) {
@@ -880,12 +897,18 @@ export default function DealStopOrders() {
         nextValue = parsePercentInput(editValue);
       }
 
-      const nextRow = recalculateRow({
+      const nextRow = markManualOverride(recalculateRow({
         ...row,
         [editingCell.columnId]: nextValue
-      }, config);
+      }, config), editingCell.columnId);
 
-      return markManualOverride(nextRow, editingCell.columnId);
+      if (editingCell.columnId === 'ghiChu') {
+        // Luu ghi chu ngay qua duong PATCH nhanh (giong cot orderSize*) thay vi
+        // cho debounce 600ms cua toan bo state - tranh mat ghi chu khi F5/luu loi am tham.
+        scheduleDirectInputRowSave(nextRow);
+      }
+
+      return nextRow;
     }));
 
     setEditingCell(targetCell);
@@ -900,7 +923,7 @@ export default function DealStopOrders() {
     } else {
       setEditValue('');
     }
-  }, [config, editValue, editingCell, sortedRows, updateRows]);
+  }, [config, editValue, editingCell, scheduleDirectInputRowSave, sortedRows, updateRows]);
 
   const cancelEdit = () => {
     setEditingCell(null);
