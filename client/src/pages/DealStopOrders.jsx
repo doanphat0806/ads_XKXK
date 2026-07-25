@@ -326,23 +326,37 @@ function shallowRowsEqual(a = {}, b = {}) {
 // - Dong giong het thi giu nguyen tham chieu cu de React khong render lai (tranh "giat"/mat vi tri cuon).
 // - Dong khac thi lay theo ban tu server, dong moi xuat hien tu server thi them vao.
 function mergeRemoteRowsWithLocal(remoteRows = [], localRows = [], isRowLocked = () => false) {
-  const localByCode = new Map(localRows.map(row => [normalizeCode(row.ma), row]));
-  const remoteCodes = new Set();
+  const remoteByCode = new Map(remoteRows.map(row => [normalizeCode(row.ma), row]));
+  const seenCodes = new Set();
+  const mergedRows = [];
 
-  const mergedRows = remoteRows.map(remoteRow => {
-    const code = normalizeCode(remoteRow.ma);
-    remoteCodes.add(code);
-    const localRow = localByCode.get(code);
-    if (!localRow) return remoteRow;
-    if (isRowLocked(localRow, code)) return localRow;
-    return shallowRowsEqual(localRow, remoteRow) ? localRow : remoteRow;
-  });
-
+  // Giu nguyen thu tu dang hien thi (localRows) thay vi xep lai theo thu tu
+  // server tra ve - neu khong bang se "giat"/mat vi tri cuon moi lan dong bo 30s.
   localRows.forEach(localRow => {
     const code = normalizeCode(localRow.ma);
-    if (!remoteCodes.has(code) && isRowLocked(localRow, code)) {
-      mergedRows.push(localRow);
+    if (seenCodes.has(code)) return;
+    seenCodes.add(code);
+
+    const remoteRow = remoteByCode.get(code);
+    if (!remoteRow) {
+      if (isRowLocked(localRow, code)) mergedRows.push(localRow);
+      return;
     }
+
+    if (isRowLocked(localRow, code)) {
+      mergedRows.push(localRow);
+      return;
+    }
+
+    mergedRows.push(shallowRowsEqual(localRow, remoteRow) ? localRow : remoteRow);
+  });
+
+  // Ma moi hoan toan tu server (chua tung co local) duoc them vao cuoi.
+  remoteRows.forEach(remoteRow => {
+    const code = normalizeCode(remoteRow.ma);
+    if (seenCodes.has(code)) return;
+    seenCodes.add(code);
+    mergedRows.push(remoteRow);
   });
 
   return mergedRows;
