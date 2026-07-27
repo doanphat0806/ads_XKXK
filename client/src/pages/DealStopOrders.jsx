@@ -338,12 +338,11 @@ function mergeRemoteRowsWithLocal(remoteRows = [], localRows = [], isRowLocked =
     seenCodes.add(code);
 
     const remoteRow = remoteByCode.get(code);
-    if (!remoteRow) {
-      if (isRowLocked(localRow, code)) mergedRows.push(localRow);
-      return;
-    }
-
-    if (isRowLocked(localRow, code)) {
+    // Dong dang hien thi cuc bo ma server khong tra ve (bi loc do SL Khach Dat
+    // < 2 tam thoi, hoac chua kip dong bo) van phai duoc giu lai - chi xoa dong
+    // khi nguoi dung chu dong bam Xoa (luc do dong da bi loai khoi localRows tu
+    // truoc, nen se khong con xuat hien o day nua).
+    if (!remoteRow || isRowLocked(localRow, code)) {
       mergedRows.push(localRow);
       return;
     }

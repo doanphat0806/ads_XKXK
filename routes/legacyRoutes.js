@@ -3826,7 +3826,7 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
     return nextKey.rowNumber < currentKey.rowNumber;
   };
 
-  const hasAllowedFirstTag = (order = {}) => {
+  const hasAllowedTag = (order = {}) => {
     const normalizedTag = String(getOrderTagText(order) || '')
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
@@ -3904,7 +3904,7 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
             orderSizeFZ: 0
           },
           _firstOrderMeta: null,
-          _firstOrderAllowed: false
+          _hasAllowedTag: false
         };
       }
 
@@ -3921,9 +3921,15 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
         row._sizeBuckets[sizeFieldKey] += quantity;
       }
 
+      // Chi can 1 don bat ky cua ma nay co tag oder/order (hoac tag trong) la
+      // du dieu kien hien thi - khong chi phu thuoc vao tag cua don dau tien,
+      // vi cac ma moi co the bi gan nham tag khac o don dau roi moi sua dung sau.
+      if (hasAllowedTag(order)) {
+        row._hasAllowedTag = true;
+      }
+
       if (!row._firstOrderMeta || isEarlierOrder(order, row._firstOrderMeta)) {
         row._firstOrderMeta = getOrderSortKey(order);
-        row._firstOrderAllowed = hasAllowedFirstTag(order);
       }
     });
   });
@@ -3932,13 +3938,13 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
   const cpoByCode = buildSkuCpoByCode(Object.keys(rowsByCode), skuStats.counts || {}, campaignRows);
 
   return Object.values(rowsByCode)
-    .filter(row => row._firstOrderAllowed === true)
+    .filter(row => row._hasAllowedTag === true)
     .filter(row => Number(row.slKhachDat || 0) >= 2)
     .map(row => {
       const returnDenominator = row.daNhan + row.dangHoan + row.daHoan;
       const cpoMeta = cpoByCode[row.ma] || {};
       const sizeBuckets = row._sizeBuckets || {};
-      const { _sizeBuckets, _firstOrderMeta, _firstOrderAllowed, ...cleanRow } = row;
+      const { _sizeBuckets, _firstOrderMeta, _hasAllowedTag, ...cleanRow } = row;
 
       return {
         ...cleanRow,
