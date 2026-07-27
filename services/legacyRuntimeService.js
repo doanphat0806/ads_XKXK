@@ -2368,6 +2368,16 @@ function createLegacyRuntime(app) {
     });
   }
   
+  function extractFbBatchItemErrorDetail(item) {
+    try {
+      const body = JSON.parse(item?.body || '{}');
+      const message = body?.error?.error_user_msg || body?.error?.message;
+      return message ? `: ${message}` : '';
+    } catch {
+      return '';
+    }
+  }
+
   async function fetchLiveCampaignRowsForReportByAccounts(accounts = [], fromDate, toDate, options = {}) {
     const includeAccountInfo = options.includeAccountInfo === true;
     const includeFutureScheduled = options.includeFutureScheduled === true;
@@ -2454,7 +2464,7 @@ function createLegacyRuntime(app) {
           const account = spec.row.account;
           if (item.code < 200 || item.code >= 300) {
             if (spec.type === 'created') fallbackRows.push(spec.row);
-            if (item.code) console.warn(`[campaigns:live] ${account.name || account._id} ${spec.type} HTTP ${item.code}`);
+            if (item.code) console.warn(`[campaigns:live] ${account.name || account._id} ${spec.type} HTTP ${item.code}${extractFbBatchItemErrorDetail(item)}`);
             return;
           }
   
@@ -2504,7 +2514,7 @@ function createLegacyRuntime(app) {
         result.chunk.forEach(({ account }, index) => {
           const item = responses[index] || {};
           if (item.code < 200 || item.code >= 300) {
-            if (item.code) console.warn(`[campaigns:live] ${account.name || account._id} HTTP ${item.code}`);
+            if (item.code) console.warn(`[campaigns:live] ${account.name || account._id} HTTP ${item.code}${extractFbBatchItemErrorDetail(item)}`);
             return;
           }
   

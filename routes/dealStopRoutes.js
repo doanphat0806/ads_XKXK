@@ -8,6 +8,19 @@ const router = express.Router();
 const DEAL_STOP_ROW_TEXT_LIMIT = 500;
 const DEAL_STOP_ORDER_SIZE_FIELDS = ['orderSizeS', 'orderSizeM', 'orderSizeL', 'orderSizeXL', 'orderSizeFZ'];
 
+// PATCH /state/row (luu nhanh 1 dong) va PUT /state (luu toan bo bang) deu doc-sua-ghi
+// ca document Config, khong atomic. Neu 2 request chay xen ke (vd server dang tai
+// nang), request nao ghi sau se de-doc-de-ghi lai gia tri cu, xoa mat thay doi cua
+// request truoc (vd: ghi chu vua luu bi PUT ghi de ve rong). Xep hang de tuan tu hoa
+// tat ca doc-sua-ghi tren document nay, tranh 2 request chong lan.
+let dealStopWriteQueue = Promise.resolve();
+
+function enqueueDealStopWrite(task) {
+  const result = dealStopWriteQueue.then(task, task);
+  dealStopWriteQueue = result.catch(() => {});
+  return result;
+}
+
 function toPlainObject(value, fallback = {}) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
 }
@@ -109,41 +122,45 @@ async function saveDealStopRow(req, res) {
       return res.status(400).json({ error: 'Thieu tab hoac ma san pham' });
     }
 
-    const now = new Date();
-    // Bat buoc doc du lieu moi nhat (khong dung cache) vi day la thao tac
-    // doc-sua-ghi: doc cache cu se lam mat thay doi cua request truoc do
-    // (vd: ghi chu vua luu bi ghi de nguoc lai gia tri cu).
-    const config = await getAppConfig({ fresh: true });
-    const currentState = normalizeDealStopOrderState(config?.dealStopOrderState || {});
-    const rowsByTab = normalizeDealStopStateRowsByTab(currentState.rowsByTab);
-    const currentRows = Array.isArray(rowsByTab[tabId]) ? rowsByTab[tabId] : [];
-    const rowIndex = currentRows.findIndex(row => normalizeDealStopCode(row?.ma) === code);
-    const nextRow = normalizeDealStopRowPatch(rowPatch, rowIndex >= 0 ? currentRows[rowIndex] : {}, code);
-    const nextRows = rowIndex >= 0
-      ? currentRows.map((row, index) => (index === rowIndex ? nextRow : row))
-      : [nextRow, ...currentRows].slice(0, 5000);
+    const { state, nextRow } = await enqueueDealStopWrite(async () => {
+      const now = new Date();
+      // Bat buoc doc du lieu moi nhat (khong dung cache) vi day la thao tac
+      // doc-sua-ghi: doc cache cu se lam mat thay doi cua request truoc do
+      // (vd: ghi chu vua luu bi ghi de nguoc lai gia tri cu).
+      const config = await getAppConfig({ fresh: true });
+      const currentState = normalizeDealStopOrderState(config?.dealStopOrderState || {});
+      const rowsByTab = normalizeDealStopStateRowsByTab(currentState.rowsByTab);
+      const currentRows = Array.isArray(rowsByTab[tabId]) ? rowsByTab[tabId] : [];
+      const rowIndex = currentRows.findIndex(row => normalizeDealStopCode(row?.ma) === code);
+      const nextRow = normalizeDealStopRowPatch(rowPatch, rowIndex >= 0 ? currentRows[rowIndex] : {}, code);
+      const nextRows = rowIndex >= 0
+        ? currentRows.map((row, index) => (index === rowIndex ? nextRow : row))
+        : [nextRow, ...currentRows].slice(0, 5000);
 
-    const state = normalizeDealStopOrderState({
-      ...currentState,
-      rowsByTab: {
-        ...rowsByTab,
-        [tabId]: nextRows
-      },
-      updatedAt: now.toISOString(),
-      updatedBy: String(req.currentUser?.displayName || req.currentUser?.username || '').trim()
+      const state = normalizeDealStopOrderState({
+        ...currentState,
+        rowsByTab: {
+          ...rowsByTab,
+          [tabId]: nextRows
+        },
+        updatedAt: now.toISOString(),
+        updatedBy: String(req.currentUser?.displayName || req.currentUser?.username || '').trim()
+      });
+
+      await Config.findOneAndUpdate(
+        { key: 'app' },
+        {
+          $set: {
+            dealStopOrderState: state,
+            updatedAt: now
+          }
+        },
+        { upsert: true, new: true }
+      ).lean();
+      clearAppConfigCache();
+
+      return { state, nextRow };
     });
-
-    await Config.findOneAndUpdate(
-      { key: 'app' },
-      {
-        $set: {
-          dealStopOrderState: state,
-          updatedAt: now
-        }
-      },
-      { upsert: true, new: true }
-    ).lean();
-    clearAppConfigCache();
 
     res.json({ ok: true, state, row: nextRow });
   } catch (error) {
@@ -183,35 +200,41 @@ function preserveFastSaveFields(incomingRowsByTab = {}, currentRowsByTab = {}) {
 
 router.put('/state', async (req, res) => {
   try {
-    const now = new Date();
-    // Tuong tu PATCH /state/row: phai doc fresh, khong dung cache 30s, neu
-    // khong preserveFastSaveFields ben duoi se lay nham gia tri ghiChu/orderSize
-    // cu tu cache va ghi de len ban vua duoc PATCH luu ngay truoc do.
-    const config = await getAppConfig({ fresh: true });
-    const currentState = normalizeDealStopOrderState(config?.dealStopOrderState || {});
-    const incomingState = normalizeDealStopOrderState(req.body?.state || {});
+    const state = await enqueueDealStopWrite(async () => {
+      const now = new Date();
+      // Tuong tu PATCH /state/row: phai doc fresh, khong dung cache 30s, neu
+      // khong preserveFastSaveFields ben duoi se lay nham gia tri ghiChu/orderSize
+      // cu tu cache va ghi de len ban vua duoc PATCH luu ngay truoc do. Doc va ghi
+      // deu nam trong enqueueDealStopWrite de khong chong lan voi PATCH /state/row
+      // dang chay song song (xem comment tren dealStopWriteQueue).
+      const config = await getAppConfig({ fresh: true });
+      const currentState = normalizeDealStopOrderState(config?.dealStopOrderState || {});
+      const incomingState = normalizeDealStopOrderState(req.body?.state || {});
 
-    const state = normalizeDealStopOrderState({
-      ...incomingState,
-      // Cac truong orderSize* va ghiChu duoc luu rieng qua PATCH /state/row voi do tre thap hon,
-      // nen gia tri tren server luon moi hon snapshot day du tu client. Giu nguyen
-      // gia tri server de tranh bi ghi de boi snapshot cu (vd: tu dong refresh nguon).
-      rowsByTab: preserveFastSaveFields(incomingState.rowsByTab, currentState.rowsByTab),
-      updatedAt: now.toISOString(),
-      updatedBy: String(req.currentUser?.displayName || req.currentUser?.username || '').trim()
+      const state = normalizeDealStopOrderState({
+        ...incomingState,
+        // Cac truong orderSize* va ghiChu duoc luu rieng qua PATCH /state/row voi do tre thap hon,
+        // nen gia tri tren server luon moi hon snapshot day du tu client. Giu nguyen
+        // gia tri server de tranh bi ghi de boi snapshot cu (vd: tu dong refresh nguon).
+        rowsByTab: preserveFastSaveFields(incomingState.rowsByTab, currentState.rowsByTab),
+        updatedAt: now.toISOString(),
+        updatedBy: String(req.currentUser?.displayName || req.currentUser?.username || '').trim()
+      });
+
+      await Config.findOneAndUpdate(
+        { key: 'app' },
+        {
+          $set: {
+            dealStopOrderState: state,
+            updatedAt: now
+          }
+        },
+        { upsert: true, new: true }
+      ).lean();
+      clearAppConfigCache();
+
+      return state;
     });
-
-    await Config.findOneAndUpdate(
-      { key: 'app' },
-      {
-        $set: {
-          dealStopOrderState: state,
-          updatedAt: now
-        }
-      },
-      { upsert: true, new: true }
-    ).lean();
-    clearAppConfigCache();
 
     res.json({ ok: true, state });
   } catch (error) {

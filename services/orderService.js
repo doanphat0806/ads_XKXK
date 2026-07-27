@@ -684,6 +684,8 @@ function buildReturnSummaryOrderStats(orders = [], { fromDate = '', toDate = '' 
   return { categories, daily, monthly, total };
 }
 
+let ordersSheetFetchInFlight = null;
+
 async function fetchOrderSheetRows({ refresh = false } = {}) {
   if (!ORDERS_SHEET_ID) {
     throw new Error('Chua cau hinh ORDERS_SHEET_ID');
@@ -704,6 +706,21 @@ async function fetchOrderSheetRows({ refresh = false } = {}) {
     return ordersSheetCache.rows;
   }
 
+  // Nhieu noi goi refresh gan nhu dong thoi (cron moi phut, route /api/orders/sync,
+  // queue worker, startup) - neu khong gom lai, tat ca cung ban request that len
+  // Google cung luc va cung dinh 429 mot luot (log "skipping refresh" lien tuc).
+  // Dung chung 1 promise dang chay de cac loi goi den sau chi cho ket qua.
+  if (ordersSheetFetchInFlight) {
+    return ordersSheetFetchInFlight;
+  }
+
+  ordersSheetFetchInFlight = performOrderSheetFetch(now).finally(() => {
+    ordersSheetFetchInFlight = null;
+  });
+  return ordersSheetFetchInFlight;
+}
+
+async function performOrderSheetFetch(now) {
   const params = new URLSearchParams({
     tqx: 'out:csv',
     sheet: ORDERS_SHEET_NAME,
