@@ -25,8 +25,13 @@ app.get('*', (req, res) => {
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/fb_ads_manager';
 const PORT = process.env.PORT || 3000;
 
-mongoose.connect(MONGO_URI).then(() => {
+mongoose.connect(MONGO_URI).then(async () => {
   console.log('MongoDB connected');
+  try {
+    await legacyRuntime.seedOrderSheetCache();
+  } catch (error) {
+    console.error(`Order sheet cache seed failed: ${error.message}`);
+  }
   app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
 
   (async () => {

@@ -1114,7 +1114,7 @@ export default function DealStopOrders() {
 
   return (
     <div id="page-deal-stop-orders">
-      <StatsCards stats={stats} />
+      <StatsCards stats={stats} loading={!stateReady || !sourceLoaded} />
 
       <div className="deal-toolbar-card">
         <SearchBar value={searchInput} onChange={setSearchInput} />

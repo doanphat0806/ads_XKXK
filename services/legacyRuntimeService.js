@@ -87,6 +87,7 @@ function createLegacyRuntime(app) {
     ordersSheetCache,
     orderStatsCache
   } = require('../services/orderService');
+  const { loadOrderSheetRowsFromDb } = require('../services/orderSheetPersistService');
   const {
     configureFacebookToken,
     checkAndRefreshFacebookToken,
@@ -4182,6 +4183,20 @@ function createLegacyRuntime(app) {
     await waitForRuns;
   }
 
+  async function seedOrderSheetCache() {
+    if (ordersSheetCache.rows?.length) return;
+    try {
+      const dbRows = await loadOrderSheetRowsFromDb();
+      if (dbRows.length) {
+        ordersSheetCache.rows = dbRows;
+        ordersSheetCache.fetchedAt = Date.now();
+        console.log(`Sheet Cache: seeded ${dbRows.length} rows from MongoDB.`);
+      }
+    } catch (err) {
+      console.error('Sheet Cache: seed from MongoDB failed:', err.message);
+    }
+  }
+
   return {
     runStartupMaintenance,
     bootstrapFacebookToken: bootstrapFacebookTokenRuntime,
@@ -4189,6 +4204,7 @@ function createLegacyRuntime(app) {
     initializeQueues,
     resumeAutoAccounts,
     startSheetRefresh,
+    seedOrderSheetCache,
     shutdown: shutdownRuntime
   };
 

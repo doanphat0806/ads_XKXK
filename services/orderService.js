@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { parseBoundedInt } = require('../utils/number');
+const { persistOrderSheetRows } = require('./orderSheetPersistService');
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -780,6 +781,10 @@ async function fetchOrderSheetRows({ refresh = false } = {}) {
   ordersSheetCache.lastErrorAt = 0;
   orderStatsCache.clear();
   orderSheetPageCache.clear();
+  // Ghi ban sao ben xuong MongoDB de lan server restart sau co the "moi" lai
+  // ordersSheetCache ngay lap tuc thay vi phai doi goi song Google Sheet.
+  // Fire-and-forget: khong lam cham response cua request hien tai.
+  persistOrderSheetRows(rows).catch(err => console.warn(`Sheet Cache: Mongo persist failed: ${err.message}`));
   return rows;
 }
 
