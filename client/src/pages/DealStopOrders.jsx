@@ -87,6 +87,28 @@ function getDirectInputRowPayload(row = {}) {
 function sendDealStopRowKeepalive(activeTab, row = {}) {
   if (typeof window === 'undefined') return;
   const token = getAuthToken();
+  const payload = {
+    tabId: activeTab,
+    ma: normalizeCode(row.ma),
+    row: getDirectInputRowPayload(row),
+    // navigator.sendBeacon() khong cho dat header Authorization, nen kem token
+    // vao body - server chap nhan token qua body lam fallback (xem getBearerToken).
+    token
+  };
+
+  // sendBeacon duoc trinh duyet dam bao gui khi rung beforeunload/F5, khac voi
+  // fetch(keepalive:true) chi la best-effort va co the bi huy khi trang dieu huong
+  // ngay lap tuc - day la nguyen nhan ghi chu/dong moi hay bi mat khi F5 nhanh.
+  if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+    try {
+      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+      const sent = navigator.sendBeacon(apiUrl('/deal-stop/state/row/beacon'), blob);
+      if (sent) return;
+    } catch {
+      // Fall through to fetch keepalive below.
+    }
+  }
+
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -94,11 +116,7 @@ function sendDealStopRowKeepalive(activeTab, row = {}) {
     window.fetch(apiUrl('/deal-stop/state/row'), {
       method: 'PATCH',
       headers,
-      body: JSON.stringify({
-        tabId: activeTab,
-        ma: normalizeCode(row.ma),
-        row: getDirectInputRowPayload(row)
-      }),
+      body: JSON.stringify(payload),
       keepalive: true
     }).catch(() => {});
   } catch {
@@ -608,6 +626,21 @@ export default function DealStopOrders() {
     const flushPendingDirectRows = () => {
       rowSaveTimersRef.current.forEach(timer => window.clearTimeout(timer));
       rowSaveTimersRef.current.clear();
+
+      // Neu dang go do ghi chu/orderSize* nhung chua blur/Enter de commit (vd:
+      // go xong bam F5 ngay khi con dang focus trong o), gia tri nay chua duoc
+      // dua vao pendingDirectRowsRef qua commitEdit - phai tu ghep vao day truoc
+      // khi thoat trang, neu khong se mat trang (va mat ca dong neu la ma moi
+      // chua tung duoc luu vao rowsByTab tren server).
+      if (editingCell && (editingCell.columnId === 'ghiChu' || DIRECT_INPUT_COLUMNS.has(editingCell.columnId))) {
+        const currentRows = latestStateRef.current?.rowsByTab?.[activeTab] || [];
+        const baseRow = currentRows.find(row => row.id === editingCell.rowId);
+        if (baseRow) {
+          const liveRow = { ...baseRow, [editingCell.columnId]: editValue };
+          pendingDirectRowsRef.current.set(normalizeCode(liveRow.ma), liveRow);
+        }
+      }
+
       pendingDirectRowsRef.current.forEach(row => sendDealStopRowKeepalive(activeTab, row));
     };
 
@@ -615,7 +648,7 @@ export default function DealStopOrders() {
     return () => {
       window.removeEventListener('beforeunload', flushPendingDirectRows);
     };
-  }, [activeTab]);
+  }, [activeTab, editingCell, editValue]);
 
   React.useEffect(() => {
     scheduleSaveSharedState();

@@ -99,7 +99,7 @@ router.get('/state', async (req, res) => {
   }
 });
 
-router.patch('/state/row', async (req, res) => {
+async function saveDealStopRow(req, res) {
   try {
     const tabId = String(req.body?.tabId || '').slice(0, 100);
     const rowPatch = toPlainObject(req.body?.row);
@@ -149,7 +149,13 @@ router.patch('/state/row', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
-});
+}
+
+router.patch('/state/row', saveDealStopRow);
+// navigator.sendBeacon() luon gui bang POST (khong ho tro PATCH/header tuy chinh),
+// dung de flush ghi chu/dong dang go do khi thoat trang (F5) mot cach dang tin cay
+// hon fetch(keepalive:true) - xem sendDealStopRowKeepalive o client.
+router.post('/state/row/beacon', saveDealStopRow);
 
 const DEAL_STOP_FAST_SAVE_FIELDS = [...DEAL_STOP_ORDER_SIZE_FIELDS, 'ghiChu'];
 

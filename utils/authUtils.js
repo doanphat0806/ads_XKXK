@@ -161,7 +161,11 @@ function serializeAdminUser(user = {}) {
 function getBearerToken(req) {
   const header = String(req.get('authorization') || '');
   const match = header.match(/^Bearer\s+(.+)$/i);
-  return match?.[1] || '';
+  if (match?.[1]) return match[1];
+  // navigator.sendBeacon() (dung de flush du lieu luc thoat trang/F5) khong the
+  // dat custom header, nen mot so request se gui token kem trong body JSON thay vi
+  // header Authorization - van la cung mot token da ky, khong phai co che bypass moi.
+  return String(req.body?.token || '');
 }
 
 /**
