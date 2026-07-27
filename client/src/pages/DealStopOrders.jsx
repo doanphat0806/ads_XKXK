@@ -44,6 +44,12 @@ const DEAL_STOP_ROW_SAVE_DEBOUNCE_MS = 250;
 const SOURCE_OVERRIDE_COLUMNS = new Set(['slKhachDat', 'tiLeHoan', 'dangGuiHang', 'tongDaShip', 'slHuy']);
 const DIRECT_INPUT_COLUMNS = new Set(['orderSizeS', 'orderSizeM', 'orderSizeL', 'orderSizeXL', 'orderSizeFZ']);
 
+// Cache o cap module - song suot phien lam viec trong tab trinh duyet (mat khi F5),
+// giup nhung lan sau vao lai trang nay (chuyen tab trong app) hien du lieu ngay
+// thay vi phai cho goi lai Google Sheet (thuong mat vai giay). Du lieu van duoc
+// lam moi ngam o nen ngay sau do qua loadSourceRows() nhu binh thuong.
+let dealStopSourceRowsCache = null;
+
 function getDefaultExpanded(staffList) {
   return staffList.reduce((acc, staff) => {
     acc[staff.prefix] = false;
@@ -468,8 +474,12 @@ export default function DealStopOrders() {
   const [exporting, setExporting] = React.useState(false);
   const [exportDone, setExportDone] = React.useState(false);
   const [importingActualQty, setImportingActualQty] = React.useState(false);
-  const [sourceRows, setSourceRows] = React.useState([]);
+  const [sourceRows, setSourceRows] = React.useState(() => dealStopSourceRowsCache || []);
   const [stateReady, setStateReady] = React.useState(false);
+  const [sourceLoaded, setSourceLoaded] = React.useState(() => Boolean(dealStopSourceRowsCache));
+  // Chi dung 1 lan luc mount de merge cache cu vao rowsByTab ngay khi state san
+  // sang - tranh man hinh "Dang tai..." moi lan quay lai trang trong cung phien.
+  const initialSourceCacheRef = React.useRef(dealStopSourceRowsCache);
   const actualQtyInputRef = React.useRef(null);
   const latestStateRef = React.useRef(initialState);
   const saveTimerRef = React.useRef(null);
@@ -690,15 +700,30 @@ export default function DealStopOrders() {
       const result = await api('GET', '/orders/deal-stop-rows', null, { timeoutMs: 180000 });
       const sourceRows = Array.isArray(result.rows) ? result.rows : [];
       setSourceRows(sourceRows);
+      dealStopSourceRowsCache = sourceRows;
 
       setRowsByTab(current => {
         const mergedRows = mergeSourceRowsWithLocal(sourceRows, current[activeTab] || [], hiddenCodes, config, actualQtyByCode);
         return { ...current, [activeTab]: mergedRows };
       });
+      setSourceLoaded(true);
     } catch (error) {
       toast.error(`Không lấy được dữ liệu Đơn Hàng: ${error.message}`);
     }
   }, [activeTab, actualQtyByCode, config, hiddenCodes, stateReady]);
+
+  // Neu da co cache tu lan truoc trong phien lam viec, merge ngay khi state (ghi
+  // chu, orderSize...) vua tai xong - hien du lieu tuc thi, khong doi loadSourceRows()
+  // that su hoan tat. loadSourceRows() ben duoi van chay ngam de lay du lieu moi nhat.
+  React.useEffect(() => {
+    if (!stateReady || !initialSourceCacheRef.current) return;
+    const cachedSourceRows = initialSourceCacheRef.current;
+    initialSourceCacheRef.current = null;
+    setRowsByTab(current => {
+      const mergedRows = mergeSourceRowsWithLocal(cachedSourceRows, current[activeTab] || [], hiddenCodes, config, actualQtyByCode);
+      return { ...current, [activeTab]: mergedRows };
+    });
+  }, [stateReady, activeTab, hiddenCodes, config, actualQtyByCode]);
 
   React.useEffect(() => {
     loadSourceRows();
@@ -1145,24 +1170,28 @@ export default function DealStopOrders() {
         <ExportButton loading={exporting} done={exportDone} onClick={handleExport} />
       </div>
 
-      <OrderTable
-        groupedRows={groupedRows}
-        visibleColumns={visibleColumns}
-        table={table}
-        groupExpanded={groupExpanded}
-        onToggleGroup={(prefix) => setGroupExpanded(current => ({ ...current, [prefix]: current[prefix] === false }))}
-        editingCell={editingCell}
-        editValue={editValue}
-        onStartEdit={startEdit}
-        onEditChange={setEditValue}
-        onEditKeyDown={handleEditKeyDown}
-        onEditBlur={() => commitEdit(null)}
-        searchTerm={searchTerm}
-        colorRules={colorRules}
-        summary={filteredSummary}
-        onDeleteRow={handleDeleteRow}
-        onDirectInputChange={handleDirectInputChange}
-      />
+      {!stateReady || !sourceLoaded ? (
+        <div className="empty"><span className="spin">...</span><p>Đang tải đủ đơn hàng...</p></div>
+      ) : (
+        <OrderTable
+          groupedRows={groupedRows}
+          visibleColumns={visibleColumns}
+          table={table}
+          groupExpanded={groupExpanded}
+          onToggleGroup={(prefix) => setGroupExpanded(current => ({ ...current, [prefix]: current[prefix] === false }))}
+          editingCell={editingCell}
+          editValue={editValue}
+          onStartEdit={startEdit}
+          onEditChange={setEditValue}
+          onEditKeyDown={handleEditKeyDown}
+          onEditBlur={() => commitEdit(null)}
+          searchTerm={searchTerm}
+          colorRules={colorRules}
+          summary={filteredSummary}
+          onDeleteRow={handleDeleteRow}
+          onDirectInputChange={handleDirectInputChange}
+        />
+      )}
 
       <ChuaCoSettings
         open={settingsOpen}
