@@ -12,6 +12,7 @@ export default function GroupHeader({ group, expanded, onToggle, columnCount }) 
           <span className="deal-group-meta">{formatCompactInt(group.rows.length)} Mã</span>
           <span className="deal-group-meta">Tổng KĐ: {formatCompactInt(group.summary.slKhachDat)}</span>
           <span className="deal-group-meta">TB TLĐ: {formatPercent(group.summary.tiLeDat)}</span>
+          <span className="deal-group-meta">TB TL Hoàn: {formatPercent(group.summary.tiLeHoanTong)}</span>
         </button>
       </td>
     </tr>
