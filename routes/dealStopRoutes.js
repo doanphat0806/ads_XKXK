@@ -110,7 +110,10 @@ router.patch('/state/row', async (req, res) => {
     }
 
     const now = new Date();
-    const config = await getAppConfig();
+    // Bat buoc doc du lieu moi nhat (khong dung cache) vi day la thao tac
+    // doc-sua-ghi: doc cache cu se lam mat thay doi cua request truoc do
+    // (vd: ghi chu vua luu bi ghi de nguoc lai gia tri cu).
+    const config = await getAppConfig({ fresh: true });
     const currentState = normalizeDealStopOrderState(config?.dealStopOrderState || {});
     const rowsByTab = normalizeDealStopStateRowsByTab(currentState.rowsByTab);
     const currentRows = Array.isArray(rowsByTab[tabId]) ? rowsByTab[tabId] : [];
@@ -175,7 +178,10 @@ function preserveFastSaveFields(incomingRowsByTab = {}, currentRowsByTab = {}) {
 router.put('/state', async (req, res) => {
   try {
     const now = new Date();
-    const config = await getAppConfig();
+    // Tuong tu PATCH /state/row: phai doc fresh, khong dung cache 30s, neu
+    // khong preserveFastSaveFields ben duoi se lay nham gia tri ghiChu/orderSize
+    // cu tu cache va ghi de len ban vua duoc PATCH luu ngay truoc do.
+    const config = await getAppConfig({ fresh: true });
     const currentState = normalizeDealStopOrderState(config?.dealStopOrderState || {});
     const incomingState = normalizeDealStopOrderState(req.body?.state || {});
 

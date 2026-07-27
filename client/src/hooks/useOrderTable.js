@@ -35,17 +35,25 @@ function buildColumns() {
 }
 
 function buildGroupSummary(rows) {
+  const daNhan = sumField(rows, 'daNhan');
+  const dangHoan = sumField(rows, 'dangHoan');
+  const daHoan = sumField(rows, 'daHoan');
+  const returnDenominator = daNhan + dangHoan + daHoan;
+
   return {
     slKhachDat: sumField(rows, 'slKhachDat'),
     slThucDat: sumField(rows, 'slThucDat'),
     tongDaShip: sumField(rows, 'tongDaShip'),
     tiLeDat: averageRate(rows, 'tiLeDat'),
     tiLeHoan: averageRate(rows, 'tiLeHoan'),
+    // Ti le hoan tong hop theo so luong thuc te (dangHoan + daHoan) / (daNhan + dangHoan + daHoan)
+    // thay vi trung binh cong tung dong, de phan anh dung ti le hoan chung cua ca nhan vien.
+    tiLeHoanTong: returnDenominator > 0 ? (dangHoan + daHoan) / returnDenominator : 0,
     tiLeShip: averageRate(rows, 'tiLeShip'),
     cpo: averageRate(rows, 'cpo'),
-    daNhan: sumField(rows, 'daNhan'),
-    dangHoan: sumField(rows, 'dangHoan'),
-    daHoan: sumField(rows, 'daHoan'),
+    daNhan,
+    dangHoan,
+    daHoan,
     dangGuiHang: sumField(rows, 'dangGuiHang')
   };
 }

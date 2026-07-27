@@ -21,6 +21,7 @@ function GroupSummaryRow({ group, visibleColumns }) {
         if (column.id === 'slThucDat') value = formatCompactInt(group.summary.slThucDat);
         if (column.id === 'tongDaShip') value = formatCompactInt(group.summary.tongDaShip);
         if (column.id === 'tiLeDat') value = formatPercent(group.summary.tiLeDat);
+        if (column.id === 'tiLeHoan') value = formatPercent(group.summary.tiLeHoanTong);
 
         return (
           <td key={column.id} className={`${column.sticky ? 'is-sticky-col' : ''} align-${column.align || 'left'}`}>
@@ -52,6 +53,7 @@ export default function OrderTable({
 }) {
   const useVirtual = groupedRows.reduce((count, group) => count + group.rows.length, 0) > 80;
   const scrollRef = React.useRef(null);
+  const scrollTopRef = React.useRef(0);
   const flatRows = React.useMemo(() => groupedRows.flatMap(group => (
     groupExpanded[group.prefix] === false
       ? [{ kind: 'group', group }]
@@ -71,6 +73,19 @@ export default function OrderTable({
 
   const virtualItems = useVirtual ? rowVirtualizer.getVirtualItems() : [];
   const totalSize = useVirtual ? rowVirtualizer.getTotalSize() : 0;
+
+  const handleScroll = React.useCallback(event => {
+    scrollTopRef.current = event.currentTarget.scrollTop;
+  }, []);
+
+  // Reload du lieu (auto-refresh 60s, dong bo state...) tao mang dong moi nen
+  // trinh duyet/virtualizer co the tu reset vi tri cuon ve 0 - khoi phuc lai
+  // vi tri cuon da nho ngay sau khi render de tranh "nhay" ve dau bang.
+  React.useLayoutEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollTopRef.current;
+    }
+  }, [flatRows]);
 
   const renderItem = (item) => {
     if (item.kind === 'group') {
@@ -119,7 +134,7 @@ export default function OrderTable({
 
   return (
     <div className="deal-table-shell">
-      <div className="deal-table-scroll" ref={scrollRef}>
+      <div className="deal-table-scroll" ref={scrollRef} onScroll={handleScroll}>
         <table className="deal-table">
           <TableHeader table={table} visibleColumns={visibleColumns} />
           {!useVirtual ? (
