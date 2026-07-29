@@ -4413,11 +4413,29 @@ app.get('/api/purchase-orders', async (req, res) => {
   }
 });
 
+const MAX_EXPORT_RANGE_DAYS = 92;
+
 app.get('/api/purchase-orders/export', async (req, res) => {
   try {
     const fromDate = String(req.query.fromDate || '').trim();
     const toDate = String(req.query.toDate || '').trim();
     const search = String(req.query.search || '').trim();
+
+    if (!fromDate || !toDate) {
+      return res.status(400).json({
+        error: `Vui lòng chọn khoảng ngày để xuất Excel (tối đa ${MAX_EXPORT_RANGE_DAYS} ngày) để tránh tràn bộ nhớ server.`
+      });
+    }
+
+    const rangeDays = (new Date(toDate) - new Date(fromDate)) / (24 * 60 * 60 * 1000);
+    if (!Number.isFinite(rangeDays) || rangeDays < 0) {
+      return res.status(400).json({ error: 'Khoảng ngày không hợp lệ.' });
+    }
+    if (rangeDays > MAX_EXPORT_RANGE_DAYS) {
+      return res.status(400).json({
+        error: `Khoảng ngày xuất Excel tối đa là ${MAX_EXPORT_RANGE_DAYS} ngày, vui lòng thu hẹp lại.`
+      });
+    }
 
     const buffer = await generatePurchaseOrdersExcel({ fromDate, toDate, search });
     const dateLabel = fromDate && toDate ? `${fromDate}_${toDate}` : todayStr();

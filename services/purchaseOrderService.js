@@ -1467,8 +1467,14 @@ function formatExportDate(value) {
   });
 }
 
+const MAX_EXPORT_ROWS = 20000;
+
 async function generatePurchaseOrdersExcel({ fromDate = '', toDate = '', search = '' } = {}) {
   const rows = await getAllPurchaseOrdersForExport({ fromDate, toDate, search });
+
+  if (rows.length > MAX_EXPORT_ROWS) {
+    throw new Error(`Kết quả có ${rows.length} dòng, vượt quá giới hạn ${MAX_EXPORT_ROWS} dòng cho mỗi lần xuất Excel. Vui lòng thu hẹp khoảng ngày hoặc bộ lọc tìm kiếm.`);
+  }
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'ADS System';
