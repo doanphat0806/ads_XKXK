@@ -786,10 +786,15 @@ async function performOrderSheetFetch(now) {
   }
 
   const csvRows = parseCsvRows(csv);
-  const rows = csvRows
-    .slice(1)
+  const rawDataRows = csvRows.slice(1);
+  const rows = rawDataRows
     .map((row, index) => mapOrderSheetRow(row, index + 1))
     .filter(Boolean);
+
+  const droppedCount = rawDataRows.length - rows.length;
+  if (droppedCount > 0) {
+    console.warn(`Sheet Cache: Google tra ve ${rawDataRows.length} dong, giu lai ${rows.length} dong (bo ${droppedCount} dong do cot B (ngay tao) trong hoac khong doc duoc dinh dang ngay).`);
+  }
 
   ordersSheetCache.rows = rows;
   ordersSheetCache.fetchedAt = now;

@@ -2434,20 +2434,6 @@ function createLegacyRuntime(app) {
               relative_url: `${row.acctId}/campaigns?${createdParams.toString()}`
             }
           });
-  
-          const params = new URLSearchParams({
-            fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time,start_time',
-            effective_status: JSON.stringify(['SCHEDULED']),
-            limit: String(limit)
-          });
-          specs.push({
-            row,
-            type: 'scheduled',
-            request: {
-              method: 'GET',
-              relative_url: `${row.acctId}/campaigns?${params.toString()}`
-            }
-          });
         }
   
         const response = await fbPost(fbToken, '', { batch: JSON.stringify(specs.map(spec => spec.request)) }, { retries: 1, rateLimitRetries: 1 });

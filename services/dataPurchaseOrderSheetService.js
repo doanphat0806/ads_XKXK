@@ -492,24 +492,42 @@ async function fetchDataPurchaseOrderRows({ accessToken = '' } = {}) {
     : fetchWithGviz();
 }
 
+let purchaseOrderSyncQueue = Promise.resolve();
+
+// Serializes every writer of the DataPurchaseOrder collection for this sheet, so a full
+// sync-and-cleanup (deleteMany batchId != current) can never overlap with another sync or a
+// CSV import. Without this, two concurrent syncs race and the one holding the older CSV
+// snapshot deletes rows the newer one just wrote (including the most recently added rows).
+function serializePurchaseOrderSync(task) {
+  const run = purchaseOrderSyncQueue.then(task, task);
+  purchaseOrderSyncQueue = run.catch(() => {});
+  return run;
+}
+
 async function syncDataPurchaseOrdersFromSheet({ accessToken = '' } = {}) {
-  try {
-    const result = await fetchDataPurchaseOrderRows({ accessToken });
-    return await persistDataPurchaseOrderRows({
-      headers: result.headers,
-      rows: result.rows,
-      sourceType: accessToken ? 'google_sheet_api' : 'google_sheet_csv'
-    });
-  } catch (error) {
-    await saveDataPurchaseOrderMeta({
-      ...(await getDataPurchaseOrderMeta()),
-      lastSyncError: error.message
-    });
-    throw error;
-  }
+  return serializePurchaseOrderSync(async () => {
+    try {
+      const result = await fetchDataPurchaseOrderRows({ accessToken });
+      return await persistDataPurchaseOrderRows({
+        headers: result.headers,
+        rows: result.rows,
+        sourceType: accessToken ? 'google_sheet_api' : 'google_sheet_csv'
+      });
+    } catch (error) {
+      await saveDataPurchaseOrderMeta({
+        ...(await getDataPurchaseOrderMeta()),
+        lastSyncError: error.message
+      });
+      throw error;
+    }
+  });
 }
 
 async function importDataPurchaseOrdersFromCsvText(csvText = '') {
+  return serializePurchaseOrderSync(() => importDataPurchaseOrdersFromCsvTextInner(csvText));
+}
+
+async function importDataPurchaseOrdersFromCsvTextInner(csvText = '') {
   const rows = parseCsvRows(String(csvText || '').replace(/^\uFEFF/, ''));
   if (!rows.length) {
     throw new Error('File CSV không có dữ liệu');
