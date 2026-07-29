@@ -11,6 +11,7 @@ const SHEET_QUERY = process.env.DATA_PURCHASE_ORDERS_SHEET_QUERY || 'select A,B,
 const REQUEST_TIMEOUT_MS = parseBoundedInt(process.env.DATA_PURCHASE_ORDERS_TIMEOUT_MS, 90000, 10000, 300000);
 const BULK_WRITE_SIZE = parseBoundedInt(process.env.DATA_PURCHASE_ORDERS_BULK_SIZE, 1000, 100, 5000);
 const CONFIG_KEY = 'app';
+const SHEET_SYNC_SOURCE_TYPES = ['google_sheet_api', 'google_sheet_csv'];
 
 const SELECTED_COLUMNS = [
   { key: 'col1', fallbackLabel: 'Col1', rawIndex: 0 },
@@ -409,11 +410,16 @@ async function persistDataPurchaseOrderRows({ headers, rows, sourceType, mode = 
     totals.upserted += result.upsertedCount || 0;
   }
 
+  // Chi xoa cac dong thuoc lan dong bo Google Sheet truoc do (cung "ho" sourceType).
+  // Khong duoc xoa theo batchId khac ma khong loc sourceType, vi nhu the se xoa luon
+  // cac dong duoc them qua CSV import (mode 'append'), von co batchId rieng va khong
+  // thuoc lan dong bo sheet nay - gay mat du lieu vua upload sau moi lan auto-sync.
   const deleteResult = appendMode
     ? { deletedCount: 0 }
     : await DataPurchaseOrder.deleteMany({
       sourceId: SHEET_ID,
       sourceName: SHEET_NAME,
+      sourceType: { $in: SHEET_SYNC_SOURCE_TYPES },
       batchId: { $ne: batchId }
     });
 
