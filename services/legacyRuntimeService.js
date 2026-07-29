@@ -110,6 +110,7 @@ function createLegacyRuntime(app) {
   const {
     getPurchaseOrderDashboard,
     getPurchaseOrders,
+    generatePurchaseOrdersExcel,
     importPurchaseOrderStatusesFromCsvText,
     updatePurchaseOrderDashboardCancellation,
     updatePurchaseOrderDashboardNote,
@@ -151,6 +152,7 @@ function createLegacyRuntime(app) {
     SHOPEE_TODAY_CAMPAIGN_SYNC_INTERVAL_MS,
     SHOPEE_TODAY_CAMPAIGN_SYNC_CONCURRENCY,
     ORDER_SHEET_REFRESH_INTERVAL_MS,
+    PURCHASE_ORDER_SHEET_REFRESH_INTERVAL_MS,
     REDIS_URL,
     REDIS_QUEUE_ENABLED,
     REDIS_HOST,
@@ -3288,6 +3290,7 @@ function createLegacyRuntime(app) {
   let backgroundOrderSyncRunning = false;
   let isShuttingDown = false;
   let sheetRefreshTimer = null;
+  let purchaseOrderSheetRefreshTimer = null;
   let campaignDuplicateQueue = null;
   let campaignDuplicateWorker = null;
   let campaignSyncQueue = null;
@@ -3772,6 +3775,7 @@ function createLegacyRuntime(app) {
       syncDataPurchaseOrdersFromSheet,
       getPurchaseOrderDashboard,
       getPurchaseOrders,
+      generatePurchaseOrdersExcel,
       importPurchaseOrderStatusesFromCsvText,
       updatePurchaseOrderDashboardCancellation,
       updatePurchaseOrderDashboardNote,
@@ -4148,6 +4152,26 @@ function createLegacyRuntime(app) {
     }, ORDER_SHEET_REFRESH_INTERVAL_MS);
   }
 
+  function startPurchaseOrderSheetRefresh() {
+    let purchaseOrderSheetRefreshRunning = false;
+    const runPurchaseOrderSheetSync = async () => {
+      if (isShuttingDown || purchaseOrderSheetRefreshRunning) return;
+      purchaseOrderSheetRefreshRunning = true;
+      try {
+        await syncDataPurchaseOrdersFromSheet({});
+        clearPurchaseOrderReadCache();
+        console.log('Purchase Order Sheet: synced from Google Sheet.');
+      } catch (err) {
+        console.error('Purchase Order Sheet: sync failed:', err.message);
+      } finally {
+        purchaseOrderSheetRefreshRunning = false;
+      }
+    };
+
+    runPurchaseOrderSheetSync();
+    purchaseOrderSheetRefreshTimer = setInterval(runPurchaseOrderSheetSync, PURCHASE_ORDER_SHEET_REFRESH_INTERVAL_MS);
+  }
+
   async function shutdownRuntime() {
     isShuttingDown = true;
     if (facebookTokenCronTask) {
@@ -4164,6 +4188,9 @@ function createLegacyRuntime(app) {
     }
     if (sheetRefreshTimer) {
       clearInterval(sheetRefreshTimer);
+    }
+    if (purchaseOrderSheetRefreshTimer) {
+      clearInterval(purchaseOrderSheetRefreshTimer);
     }
     if (campaignDuplicateWorker) {
       await campaignDuplicateWorker.close();
@@ -4214,6 +4241,7 @@ function createLegacyRuntime(app) {
     initializeQueues,
     resumeAutoAccounts,
     startSheetRefresh,
+    startPurchaseOrderSheetRefresh,
     seedOrderSheetCache,
     shutdown: shutdownRuntime
   };

@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, RefreshCw, Search, Upload } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, RefreshCw, Search, Upload } from 'lucide-react';
 import { toast } from 'react-toastify';
 import DateRangePicker from '../components/DateRangePicker';
-import { api, formatNumber, todayString, uploadForm } from '../lib/api';
+import { api, apiUrl, formatNumber, getAuthToken, todayString, uploadForm } from '../lib/api';
 
 const DEFAULT_LIMIT = 100;
 const DATA_SYNC_DONE_STATES = new Set(['completed', 'failed']);
@@ -74,6 +74,7 @@ export default function PurchaseOrders() {
   const [loading, setLoading] = useState(false);
   const [syncingData, setSyncingData] = useState(false);
   const [importingStatusCsv, setImportingStatusCsv] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [savingKey, setSavingKey] = useState('');
   const [error, setError] = useState('');
   const statusCsvInputRef = useRef(null);
@@ -191,6 +192,41 @@ export default function PurchaseOrders() {
       toast.error(`Lỗi import trạng thái/Mã SP: ${err.message}`);
     } finally {
       setImportingStatusCsv(false);
+    }
+  };
+
+  const exportRows = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setError('');
+
+    try {
+      const params = new URLSearchParams();
+      if (activeUseDateFilter) {
+        params.set('fromDate', activeFromDate);
+        params.set('toDate', activeToDate);
+      }
+      if (activeSearch.trim()) params.set('search', activeSearch.trim());
+
+      const url = apiUrl(`/purchase-orders/export?${params.toString()}`);
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${getAuthToken()}` } });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+
+      const blob = await resp.blob();
+      const dateLabel = activeUseDateFilter ? `${activeFromDate}_${activeToDate}` : todayString();
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `DatHang_${dateLabel}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+      toast.success('Đã xuất dữ liệu Đặt Hàng thành công');
+    } catch (err) {
+      toast.error(`Lỗi xuất dữ liệu: ${err.message}`);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -383,6 +419,10 @@ export default function PurchaseOrders() {
             <button className="btn btn-ghost btn-sm" onClick={() => loadRows({ nextPage: page })} disabled={loading}>
               <RefreshCw size={14} className={loading ? 'spin' : ''} />
               Làm mới
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={exportRows} disabled={exporting}>
+              <Download size={14} className={exporting ? 'spin' : ''} />
+              {exporting ? 'Đang xuất' : 'Xuất Excel'}
             </button>
           </div>
         </div>

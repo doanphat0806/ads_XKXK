@@ -1,3 +1,4 @@
+const ExcelJS = require('exceljs');
 const DataPurchaseOrder = require('../models/DataPurchaseOrder');
 const PurchaseOrder = require('../models/PurchaseOrder');
 const Config = require('../models/Config');
@@ -1415,6 +1416,110 @@ async function getPurchaseOrders({ fromDate = '', toDate = '', search = '', page
   };
 }
 
+async function getAllPurchaseOrdersForExport({ fromDate = '', toDate = '', search = '' } = {}) {
+  const searchTerm = toText(search);
+  const dateFilter = buildDateFilter(fromDate, toDate);
+  const sourceFilter = {
+    sourceId: SHEET_ID,
+    sourceName: SHEET_NAME,
+    col3: { $nin: ['', null] }
+  };
+  if (dateFilter.orderDateKey) {
+    sourceFilter.orderDateKey = dateFilter.orderDateKey;
+  }
+
+  let effectiveSourceFilter = sourceFilter;
+  let effectiveSearchTerm = searchTerm;
+
+  const fastTrackingTerms = parseFastTrackingSearchTerms(searchTerm);
+  if (fastTrackingTerms.length) {
+    const orderIds = await findOrderIdsByFastTrackingSearch(sourceFilter, fastTrackingTerms);
+    if (orderIds.length) {
+      effectiveSourceFilter = { ...sourceFilter, col3: { $in: orderIds } };
+      effectiveSearchTerm = '';
+    }
+  } else if (searchTerm) {
+    effectiveSourceFilter = await buildSearchSourceFilter(sourceFilter, searchTerm);
+  }
+
+  const groupedRows = await DataPurchaseOrder.aggregate([
+    ...getPurchaseOrderGroupedPipeline(effectiveSourceFilter),
+    { $sort: { orderDateKey: -1, rowNumber: 1 } }
+  ]).allowDiskUse(true);
+
+  const orderIds = groupedRows.map(row => row.orderId).filter(Boolean);
+  const manualRows = await findManualPurchaseOrderRows(orderIds);
+  const manualByOrderId = new Map(manualRows.map(row => [row.orderId, row]));
+
+  const rows = groupedRows
+    .map(row => mapPurchaseOrderApiRow(row, manualByOrderId))
+    .filter(row => isDateInRange(row.orderDate, fromDate, toDate));
+
+  return effectiveSearchTerm ? rows.filter(row => rowMatchesSearch(row, effectiveSearchTerm)) : rows;
+}
+
+function formatExportDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('vi-VN', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+}
+
+async function generatePurchaseOrdersExcel({ fromDate = '', toDate = '', search = '' } = {}) {
+  const rows = await getAllPurchaseOrdersForExport({ fromDate, toDate, search });
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'ADS System';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('Dat_Hang');
+
+  const columns = [
+    { header: 'Mã Đơn Hàng', key: 'orderId', width: 22 },
+    { header: 'Mã vận đơn hàng về', key: 'trackingCode', width: 22 },
+    { header: 'Mã vđ bù', key: 'supplementalTrackingCode', width: 22 },
+    { header: 'Trạng Thái', key: 'statusLabel', width: 16 },
+    { header: 'Số lượng hàng về', key: 'receivedQuantity', width: 16 },
+    { header: 'Mã SP', key: 'skuManual', width: 20 },
+    { header: 'Thuộc tính sp', key: 'productAttribute', width: 24 },
+    { header: 'Số Lượng', key: 'quantity', width: 12 },
+    { header: 'Tên tài khoản', key: 'accountName', width: 20 },
+    { header: 'Tổng tiền', key: 'totalAmount', width: 16 },
+    { header: 'Ngày đặt', key: 'orderDate', width: 18 },
+    { header: 'Link sp', key: 'productLink', width: 40 }
+  ];
+  ws.columns = columns;
+
+  const headerRow = ws.getRow(1);
+  headerRow.eachCell(cell => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2F5597' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+  headerRow.height = 22;
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+  rows.forEach(row => {
+    ws.addRow({
+      orderId: row.orderId,
+      trackingCode: row.trackingCode || '',
+      supplementalTrackingCode: row.supplementalTrackingCode || '',
+      statusLabel: row.statusLabel || '',
+      receivedQuantity: row.receivedQuantity || '',
+      skuManual: row.skuManual || '',
+      productAttribute: row.productAttribute || '',
+      quantity: row.quantity || '',
+      accountName: row.accountName || '',
+      totalAmount: row.totalAmount || '',
+      orderDate: formatExportDate(row.orderDate),
+      productLink: row.productLink || ''
+    });
+  });
+
+  return wb.xlsx.writeBuffer();
+}
+
 async function updatePurchaseOrder(orderId, patch = {}, options = {}) {
   const cleanOrderId = toText(orderId);
   if (!cleanOrderId) throw new Error('Thiếu mã đơn hàng');
@@ -1589,6 +1694,7 @@ module.exports = {
   STATUS_OPTIONS,
   getPurchaseOrderDashboard,
   getPurchaseOrders,
+  generatePurchaseOrdersExcel,
   importPurchaseOrderStatusesFromCsvText,
   updatePurchaseOrderDashboardCancellation,
   updatePurchaseOrderDashboardNote,

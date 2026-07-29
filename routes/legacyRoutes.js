@@ -4413,6 +4413,26 @@ app.get('/api/purchase-orders', async (req, res) => {
   }
 });
 
+app.get('/api/purchase-orders/export', async (req, res) => {
+  try {
+    const fromDate = String(req.query.fromDate || '').trim();
+    const toDate = String(req.query.toDate || '').trim();
+    const search = String(req.query.search || '').trim();
+
+    const buffer = await generatePurchaseOrdersExcel({ fromDate, toDate, search });
+    const dateLabel = fromDate && toDate ? `${fromDate}_${toDate}` : todayStr();
+
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="DatHang_${dateLabel}.xlsx"`,
+      'Content-Length': buffer.length
+    });
+    res.send(Buffer.from(buffer));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/purchase-orders/import-status-csv', async (req, res) => {
   try {
     const contentType = String(req.headers['content-type'] || '').toLowerCase();

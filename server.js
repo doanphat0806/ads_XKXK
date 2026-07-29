@@ -44,6 +44,7 @@ mongoose.connect(MONGO_URI).then(async () => {
     await legacyRuntime.bootstrapFacebookToken();
     await legacyRuntime.initializeQueues();
     legacyRuntime.startSheetRefresh();
+    legacyRuntime.startPurchaseOrderSheetRefresh();
     legacyRuntime.startCronTasks();
     await legacyRuntime.resumeAutoAccounts();
   })().catch(error => {
