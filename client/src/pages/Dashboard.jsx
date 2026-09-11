@@ -698,9 +698,15 @@ export default function Dashboard() {
     setCurrentPage(1);
   }, [reportFromDate, reportToDate, provider, sortField, sortDir, deferredCampaignSearch]);
 
+  // Phu thuoc vao SO LUONG dong, khong phu thuoc tham chieu mang. Bam Tat/Bat mot
+  // camp se goi setLocalCampaigns -> processedCampaigns tao mang moi (noi dung gan
+  // nhu y het, chi doi status 1 dong) -> effect nay chay -> bang dang render 500
+  // dong bi keo ve 300, trang ngan lai dot ngot nen trinh duyet cuon vot len, roi
+  // 16ms sau moi gian ra lai. Nguoi dung thay "nhay hinh" va phai lan chuot xuong
+  // tim lai dung nut vua bam. Dem dong khong doi khi bat/tat nen khong con reset.
   useEffect(() => {
     setRenderLimit(DASHBOARD_INITIAL_RENDER_ROWS);
-  }, [currentPage, processedCampaigns]);
+  }, [currentPage, processedCampaigns.length]);
 
   useEffect(() => {
     if (renderLimit >= pageCampaigns.length) return undefined;
