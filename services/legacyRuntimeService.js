@@ -11,7 +11,7 @@ const { registerReportRoutes } = require('../routes/reportRoutes');
 const { authenticateApiRequest } = require('../middleware/auth');
 const { parseBoundedInt } = require('../utils/number');
 const { parseCsvRows, normalizeCsvHeader, getCsvColumnIndex, getCsvCell, parseCsvNumber, parseCsvInteger, parseCsvCampaignDate } = require('../utils/csvImport');
-const { normalizeProvider } = require('../utils/authUtils');
+const { normalizeProvider, requireAdminUser } = require('../utils/authUtils');
 const {
   getVietnamDayMinute, isVietnamTimeMinute, isWithinAutoRuleTimeWindow, todayStr,
   dateKeyFromVnOffset, normalizeCampaignDate, buildVnDateRange,
@@ -794,8 +794,12 @@ function createLegacyRuntime(app) {
       }
     };
   
+    // KHONG clear cache o day. Ham nay duoc goi trong vong lap, moi camp mot lan:
+    // sync 100 camp = 100 lan xoa sach cache doc, nen cache 30s gan nhu khong bao
+    // gio duoc dung. Moi luong goi ham nay deu tu clear MOT lan sau khi chay xong
+    // (xem cac cho goi clearCampaignReadCache o cuoi fetchAccountData,
+    // fetchShopeeAccountData, tao camp, nhan ban camp, import CSV, sync lich su).
     try {
-      clearCampaignReadCache();
       return await Campaign.findOneAndUpdate(filter, update, { upsert: true, new: true, setDefaultsOnInsert: true });
     } catch (error) {
       if (error?.code === 11000) {
@@ -2085,6 +2089,8 @@ function createLegacyRuntime(app) {
             if (dailyRow.adName) campaignUpdate.adName = dailyRow.adName;
             await upsertDailyCampaign(account._id, dailyRow.campaignId, dailyDate, campaignUpdate);
           }
+          // Ghi de len du lieu camp -> clear MOT lan cho ca tai khoan nay.
+          if (dailyMetricRows.length) clearCampaignReadCache();
         }
   
         return [...metricsByCampaignId.values()].map(metricRow => {
@@ -2837,12 +2843,16 @@ function createLegacyRuntime(app) {
       campaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
     }
   
+    // Clear MOT lan sau khi da ghi xong ca luot sync (thay cho clear moi camp mot
+    // lan trong upsertDailyCampaign truoc day).
+    clearCampaignReadCache();
+
     const totalSpend = campaigns.reduce((sum, campaign) => sum + (campaign.spend || 0), 0);
     const totalMessages = campaigns.reduce((sum, campaign) => sum + (campaign.messages || 0), 0);
     const unreadMessages = 0;
     return { campaigns, totalSpend, totalMessages, unreadMessages };
   }
-  
+
   async function fetchAccountData(account) {
     const today = todayStr();
     const { fbToken } = await getEffectiveSecrets(account);
@@ -2995,8 +3005,11 @@ function createLegacyRuntime(app) {
       });
     }
   
+    // Luong Facebook: clear MOT lan sau khi ghi xong toan bo camp cua luot sync.
+    clearCampaignReadCache();
+
     const totalSpend = insightTotalSpend;
-  
+
     return {
       campaigns,
       totalSpend,
@@ -3234,7 +3247,11 @@ function createLegacyRuntime(app) {
             `Auto reactivate Shopee: ${item.campaign.name} | id=${campaignGraphId} | ROI ${roiText}% > ${SHOPEE_REACTIVATE_ROI_PERCENT}% | spend=${formatAutoMoney(item.ruleSpend || item.spend || 0)} | commission=${formatAutoMoney(item.ruleCommission || 0)}`
           );
         }
-  
+
+        // Nhanh nay ghi trang thai ACTIVE qua upsertDailyCampaign, truoc day dua
+        // vao clear ngam ben trong ham do - nay phai tu clear.
+        clearCampaignReadCache();
+
         await addLog(
           account._id,
           account.name,
@@ -3681,16 +3698,23 @@ function createLegacyRuntime(app) {
     }
   }
   
-  app.get('/api/clean-tokens', async (req, res) => {
+  app.use('/api', authenticateApiRequest);
+
+  // PHAI dat SAU app.use('/api', authenticateApiRequest). Truoc day route nay
+  // duoc dang ky TRUOC middleware xac thuc, ma Express khop route theo thu tu
+  // dang ky - nghia la bat ky ai goi duoc server deu co the GET /api/clean-tokens
+  // de xoa sach fbToken cua TAT CA tai khoan cua MOI user, khong can dang nhap.
+  // Doi thanh POST (GET khong duoc phep sua du lieu) va chi cho admin.
+  app.post('/api/clean-tokens', async (req, res) => {
     try {
+      if (!requireAdminUser(req, res)) return;
       const result = await Account.updateMany({}, { $set: { fbToken: '' } });
       res.json({ success: true, message: 'Cleared old tokens', result });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
-  
-  app.use('/api', authenticateApiRequest);
+
   registerAllRoutes(app);
   
   function createLegacyRouteContext() {

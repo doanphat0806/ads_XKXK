@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { api, cachedApi, readResponseCache, todayString } from '../lib/api';
+import { api, cachedApi, clearResponseCache, readResponseCache, todayString } from '../lib/api';
 import { setGeminiKeyStatus } from '../lib/gemini';
 import { notify } from '../lib/notify';
 
@@ -66,6 +66,9 @@ export const AppProvider = ({ children }) => {
     localStorage.removeItem('adsctrl-user');
     setGeminiKeyStatus(false);
     sessionStorage.clear();
+    // Xoa ca cache trong bo nho, khong chi sessionStorage - neu khong, user dang
+    // nhap ngay sau do tren cung tab se doc trung du lieu cua user vua thoat.
+    clearResponseCache();
     setCurrentUser(null);
     setStats({});
     setAllAccounts([]);

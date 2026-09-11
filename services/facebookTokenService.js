@@ -10,6 +10,14 @@ const FACEBOOK_TOKEN_MAX_ATTEMPTS = 3;
 const FACEBOOK_TOKEN_CRON = process.env.FACEBOOK_TOKEN_CRON || '0 */6 * * *';
 const TOKEN_ALERT_WEBHOOK_URL = process.env.TOKEN_ALERT_WEBHOOK_URL || '';
 
+// retryOperation() ben duoi goi sleep() nhung file nay chua bao gio dinh nghia hay
+// import no -> moi lan Facebook tra loi co the thu lai (429/5xx/timeout), dong
+// `await sleep(waitMs)` nem ReferenceError ngay trong khoi catch: khong con lan thu
+// lai nao, va loi that su cua Facebook bi thay bang "sleep is not defined".
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function maskToken(token = '') {
   const value = String(token || '');
   if (value.length <= 14) return value ? `${value.slice(0, 3)}...` : '';

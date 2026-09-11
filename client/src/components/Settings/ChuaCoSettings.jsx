@@ -7,8 +7,14 @@ import { DEFAULT_CONFIG, MAX_TIER_COUNT, MIN_TIER_COUNT } from '../../types/chua
 import { getPreviewSamples } from '../../utils/calculations';
 
 function cloneConfig(config) {
+  // config co the den tu Mongo (kieu Mixed) hoac localStorage cu nen khong chac
+  // co tiers - doc thang config.tiers.map se nem loi va lam trang trang ca app.
+  const tiers = Array.isArray(config?.tiers) && config.tiers.length
+    ? config.tiers
+    : DEFAULT_CONFIG.tiers;
+
   return {
-    tiers: config.tiers.map(tier => ({ ...tier }))
+    tiers: tiers.map(tier => ({ ...tier }))
   };
 }
 
@@ -56,11 +62,18 @@ export default function ChuaCoSettings({
   const [draft, setDraft] = useState(() => cloneConfig(config));
   const [errors, setErrors] = useState([]);
 
+  const wasOpenRef = React.useRef(false);
+
+  // Giong StaffSettings: chi nap lai draft khi modal vua mo (dong -> mo). Truoc day
+  // effect chay theo tham chieu `config`, ma moi lan trang Dong deal dong bo tu
+  // server (poll 30s) deu goi replaceConfig voi object moi - dang sua tier thi bi
+  // reset ve gia tri cu giua chung.
   React.useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
       setDraft(cloneConfig(config));
       setErrors([]);
     }
+    wasOpenRef.current = open;
   }, [open, config]);
 
   const draftPreview = useMemo(() => getPreviewSamples(draft), [draft]);

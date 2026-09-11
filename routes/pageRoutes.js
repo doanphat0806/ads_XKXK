@@ -857,11 +857,11 @@ app.post('/api/pages/:pageId/publish', async (req, res) => {
       return res.status(400).json({ error: 'Nut "Gui tin nhan" hien chua ho tro khi dang reels video' });
     }
 
-    const pagesResp = await fbGet(fbToken, 'me/accounts', {
-      fields: 'name,id,access_token,picture{url}',
-      limit: 100
-    });
-    const managedPages = Array.isArray(pagesResp?.data) ? pagesResp.data : [];
+    // Phai duyet het cac trang phan trang cua me/accounts: ban cu chi lay 1 trang
+    // dau (limit 100), nen tai khoan quan ly tren 100 fanpage se bao "khong tim thay
+    // fanpage" voi nhung page nam o trang sau. fetchManagedPages() da co san san
+    // pagination nhung truoc day khong duoc dung o dau ca.
+    const managedPages = await fetchManagedPages(fbToken, 'name,id,access_token,picture{url}');
     const page = managedPages.find(item => String(item.id) === String(pageId));
 
     if (!page) {
@@ -1028,11 +1028,8 @@ app.post('/api/pages/:pageId/reels/upload-session/:sessionId/publish', async (re
 
     session = getCompletedReelUploadSession(sessionId);
 
-    const pagesResp = await fbGet(fbToken, 'me/accounts', {
-      fields: 'name,id,access_token,picture{url}',
-      limit: 100
-    });
-    const managedPages = Array.isArray(pagesResp?.data) ? pagesResp.data : [];
+    // Duyet het pagination (xem ghi chu o route publish ben tren).
+    const managedPages = await fetchManagedPages(fbToken, 'name,id,access_token,picture{url}');
     const page = managedPages.find(item => String(item.id) === String(pageId));
     if (!page) {
       return res.status(404).json({ error: 'Khong tim thay fanpage trong danh sach co quyen quan ly' });

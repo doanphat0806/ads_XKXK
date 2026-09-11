@@ -88,6 +88,10 @@ export default function OrderTable({
   }, [flatRows]);
 
   const renderItem = (item) => {
+    // Bang co the ngan di ngay giua luc virtualizer con giu index cu (auto-refresh
+    // 60s xoa bot dong) - doc item.kind cua undefined se lam trang trang ca bang.
+    if (!item) return null;
+
     if (item.kind === 'group') {
       return (
         <GroupHeader

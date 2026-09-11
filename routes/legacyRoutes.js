@@ -1192,6 +1192,10 @@ async function processCampaignDuplicateExactRequest(body = {}, onProgress = null
     }
   }
 
+  // Camp nhan ban duoc luu qua upsertDailyCampaign -> tu clear MOT lan o cuoi de
+  // ban copy hien ra ngay thay vi doi het TTL 30s cua cache doc.
+  if (copied.length > 0) clearCampaignReadCache();
+
   return {
     ok: true,
     date,
@@ -1541,6 +1545,10 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
         await sleep(createItemDelayMs);
       }
     }
+
+    // Camp moi tao duoc luu qua upsertDailyCampaign -> tu clear MOT lan o cuoi,
+    // neu khong nguoi dung tao camp xong ma danh sach van chua thay camp dau.
+    if (created.length > 0) clearCampaignReadCache();
 
     res.json({
       ok: true,
@@ -1933,6 +1941,11 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
       await addLog(account._id, account.name, 'info', `Chot ngay ${fromDate}: xoa ${result.deletedCount} camp cu khong con trong snapshot`);
     }
   }
+
+  // Clear MOT lan cho ca luot sync. Truoc day moi upsertDailyCampaign tu clear ben
+  // trong; nhanh prune o tren chi clear khi CO dong bi xoa, nen neu bo clear ngam
+  // ma khong them dong nay thi sync lich su se khong lam moi cache.
+  if (count > 0) clearCampaignReadCache();
 
   return count;
 }
@@ -2525,8 +2538,11 @@ async function importShopeeCommissionsFromCsvText(req, csvText = '', options = {
       continue;
     }
 
-    const rawCommission = String(row[commissionIndex] || '').split('.')[0];
-    const commission = parseCsvNumber(rawCommission);
+    // Cat phan thap phan SAU khi parse, khong cat chuoi truoc bang split('.').
+    // split('.')[0] chi dung khi CSV ghi kieu EN ("1234567.89"); neu Shopee xuat
+    // kieu VN ("1.234.567") thi no cat con dung "1" -> hoa hong 1.234.567d bi ghi
+    // thanh 1d. parseCsvNumber da phan biet duoc ca hai kieu, cu de no lam.
+    const commission = Math.trunc(parseCsvNumber(row[commissionIndex]));
     if (!commission) skipped.zeroCommission += 1;
 
     const key = `${date}\u0000${subId2}`;
@@ -2746,6 +2762,10 @@ async function importCampaignsFromCsvText(req, csvText = '', options = {}) {
 
     imported += 1;
   }
+
+  // Import CSV ghi camp qua upsertDailyCampaign -> phai tu clear MOT lan o cuoi,
+  // neu khong danh sach camp se cu trong toi da 30s sau khi import.
+  if (imported > 0) clearCampaignReadCache();
 
   return { ok: true, imported, skipped, errors, totalRows: Math.max(0, rows.length - 1), sourceRows: Math.max(0, rows.length - 1) };
 }
@@ -4868,9 +4888,29 @@ app.post('/api/inventory/import-sheet', async (req, res) => {
       await InventoryItem.bulkWrite(operations, { ordered: false });
     }
 
-    const deleteFilter = withInventoryOwnerFilter(ownerUserId, sheetBarcodes.size
-      ? { barcode: { $nin: Array.from(sheetBarcodes) } }
-      : {});
+    // Sheet khong tra ve ma nao thi TUYET DOI khong duoc xoa gi ca. Truoc day
+    // nhanh nay chay deleteMany({ownerUserId}) khong kem dieu kien barcode, tuc la
+    // XOA SACH KHO chi vi mot lan doc sheet hong: Sheets API tra ve values rong
+    // (tab bi doi ten/xoa, range khong khop, quyen doc bi thu hoi) deu ket thuc o
+    // day ma khong nem loi. Coi truong hop nay la dong bo that bai.
+    if (!sheetBarcodes.size) {
+      const items = await InventoryItem.find(withInventoryOwnerFilter(ownerUserId))
+        .sort({ updatedAt: -1 })
+        .limit(1000)
+        .lean();
+
+      return res.status(400).json({
+        error: 'Google Sheet kho khong tra ve ma san pham nao. Da giu nguyen kho hien tai, chua xoa gi. Hay kiem tra lai gid/range/quyen doc roi dong bo lai.',
+        imported: 0,
+        deleted: 0,
+        source,
+        items
+      });
+    }
+
+    const deleteFilter = withInventoryOwnerFilter(ownerUserId, {
+      barcode: { $nin: Array.from(sheetBarcodes) }
+    });
     const deleteResult = await InventoryItem.deleteMany(deleteFilter);
 
     const items = await InventoryItem.find(withInventoryOwnerFilter(ownerUserId))

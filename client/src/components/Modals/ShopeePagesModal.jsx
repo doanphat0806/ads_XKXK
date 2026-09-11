@@ -28,9 +28,21 @@ export default function ShopeePagesModal() {
     loadAccounts();
   }, [loadAccounts]);
 
+  // AppContext tu lam moi allAccounts moi 60 giay, moi lan deu tao mang moi ->
+  // shopeeAccounts va shopeeRolePageIds doi tham chieu -> effect nay chay lai va
+  // ghi de nhung page nguoi dung vua tich. Chi dong bo tu server khi nguoi dung
+  // CHUA dong vao o chon; sau do de nguyen lua chon cua ho.
+  const userEditedRef = React.useRef(false);
+
   useEffect(() => {
+    if (userEditedRef.current) return;
     setSelectedPageIds(shopeeRolePageIds);
   }, [shopeeRolePageIds]);
+
+  const handleSelectedPageIdsChange = (nextPageIds) => {
+    userEditedRef.current = true;
+    setSelectedPageIds(nextPageIds);
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -79,7 +91,7 @@ export default function ShopeePagesModal() {
         {shopeeAccounts.length > 0 ? (
           <LinkedPagesField
             selectedPageIds={selectedPageIds}
-            onChange={setSelectedPageIds}
+            onChange={handleSelectedPageIdsChange}
           />
         ) : (
           <div className="empty" style={{ minHeight: '120px' }}>

@@ -46,6 +46,15 @@ export function readResponseCache(key, maxAgeMs = RESPONSE_CACHE_MAX_AGE_MS) {
   }
 }
 
+// Phai goi khi dang xuat. logout() co sessionStorage.clear() nhung `responseCache`
+// la Map o cap module, song qua ca lan dang xuat: user tiep theo dang nhap tren cung
+// tab se thay so lieu cua user truoc (readResponseCache doc Map nay truoc khi doc
+// sessionStorage) cho den khi request that su tra ve.
+export function clearResponseCache() {
+  responseCache.clear();
+  inFlightCacheRequests.clear();
+}
+
 export function writeResponseCache(key, data) {
   const item = { data, createdAt: Date.now() };
   responseCache.set(key, item);

@@ -574,6 +574,11 @@ export default function DealStopOrders() {
 
   const scheduleSaveSharedState = React.useCallback(() => {
     if (!stateReady) return;
+    // Danh dau "dang luu" ngay tu luc hen gio, khong doi den luc PUT that su chay:
+    // trong 600ms debounce nay state cuc bo (vd: nhan vien vua them) da moi hon
+    // server, neu poll 30s roi dung vao day thi applyRemoteState se lay ban cu tu
+    // server va ghi de mat thay doi chua kip gui. Co flag thi poll bo qua nhip do.
+    isSavingRef.current = true;
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
       saveSharedState(latestStateRef.current, { silent: true });
@@ -747,6 +752,10 @@ export default function DealStopOrders() {
     isReloadingRef.current = true;
     try {
       const data = await api('GET', DEAL_STOP_STATE_API, null, { timeoutMs: 60000 });
+      // Nguoi dung co the vua sua gi do trong luc cho GET nay tra ve - ban snapshot
+      // trong tay da cu, ap vao se ghi de thay doi do (vd: nhan vien vua luu bi mat
+      // sau vai giay). Bo qua, nhip poll sau se dong bo lai.
+      if (isSavingRef.current) return;
       const remoteState = data?.state || {};
       const nextState = normalizeDealStopState(
         hasPersistedDealStopState(remoteState, activeTab) ? remoteState : latestStateRef.current,
@@ -1035,7 +1044,23 @@ export default function DealStopOrders() {
     const { nextRowsByTab, removedCount } = pruneRowsByStaffList(rowsByTab, nextStaffList);
 
     setStaffList(nextStaffList);
-    setRowsByTab(nextRowsByTab);
+    // Cac ma thuoc ky tu dau vua duoc them da bi prune khoi rowsByTab tu truoc, va
+    // loadSourceRows() khong phu thuoc staffList nen phai cho den lan auto-refresh
+    // sau (60s) moi merge lai - nhan vien moi khong co dong nao nen nhom cua ho
+    // khong hien ra (groupedRows bo qua nhom rong), nhin nhu "khong them duoc".
+    // Merge lai ngay tu sourceRows dang co de nhom cua nhan vien moi xuat hien luon.
+    setRowsByTab(sourceRows.length
+      ? {
+          ...nextRowsByTab,
+          [activeTab]: mergeSourceRowsWithLocal(
+            sourceRows,
+            nextRowsByTab[activeTab] || [],
+            hiddenCodes,
+            config,
+            actualQtyByCode
+          )
+        }
+      : nextRowsByTab);
 
     if (removedCount > 0) {
       toast.success(`Đã lưu danh sách nhân viên và xóa ${removedCount} mã không còn prefix hợp lệ`);

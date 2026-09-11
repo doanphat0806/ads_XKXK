@@ -70,21 +70,31 @@ function resolveRange(body) {
  * GET /api/ai/facebook/chat/history
  */
 router.get('/chat/history', async (req, res) => {
-  const providerKey = resolveProvider(req.query);
-  const history = await FacebookAiChatMessage.find({ ownerUserId: req.currentUser._id, provider: providerKey })
-    .sort({ createdAt: 1 })
-    .select('role content createdAt')
-    .lean();
-  res.json({ ok: true, provider: providerKey, messages: history });
+  // Khong co try/catch thi loi truy van o day thanh unhandled rejection va lam
+  // sap ca process (Node >= 15), thay vi chi hong mot request.
+  try {
+    const providerKey = resolveProvider(req.query);
+    const history = await FacebookAiChatMessage.find({ ownerUserId: req.currentUser._id, provider: providerKey })
+      .sort({ createdAt: 1 })
+      .select('role content createdAt')
+      .lean();
+    res.json({ ok: true, provider: providerKey, messages: history });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 /**
  * DELETE /api/ai/facebook/chat/history
  */
 router.delete('/chat/history', async (req, res) => {
-  const providerKey = resolveProvider(req.query);
-  await FacebookAiChatMessage.deleteMany({ ownerUserId: req.currentUser._id, provider: providerKey });
-  res.json({ ok: true, provider: providerKey });
+  try {
+    const providerKey = resolveProvider(req.query);
+    await FacebookAiChatMessage.deleteMany({ ownerUserId: req.currentUser._id, provider: providerKey });
+    res.json({ ok: true, provider: providerKey });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 /**

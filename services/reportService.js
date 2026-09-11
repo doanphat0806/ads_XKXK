@@ -1033,7 +1033,10 @@ async function importCommissionOrders(ownerUserId, rows, subId2Index, dateIndex,
             orderStatus:          orderStatusIdx  >= 0 ? String(row[orderStatusIdx]  || '').trim() : '',
             itemName:             itemNameIdx      >= 0 ? String(row[itemNameIdx]     || '').trim() : '',
             orderValue:           orderValueIdx    >= 0 ? parseCsvNumber(row[orderValueIdx])   : 0,
-            commission:           commissionIndex  >= 0 ? parseCsvNumber(String(row[commissionIndex] || '').split('.')[0]) : 0,
+            // Cat thap phan sau khi parse: split('.')[0] lam hong so kieu VN
+            // ("1.234.567" -> "1"). Cot orderValue ngay tren cung file CSV cung
+            // chi dung parseCsvNumber, nen de thong nhat luon.
+            commission:           commissionIndex  >= 0 ? Math.trunc(parseCsvNumber(row[commissionIndex])) : 0,
             actualCommissionRate: commRateActIdx   >= 0 ? parseCsvNumber(row[commRateActIdx])  : 0,
             agreedCommissionRate: commRateAgrIdx   >= 0 ? parseCsvNumber(row[commRateAgrIdx])  : 0,
             commissionStatus:     commStatusIdx    >= 0 ? String(row[commStatusIdx]   || '').trim() : '',

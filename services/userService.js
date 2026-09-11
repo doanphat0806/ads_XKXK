@@ -35,7 +35,13 @@ async function ensureDefaultUsers() {
     if (!username || !item.password) continue;
 
     const existing = await User.findOne({ username }).select('_id username active passwordHash').lean();
-    if (existing?.active) continue;
+    // Chi tao user mac dinh khi CHUA co trong DB. Truoc day dieu kien la
+    // `if (existing?.active) continue`, tuc la user da bi xoa (DELETE /api/users
+    // chi dat active:false) se duoc tao lai va reset ve mat khau mac dinh ngay o
+    // lan dang nhap ke tiep cua bat ky ai - xoa nhan vien khong bao gio co hieu luc.
+    // Muon bat lai mot tai khoan da xoa thi dung POST /api/users (co ho tro kich
+    // hoat lai user inactive).
+    if (existing) continue;
 
     await User.findOneAndUpdate(
       { username },

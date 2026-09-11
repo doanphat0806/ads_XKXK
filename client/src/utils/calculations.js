@@ -5,15 +5,43 @@ function roundNumber(value) {
   return Math.round(value);
 }
 
+// Doc so tu chuoi, chap nhan ca dinh dang VN ("1.500", "12,5") lan EN ("1,500", "12.5").
+// Ban cu xoa het dau cham roi doi dau phay dau tien thanh cham, nen:
+//   "0.5"       -> 5          (sai 10 lan)
+//   "1,234,567" -> 1.234567   (sai hoan toan)
+// Quy tac moi: dau phan cach xuat hien sau cung la dau thap phan, tru khi no dung
+// truoc dung 3 chu so va la loai dau duy nhat - luc do no la dau phan cach nghin
+// ("1.500" = 1500 theo cach viet VN).
 export function toSafeNumber(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
-  const normalized = String(value ?? '')
-    .trim()
-    .replace(/\./g, '')
-    .replace(',', '.')
-    .replace(/[^\d.-]/g, '');
+
+  const raw = String(value ?? '').trim();
+  if (!raw) return 0;
+
+  const negative = /^-/.test(raw);
+  const cleaned = raw.replace(/[^\d.,]/g, '');
+  if (!cleaned) return 0;
+
+  const lastSeparatorIndex = Math.max(cleaned.lastIndexOf('.'), cleaned.lastIndexOf(','));
+  let normalized;
+
+  if (lastSeparatorIndex < 0) {
+    normalized = cleaned;
+  } else {
+    const separator = cleaned[lastSeparatorIndex];
+    const tail = cleaned.slice(lastSeparatorIndex + 1);
+    const separatorCount = cleaned.split(separator).length - 1;
+    const hasBothSeparators = cleaned.includes('.') && cleaned.includes(',');
+    const isGroupSeparator = !hasBothSeparators && separatorCount >= 1 && /^\d{3}$/.test(tail);
+
+    normalized = isGroupSeparator
+      ? cleaned.replace(/[.,]/g, '')
+      : `${cleaned.slice(0, lastSeparatorIndex).replace(/[.,]/g, '')}.${tail.replace(/[.,]/g, '')}`;
+  }
+
   const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
+  if (!Number.isFinite(parsed)) return 0;
+  return negative ? -parsed : parsed;
 }
 
 export function clampPercent(value) {
@@ -26,13 +54,17 @@ export function clampPercent(value) {
 export function calcChuaCo(ma, slKhachDat, config = DEFAULT_CONFIG) {
   if (!String(ma || '').trim()) return '';
 
-  for (const tier of config.tiers) {
-    if (tier.maxQty === null || slKhachDat <= tier.maxQty) {
-      return roundNumber(slKhachDat * tier.rate);
+  // config den tu localStorage/Mongo (kieu Mixed) nen co the thieu tiers hoac
+  // tiers rong - doc thang se nem TypeError va lam trang trang toan bo bang.
+  const tiers = Array.isArray(config?.tiers) && config.tiers.length ? config.tiers : DEFAULT_CONFIG.tiers;
+
+  for (const tier of tiers) {
+    if (tier?.maxQty === null || slKhachDat <= tier?.maxQty) {
+      return roundNumber(slKhachDat * toSafeNumber(tier?.rate));
     }
   }
 
-  return roundNumber(slKhachDat * config.tiers[config.tiers.length - 1].rate);
+  return roundNumber(slKhachDat * toSafeNumber(tiers[tiers.length - 1]?.rate));
 }
 
 export function calcSLCanDatThem(ma, slThucDat, slKhachDat, tiLeHoan) {

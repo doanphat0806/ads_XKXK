@@ -43,11 +43,19 @@ export default function StaffSettings({ open, staffList, onClose, onSave }) {
   const [draft, setDraft] = useState(staffList);
   const [errors, setErrors] = useState([]);
 
+  const wasOpenRef = React.useRef(false);
+
+  // Chi nap lai draft khi modal vua duoc mo (dong -> mo). Truoc day effect chay
+  // moi khi tham chieu staffList doi, ma trang Dong deal goi setStaffList moi lan
+  // dong bo tu server (poll 30s, applyRemoteState luon tao mang moi) - khi do dong
+  // nhan vien vua bam "+ Them nhan vien" va ten/ky tu dang go bi reset sach, nen
+  // nguoi dung khong the them nhan vien moi.
   React.useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
       setDraft(staffList);
       setErrors([]);
     }
+    wasOpenRef.current = open;
   }, [open, staffList]);
 
   const handleChange = (id, field, value) => {
