@@ -2420,30 +2420,6 @@
       text-align: center;
     }
 
-    #page-shopee-stats table {
-      table-layout: fixed;
-    }
-
-    /* Shopee stats specific tweaks to avoid column misalignment */
-    #page-shopee-stats thead th,
-    #page-shopee-stats tbody td {
-      padding: 8px 12px;
-      vertical-align: middle;
-      box-sizing: border-box;
-    }
-
-    /* allow header text to wrap so it doesn't push columns out of alignment */
-    #page-shopee-stats thead th {
-      white-space: normal;
-      font-size: 11px;
-    }
-
-    /* ensure monospace cells use consistent font and don't affect layout */
-    #page-shopee-stats .mono-sm {
-      font-family: var(--mono);
-      font-size: 13px;
-    }
-
     /* Ã¢â€â‚¬Ã¢â€â‚¬ Campaigns Page Overrides Ã¢â€â‚¬Ã¢â€â‚¬ */
     #page-oder-dashboard .row-week-total,
     #page-oder-dashboard .row-month-total {
@@ -4665,13 +4641,6 @@
       box-shadow: none;
     }
 
-    #page-shopee-stats .shopee-stats-summary-grid {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 12px;
-      margin-top: 12px;
-    }
-
     #page-return-summary .return-toolbar-card {
       padding: 0;
       overflow: hidden;
@@ -5011,17 +4980,12 @@
       #page-orders .orders-filter-action {
         align-items: flex-start;
       }
-
-      #page-shopee-stats .shopee-stats-summary-grid {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-      }
     }
 
     @media (max-width: 640px) {
       #page-return-summary .return-summary-grid,
       #page-orders .orders-filter-grid,
-      #page-orders .orders-summary-grid,
-      #page-shopee-stats .shopee-stats-summary-grid {
+      #page-orders .orders-summary-grid {
         grid-template-columns: 1fr;
       }
 
@@ -6753,3 +6717,455 @@
       }
 
     }
+
+    /* ── Shopee Social Affiliate ── */
+    #page-shopee-social {
+      --shopee-o: #ee4d2d;
+      --shopee-o2: #ff5722;
+      --shopee-xtra: #8b5cf6;
+      min-width: 0;
+    }
+
+    #page-shopee-social > * + * {
+      margin-top: 14px;
+    }
+
+    #page-shopee-social .shopee-social-input {
+      font-family: var(--display);
+      font-size: 12px;
+      color: var(--txt);
+      background: var(--s2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    #page-shopee-social .shopee-social-input:focus {
+      border-color: var(--shopee-o);
+    }
+
+    #page-shopee-social .shopee-social-dropzone {
+      margin: 14px 18px 0;
+      border: 2px dashed var(--border2);
+      border-radius: 14px;
+      padding: 28px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      text-align: center;
+      color: var(--muted2);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+
+    #page-shopee-social .shopee-social-dropzone:hover,
+    #page-shopee-social .shopee-social-dropzone.is-dragover {
+      border-color: var(--shopee-o);
+      background: rgba(238, 77, 45, 0.05);
+      color: var(--shopee-o);
+    }
+
+    #page-shopee-social .shopee-social-dropzone-text {
+      font-size: 13px;
+      color: var(--txt);
+    }
+
+    #page-shopee-social .shopee-social-dropzone-text strong {
+      color: var(--shopee-o);
+    }
+
+    #page-shopee-social .shopee-social-dropzone-hint {
+      font-size: 11px;
+    }
+
+    #page-shopee-social .shopee-social-upload-footer {
+      margin: 14px 18px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted2);
+    }
+
+    #page-shopee-social .shopee-social-file-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #page-shopee-social .shopee-social-sync-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(24, 201, 200, 0.14);
+      color: var(--g);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+
+    #page-shopee-social .shopee-social-linklike {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: none;
+      border: none;
+      color: var(--b);
+      font-size: 12px;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    #page-shopee-social .shopee-social-linklike:hover {
+      text-decoration: underline;
+    }
+
+    #page-shopee-social .shopee-social-filters {
+      padding: 12px 18px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    #page-shopee-social .shopee-social-search {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--s2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0 10px;
+      flex: 1;
+      min-width: 220px;
+      color: var(--muted2);
+    }
+
+    #page-shopee-social .shopee-social-search .shopee-social-input {
+      border: none;
+      background: none;
+      flex: 1;
+      padding: 8px 0;
+    }
+
+    #page-shopee-social .shopee-social-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+    }
+
+    #page-shopee-social .shopee-social-charts-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 1.4fr;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    #page-shopee-social .shopee-social-donut-wrap {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 18px 18px;
+      flex-wrap: wrap;
+    }
+
+    #page-shopee-social .shopee-social-donut-svg {
+      width: 190px;
+      height: 190px;
+      flex-shrink: 0;
+    }
+
+    #page-shopee-social .shopee-social-legend {
+      flex: 1;
+      min-width: 200px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    #page-shopee-social .shopee-social-legend-row {
+      display: grid;
+      grid-template-columns: 10px 1fr auto auto;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 6px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    #page-shopee-social .shopee-social-legend-row.is-hovered {
+      background: var(--s3);
+    }
+
+    #page-shopee-social .shopee-social-legend-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+    }
+
+    #page-shopee-social .shopee-social-legend-label {
+      color: var(--txt);
+      font-weight: 600;
+    }
+
+    #page-shopee-social .shopee-social-legend-value {
+      font-family: var(--mono);
+      color: var(--muted2);
+      font-size: 11px;
+    }
+
+    #page-shopee-social .shopee-social-legend-share {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--txt);
+      min-width: 42px;
+      text-align: right;
+    }
+
+    #page-shopee-social .shopee-social-bar-wrap {
+      padding: 14px 18px 18px;
+    }
+
+    #page-shopee-social .shopee-social-bar-svg {
+      width: 100%;
+      height: auto;
+    }
+
+    #page-shopee-social .shopee-social-bar-legend {
+      display: flex;
+      gap: 16px;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted2);
+    }
+
+    #page-shopee-social .shopee-social-bar-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #page-shopee-social .shopee-social-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    #page-shopee-social .shopee-social-cpc-default-card {
+      padding: 12px 18px;
+      font-size: 12px;
+      color: var(--muted2);
+    }
+
+    #page-shopee-social .shopee-social-cpc-default-card label {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    #page-shopee-social .shopee-social-helper {
+      padding: 8px 18px 0;
+      font-size: 11px;
+      color: var(--muted2);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    #page-shopee-social .shopee-social-source-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 5px;
+      flex-shrink: 0;
+    }
+
+    #page-shopee-social .shopee-social-source-badge.is-campaign {
+      background: rgba(24, 201, 200, 0.14);
+      color: var(--g);
+    }
+
+    #page-shopee-social .shopee-social-source-badge.is-manual {
+      background: rgba(245, 158, 11, 0.14);
+      color: var(--o);
+    }
+
+    #page-shopee-social .shopee-social-source-badge.is-none {
+      background: var(--s3);
+    }
+
+    #page-shopee-social .shopee-social-spin {
+      animation: shopee-social-spin 0.8s linear infinite;
+      color: var(--muted2);
+    }
+
+    @keyframes shopee-social-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    #page-shopee-social .shopee-social-editable-cell {
+      cursor: pointer;
+      border-bottom: 1px dashed var(--border2);
+    }
+
+    #page-shopee-social .shopee-social-inline-input {
+      width: 90px;
+      text-align: right;
+    }
+
+    #page-shopee-social .shopee-social-leaderboard-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    #page-shopee-social .shopee-social-rank-list {
+      list-style: none;
+      padding: 8px 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    #page-shopee-social .shopee-social-rank-list li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border-radius: 8px;
+    }
+
+    #page-shopee-social .shopee-social-rank-list li:hover {
+      background: var(--s3);
+    }
+
+    #page-shopee-social .shopee-social-rank-index {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--s3);
+      color: var(--muted2);
+      font-size: 11px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    #page-shopee-social .shopee-social-rank-main {
+      flex: 1;
+      min-width: 0;
+    }
+
+    #page-shopee-social .shopee-social-rank-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--txt);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #page-shopee-social .shopee-social-rank-sub {
+      font-size: 10px;
+      color: var(--muted2);
+      margin-top: 2px;
+    }
+
+    #page-shopee-social .shopee-social-rank-value {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--g);
+      white-space: nowrap;
+    }
+
+    #page-shopee-social .shopee-social-rank-empty {
+      padding: 12px;
+      color: var(--muted2);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    #page-shopee-social .shopee-social-warning-list {
+      list-style: none;
+      padding: 10px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #page-shopee-social .shopee-social-warning-item {
+      display: flex;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    #page-shopee-social .shopee-social-warning-item.critical {
+      background: rgba(244, 63, 94, 0.06);
+      border-color: rgba(244, 63, 94, 0.25);
+      color: var(--r);
+    }
+
+    #page-shopee-social .shopee-social-warning-item.warning {
+      background: rgba(245, 158, 11, 0.08);
+      border-color: rgba(245, 158, 11, 0.3);
+      color: var(--o);
+    }
+
+    #page-shopee-social .shopee-social-warning-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--txt);
+    }
+
+    #page-shopee-social .shopee-social-warning-detail {
+      font-size: 11px;
+      color: var(--muted2);
+      margin-top: 2px;
+      line-height: 1.4;
+    }
+
+    #page-shopee-social .shopee-social-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 18px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    #page-shopee-social .shopee-social-pagination-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted2);
+    }
+
+    @media (max-width: 1100px) {
+      #page-shopee-social .shopee-social-charts-grid {
+        grid-template-columns: 1fr;
+      }
+
+      #page-shopee-social .shopee-social-leaderboard-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+

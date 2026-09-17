@@ -27,9 +27,7 @@ const CreateCampaign = React.lazy(() => import('./pages/Pages'));
 const PurchaseOrders = React.lazy(() => import('./pages/PurchaseOrders'));
 const ReturnSummary = React.lazy(() => import('./pages/ReturnSummary'));
 const ShopeeCommission = React.lazy(() => import('./pages/ShopeeCommission'));
-const ReportDashboard = React.lazy(() => import('./pages/ReportDashboard'));
-const ShopeeStats = React.lazy(() => import('./pages/ShopeeStats'));
-const ShopeeAffAccounts = React.lazy(() => import('./pages/ShopeeAffAccounts'));
+const ShopeeSocial = React.lazy(() => import('./pages/ShopeeSocial'));
 const UserManagement = React.lazy(() => import('./pages/UserManagement'));
 
 function RouteLoading() {
@@ -89,12 +87,8 @@ function AppContent() {
         return 'Thống kê kho';
       case '/shopee-commission':
         return 'Hoa hồng Shopee';
-      case '/report-dashboard':
-        return 'Báo Cáo Giám Sát';
-      case '/shopee-stats':
-        return 'Thống kê Shopee';
-      case '/shopee-aff-accounts':
-        return 'Tài khoản AFF Shopee';
+      case '/shopee-social':
+        return 'Social Affiliate';
       case '/google-sheets':
         return 'Google Sheets';
       case '/creater-page':
@@ -161,9 +155,7 @@ function AppContent() {
                   <Route path="/inventory" element={<Inventory />} />
                   <Route path="/inventory-summary" element={<InventorySummary />} />
                   <Route path="/shopee-commission" element={<ShopeeCommission />} />
-                  <Route path="/report-dashboard" element={<ReportDashboard />} />
-                  <Route path="/shopee-stats" element={<ShopeeStats />} />
-                  <Route path="/shopee-aff-accounts" element={<ShopeeAffAccounts />} />
+                  <Route path="/shopee-social" element={<ShopeeSocial />} />
                   <Route path="/google-sheets" element={<GoogleSheets />} />
                   <Route path="/creater-page" element={<CreaterPage />} />
                   <Route path="/logs" element={<Logs />} />

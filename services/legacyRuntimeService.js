@@ -8,6 +8,8 @@ const IORedis = require('ioredis');
 const { registerAllRoutes } = require('../routes');
 const { registerLegacyRoutes } = require('../routes/legacyRoutes');
 const { registerReportRoutes } = require('../routes/reportRoutes');
+const { registerShopeeSocialAdsRoutes } = require('../routes/shopeeSocialAdsRoutes');
+const { registerShopeeSocialOrdersRoutes } = require('../routes/shopeeSocialOrdersRoutes');
 const { authenticateApiRequest } = require('../middleware/auth');
 const { parseBoundedInt } = require('../utils/number');
 const { parseCsvRows, normalizeCsvHeader, getCsvColumnIndex, getCsvCell, parseCsvNumber, parseCsvInteger, parseCsvCampaignDate } = require('../utils/csvImport');
@@ -61,9 +63,8 @@ function createLegacyRuntime(app) {
   const PurchaseOrder = require('../models/PurchaseOrder');
   const ShopeeCommission = require('../models/ShopeeCommission');
   const ShopeeCommissionOrder = require('../models/ShopeeCommissionOrder');
-  const ShopeeAffAccount = require('../models/ShopeeAffAccount');
-  const { registerShopeeAffAccountRoutes } = require('../routes/shopeeAffAccountRoutes');
-  const { generateExcelReport, importCommissionOrders, getReportData, getShopeeStatsData } = require('../services/reportService');
+  const ShopeeSocialOrder = require('../models/ShopeeSocialOrder');
+  const { generateExcelReport, importCommissionOrders, extractSubId2 } = require('../services/reportService');
   const {
     buildOrderQuery,
     getOrderItemsFromRaw,
@@ -4033,7 +4034,7 @@ function createLegacyRuntime(app) {
       PurchaseOrder.createIndexes(),
       ShopeeCommission.createIndexes(),
       ShopeeCommissionOrder.createIndexes(),
-      ShopeeAffAccount.createIndexes(),
+      ShopeeSocialOrder.createIndexes(),
       Config.createIndexes(),
       ensureUserIndexes(),
       FacebookToken.createIndexes()
@@ -4062,17 +4063,23 @@ function createLegacyRuntime(app) {
     Account,
     buildAccountProviderFilter,
     generateExcelReport,
-    getReportData,
-    getShopeeStatsData,
     normalizeCampaignDate,
     todayStr,
     withUserFilter
   });
 
-  registerShopeeAffAccountRoutes(app, {
-    ShopeeAffAccount,
+  registerShopeeSocialAdsRoutes(app, {
     Account,
-    withUserFilter
+    Campaign,
+    buildAccountProviderFilter,
+    withUserFilter,
+    normalizeCampaignDate,
+    todayStr,
+    extractSubId2
+  });
+
+  registerShopeeSocialOrdersRoutes(app, {
+    ShopeeSocialOrder
   });
 
   async function runStartupMaintenance() {

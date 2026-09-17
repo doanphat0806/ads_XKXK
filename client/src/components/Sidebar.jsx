@@ -4,11 +4,9 @@ import {
   BarChart3,
   BookText,
   Boxes,
-  CalendarRange,
   ChevronDown,
   CirclePlus,
   Coins,
-  Contact,
   CopyPlus,
   FileSpreadsheet,
   LayoutDashboard,
@@ -16,6 +14,7 @@ import {
   Package,
   PenSquare,
   RotateCcw,
+  Share2,
   ShoppingCart,
   Settings,
   Sparkles,
@@ -132,14 +131,8 @@ export default function Sidebar() {
           <NavLink to="/shopee-commission" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Hoa hong">
             <span className="icon"><Coins size={16} strokeWidth={2} /></span><span>Hoa hong</span>
           </NavLink>
-          <NavLink to="/report-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Bao Cao Giam Sat">
-            <span className="icon"><BarChart3 size={16} strokeWidth={2} /></span><span>Báo Cáo Ads</span>
-          </NavLink>
-          <NavLink to="/shopee-stats" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Thong Ke Shopee">
-            <span className="icon"><CalendarRange size={16} strokeWidth={2} /></span><span>Thống Kê</span>
-          </NavLink>
-          <NavLink to="/shopee-aff-accounts" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Tai khoan AFF">
-            <span className="icon"><Contact size={16} strokeWidth={2} /></span><span>Tài khoản AFF</span>
+          <NavLink to="/shopee-social" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Social Affiliate">
+            <span className="icon"><Share2 size={16} strokeWidth={2} /></span><span>Social Affiliate</span>
           </NavLink>
         </>
       )}
