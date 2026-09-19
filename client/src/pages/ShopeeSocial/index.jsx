@@ -186,9 +186,29 @@ export default function ShopeeSocial() {
     [filteredOrders, cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2]
   );
 
-  const netProfit = useMemo(() => matrixRows.reduce((s, r) => s + r.profit, 0), [matrixRows]);
-  const totalAdSpend = useMemo(() => matrixRows.reduce((s, r) => s + r.adSpend, 0), [matrixRows]);
-  const totalClicks = useMemo(() => matrixRows.reduce((s, r) => s + r.clicks, 0), [matrixRows]);
+  // Total ad spend/clicks must count every campaign in the selected date range, including
+  // SubID2s that spent money but produced zero matching orders. matrixRows only has a row
+  // per SubID2 that already appears in an order, so summing just that silently dropped
+  // spend on campaigns with zero conversions — understating "Chi phí Ads" and inflating
+  // "Lợi nhuận ròng". Matched SubID2s still use matrixRows' figure (which respects manual
+  // CPC/click overrides); unmatched ones are added straight from the real campaign data.
+  const totalAdSpend = useMemo(() => {
+    const matchedKeys = new Set(matrixRows.map(r => r.subIdKey));
+    const matrixSpend = matrixRows.reduce((s, r) => s + r.adSpend, 0);
+    const unmatchedSpend = Object.entries(adsSpendBySubId2)
+      .filter(([key]) => !matchedKeys.has(key))
+      .reduce((s, [, v]) => s + (v.spend || 0), 0);
+    return matrixSpend + unmatchedSpend;
+  }, [matrixRows, adsSpendBySubId2]);
+  const totalClicks = useMemo(() => {
+    const matchedKeys = new Set(matrixRows.map(r => r.subIdKey));
+    const matrixClicks = matrixRows.reduce((s, r) => s + r.clicks, 0);
+    const unmatchedClicks = Object.entries(adsSpendBySubId2)
+      .filter(([key]) => !matchedKeys.has(key))
+      .reduce((s, [, v]) => s + (v.clicks || 0), 0);
+    return matrixClicks + unmatchedClicks;
+  }, [matrixRows, adsSpendBySubId2]);
+  const netProfit = kpis.commissionTotal - totalAdSpend;
   const platformDistribution = useMemo(() => computePlatformDistribution(filteredOrders), [filteredOrders]);
   const hourlyDistribution = useMemo(() => computeHourlyDistribution(filteredOrders), [filteredOrders]);
   const topProducts = useMemo(() => computeTopProducts(filteredOrders), [filteredOrders]);
