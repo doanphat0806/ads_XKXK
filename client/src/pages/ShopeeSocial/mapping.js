@@ -3,9 +3,9 @@ import { normalizeHeaderText, parseNumber, parseDateTime, detectPlatform, classi
 // Ordered matchers: first pattern that matches a normalized header wins that header.
 // Order matters — more specific patterns (xtra, total) must be checked before generic ones.
 const FIELD_MATCHERS = [
-  { field: 'orderId', test: h => /ma don|order id|order sn|ordersn|so don hang/.test(h) },
+  { field: 'orderId', test: h => /ma don|order id|order sn|ordersn|so don hang|id don hang/.test(h) },
   { field: 'itemId', test: h => /id san pham|item id|ma san pham/.test(h) },
-  { field: 'itemName', test: h => /ten san pham|item name|ten hang/.test(h) },
+  { field: 'itemName', test: h => /ten san pham|item name|ten hang|ten item/.test(h) },
   { field: 'shopId', test: h => /id shop|shop id|ma shop/.test(h) },
   { field: 'shopName', test: h => /ten shop|shop name/.test(h) },
   { field: 'commissionXtra', test: h => /xtra|thuong hieu|brand commission/.test(h) },
@@ -60,9 +60,17 @@ export function rowToOrder(row, columnMap, index) {
     subIds = [0, 1, 2, 3, 4].map(i => parts[i] || '');
   }
 
-  const platform = detectPlatform(subIds[0]);
   const channelRaw = get('channel') || '';
   const statusRaw = get('status') || '';
+
+  // SubID1 usually carries the platform (e.g. "fb_ads"), but some reports use it for an
+  // internal campaign code instead and put the real platform name in the Channel column —
+  // fall back to that when SubID1 doesn't resolve to a known platform.
+  let platform = detectPlatform(subIds[0]);
+  if (platform.key === 'khac') {
+    const channelPlatform = detectPlatform(channelRaw);
+    if (channelPlatform.key !== 'khac') platform = channelPlatform;
+  }
   const commissionShopee = parseNumber(get('commissionShopee'));
   const commissionXtra = parseNumber(get('commissionXtra'));
   const commissionTotalRaw = get('commissionTotal');

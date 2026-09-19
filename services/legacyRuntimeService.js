@@ -4022,8 +4022,24 @@ function createLegacyRuntime(app) {
     await User.createIndexes();
   }
   
+  async function ensureShopeeSocialOrderStorage() {
+    // Superseded by a composite (orderId, itemId) unique index — affiliate reports have
+    // one row per item, and the old orderId-only index made a multi-item order's later
+    // rows overwrite earlier ones, silently dropping their commission/GMV.
+    const collection = mongoose.connection.collection('shopeesocialorders');
+    try {
+      await collection.dropIndex('shopee_social_order_user_order_unique');
+      console.log('Dropped legacy ShopeeSocialOrder index: shopee_social_order_user_order_unique');
+    } catch (error) {
+      if (!['IndexNotFound', 'NamespaceNotFound'].includes(error?.codeName)) {
+        throw error;
+      }
+    }
+  }
+
   async function ensureApplicationIndexes() {
     await ensurePurchaseOrderStorage();
+    await ensureShopeeSocialOrderStorage();
     await Promise.all([
       Account.createIndexes(),
       Log.createIndexes(),

@@ -25,9 +25,12 @@ const ShopeeSocialOrderSchema = new mongoose.Schema({
   importedAt: { type: Date, default: Date.now }
 }, { autoIndex: false });
 
+// Unique per (order, item): affiliate reports have one row per item, and a single order
+// can list several items — keying on orderId alone made a second item's row overwrite the
+// first's, silently dropping its commission/GMV from the totals.
 ShopeeSocialOrderSchema.index(
-  { ownerUserId: 1, orderId: 1 },
-  { unique: true, name: 'shopee_social_order_user_order_unique' }
+  { ownerUserId: 1, orderId: 1, itemId: 1 },
+  { unique: true, name: 'shopee_social_order_user_order_item_unique' }
 );
 ShopeeSocialOrderSchema.index(
   { ownerUserId: 1, orderTime: 1 },

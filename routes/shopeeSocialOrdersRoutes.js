@@ -25,11 +25,14 @@ function registerShopeeSocialOrdersRoutes(app, deps = {}) {
       for (const order of orders) {
         const orderId = String(order?.orderId || '').trim();
         if (!orderId) continue;
+        const itemId = String(order?.itemId || '').trim();
         const orderTime = order.orderTime ? new Date(order.orderTime) : null;
 
         ops.push({
           updateOne: {
-            filter: { ownerUserId, orderId },
+            // Keyed by (orderId, itemId) — a single order can have several item rows,
+            // each with its own commission/GMV, and must not overwrite one another.
+            filter: { ownerUserId, orderId, itemId },
             update: {
               $set: {
                 itemId: String(order.itemId || ''),

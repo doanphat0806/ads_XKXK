@@ -30,11 +30,24 @@ export function parseNumber(value) {
 
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
+// Excel/xlsx serials encode a naive wall-clock date+time with no timezone. Decoding them
+// with UTC epoch math gives a Date whose UTC fields hold those wall-clock numbers — but
+// every getHours()/getDate()/etc. call elsewhere in the app reads LOCAL time, so in a
+// UTC+7 browser a serial for "18/09 22:51" would come back as "19/09 05:51" local. Pull
+// the wall-clock numbers back out via the UTC getters and rebuild the Date as local time.
+function excelSerialToLocalDate(serial) {
+  const utc = new Date(EXCEL_EPOCH_MS + Math.round(serial * 86400000));
+  return new Date(
+    utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate(),
+    utc.getUTCHours(), utc.getUTCMinutes(), utc.getUTCSeconds()
+  );
+}
+
 export function parseDateTime(value) {
   if (!value && value !== 0) return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return new Date(EXCEL_EPOCH_MS + value * 86400000);
+    return excelSerialToLocalDate(value);
   }
   const text = String(value).trim();
   if (!text) return null;
@@ -53,7 +66,7 @@ export function parseDateTime(value) {
   }
 
   if (/^\d+(\.\d+)?$/.test(text)) {
-    return new Date(EXCEL_EPOCH_MS + Number(text) * 86400000);
+    return excelSerialToLocalDate(Number(text));
   }
 
   return null;
@@ -86,6 +99,9 @@ export function classifyChannel(channelRaw, platformKey) {
   if (/live/.test(text)) return 'live';
   if (/social|mang xa hoi|mxh|affiliate|kol|koc/.test(text)) return 'social';
   if (!text && platformKey && platformKey !== 'khac') return 'social';
+  // Some reports put a bare platform name ("Facebook", "TikTok") in the Channel column
+  // instead of a video/live/social descriptor — that still means a social referral.
+  if (text && detectPlatform(channelRaw).key !== 'khac') return 'social';
   return 'other';
 }
 
