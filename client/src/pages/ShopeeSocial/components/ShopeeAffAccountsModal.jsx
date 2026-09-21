@@ -54,13 +54,16 @@ export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, o
           <div className="card-title">Danh Sách Tài Khoản Shopee AFF</div>
           <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
         </div>
+        <div style={{ padding: '0 18px 10px', fontSize: 11.5, color: 'var(--muted2)' }}>
+          Mã SubID2 là phần chữ ngay sau 4 số đầu (ngày/tháng đổi mỗi ngày) — VD SubID2 "1707AB06" thì mã là "AB". 1 tài khoản có thể gõ nhiều mã, cách nhau dấu phẩy.
+        </div>
 
         <div className="tbl-wrap" style={{ padding: '0 18px' }}>
           <table className="tbl">
             <thead>
               <tr>
                 <th>Tên tài khoản</th>
-                <th>Prefix SubID2</th>
+                <th>Mã SubID2 (VD: AB,AC)</th>
                 <th></th>
               </tr>
             </thead>
@@ -79,7 +82,7 @@ export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, o
                     <input
                       className="shopee-social-input"
                       style={{ width: '100%' }}
-                      placeholder="VD: 1307A"
+                      placeholder="VD: AB,AC,AD"
                       value={r.subIdPrefix || ''}
                       onChange={e => updateRow(r._id, 'subIdPrefix', e.target.value)}
                     />
@@ -128,7 +131,7 @@ export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, o
           />
           <input
             className="shopee-social-input"
-            placeholder="Prefix SubID2, VD: 1307E"
+            placeholder="Mã SubID2, VD: AB,AC (cách nhau dấu phẩy)"
             value={newPrefix}
             onChange={e => setNewPrefix(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}

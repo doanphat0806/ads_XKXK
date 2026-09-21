@@ -2,6 +2,21 @@ export function toDayStr(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+// A SubID2 like "1707AB06" starts with a 4-digit DAILY batch code ("1707" = DD+MM,
+// changes every day) followed by a FIXED 2-letter account code ("AB") that never
+// changes — so matching from the very start of the string only ever works for one
+// day. One account can also cover several codes at once (comma-separated, e.g.
+// "AA,AB,AC,AD,AF"), so a SubID2 matches if the part AFTER the 4-digit batch code
+// starts with any of them.
+export function subIdMatchesAccountCodes(subId2, codesCsv) {
+  const codes = String(codesCsv || '').split(',').map(c => c.trim()).filter(Boolean);
+  if (!codes.length) return false;
+  const value = String(subId2 || '');
+  if (value.length <= 4) return false;
+  const rest = value.slice(4);
+  return codes.some(code => rest.startsWith(code));
+}
+
 function enumerateDays(fromDate, toDate) {
   const days = [];
   const cur = new Date(`${fromDate}T00:00:00`);
@@ -51,13 +66,13 @@ export function buildAccountTrendSeries({
     subId2Set.add(o.subIds[1] || '(Không gắn SubID2)');
   });
 
-  // Prefer prefix-based matching (e.g. account "AFF 01" -> SubID2s starting "1307A",
-  // "AFF 02" -> "1307B") so a campaign that's still running but hasn't produced a
+  // Prefer code-based matching (e.g. account "A1" -> SubID2s whose account-code segment
+  // is "AA", "AB", "AC"...) so a campaign that's still running but hasn't produced a
   // completed order yet still counts as cost for the right account — matching only
   // via orders would silently drop that spend from every account's total.
   if (subIdPrefix) {
     Object.keys(adsSpendBySubId2Daily).forEach(subId2 => {
-      if (subId2.startsWith(subIdPrefix)) subId2Set.add(subId2);
+      if (subIdMatchesAccountCodes(subId2, subIdPrefix)) subId2Set.add(subId2);
     });
   }
 

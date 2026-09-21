@@ -61,8 +61,8 @@ export default function UploadPanel({
             {accounts.map(a => <option key={a._id} value={a._id}>{a.name}</option>)}
           </select>
           {selectedAccount && (
-            <span className="mono-sm" style={{ color: 'var(--muted2)', fontSize: 11, whiteSpace: 'nowrap' }} title="Prefix SubID2 dùng để nhận diện campaign của tài khoản này">
-              Prefix: {selectedAccount.subIdPrefix || '(chưa đặt)'}
+            <span className="mono-sm" style={{ color: 'var(--muted2)', fontSize: 11, whiteSpace: 'nowrap' }} title="Mã SubID2 (phần chữ sau 4 số ngày/tháng) dùng để nhận diện campaign của tài khoản này">
+              Mã SubID2: {selectedAccount.subIdPrefix || '(chưa đặt)'}
             </span>
           )}
           <button type="button" className="btn btn-sm btn-ghost" onClick={() => setShowAccountsModal(true)} title="Quản lý danh sách tài khoản">

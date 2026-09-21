@@ -12,7 +12,7 @@ import { fetchAdsSpend } from './adsSpendApi';
 import { importOrdersToServer, fetchSavedOrders, deleteSavedOrders } from './ordersApi';
 import { fetchShopeeAffAccounts, createShopeeAffAccount, updateShopeeAffAccount, deleteShopeeAffAccount } from './accountsApi';
 import { fetchCommissionReceipts, createCommissionReceipt, deleteCommissionReceipt } from './commissionReceiptsApi';
-import { buildAccountTrendSeries, toDayStr } from './accountTrend';
+import { buildAccountTrendSeries, toDayStr, subIdMatchesAccountCodes } from './accountTrend';
 
 import UploadPanel from './components/UploadPanel';
 import FiltersBar from './components/FiltersBar';
@@ -299,10 +299,10 @@ export default function ShopeeSocial() {
     [filteredOrders, cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2]
   );
 
-  // When one specific account is selected and it has a configured SubID2 prefix (e.g.
-  // "1307A" vs "1307B" for two accounts sharing a "1307" batch code), scope the
-  // "unmatched campaign" fallback below to that prefix — otherwise another account's
-  // zero-order campaigns would leak into this account's totals.
+  // When one specific account is selected and it has configured SubID2 account codes
+  // (e.g. "AA,AB,AC" — the fixed 2-letter segment right after each day's changing
+  // 4-digit batch code), scope the "unmatched campaign" fallback below to those codes —
+  // otherwise another account's zero-order campaigns would leak into this account's totals.
   const selectedAccountPrefix = useMemo(() => {
     if (filters.accountName === 'all') return '';
     return shopeeAccounts.find(a => a.name === filters.accountName)?.subIdPrefix || '';
@@ -318,7 +318,7 @@ export default function ShopeeSocial() {
     const matchedKeys = new Set(matrixRows.map(r => r.subIdKey));
     const matrixSpend = matrixRows.reduce((s, r) => s + r.adSpend, 0);
     const unmatched = Object.entries(adsSpendBySubId2).filter(([key]) => !matchedKeys.has(key));
-    const scoped = selectedAccountPrefix ? unmatched.filter(([key]) => key.startsWith(selectedAccountPrefix)) : unmatched;
+    const scoped = selectedAccountPrefix ? unmatched.filter(([key]) => subIdMatchesAccountCodes(key, selectedAccountPrefix)) : unmatched;
     const unmatchedSpend = scoped.reduce((s, [, v]) => s + (v.spend || 0), 0);
     return matrixSpend + unmatchedSpend;
   }, [matrixRows, adsSpendBySubId2, selectedAccountPrefix]);
@@ -326,7 +326,7 @@ export default function ShopeeSocial() {
     const matchedKeys = new Set(matrixRows.map(r => r.subIdKey));
     const matrixClicks = matrixRows.reduce((s, r) => s + r.clicks, 0);
     const unmatched = Object.entries(adsSpendBySubId2).filter(([key]) => !matchedKeys.has(key));
-    const scoped = selectedAccountPrefix ? unmatched.filter(([key]) => key.startsWith(selectedAccountPrefix)) : unmatched;
+    const scoped = selectedAccountPrefix ? unmatched.filter(([key]) => subIdMatchesAccountCodes(key, selectedAccountPrefix)) : unmatched;
     const unmatchedClicks = scoped.reduce((s, [, v]) => s + (v.clicks || 0), 0);
     return matrixClicks + unmatchedClicks;
   }, [matrixRows, adsSpendBySubId2, selectedAccountPrefix]);
