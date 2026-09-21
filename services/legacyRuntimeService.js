@@ -10,6 +10,8 @@ const { registerLegacyRoutes } = require('../routes/legacyRoutes');
 const { registerReportRoutes } = require('../routes/reportRoutes');
 const { registerShopeeSocialAdsRoutes } = require('../routes/shopeeSocialAdsRoutes');
 const { registerShopeeSocialOrdersRoutes } = require('../routes/shopeeSocialOrdersRoutes');
+const { registerShopeeSocialAccountsRoutes } = require('../routes/shopeeSocialAccountsRoutes');
+const { registerShopeeSocialCommissionReceiptsRoutes } = require('../routes/shopeeSocialCommissionReceiptsRoutes');
 const { authenticateApiRequest } = require('../middleware/auth');
 const { parseBoundedInt } = require('../utils/number');
 const { parseCsvRows, normalizeCsvHeader, getCsvColumnIndex, getCsvCell, parseCsvNumber, parseCsvInteger, parseCsvCampaignDate } = require('../utils/csvImport');
@@ -61,10 +63,17 @@ function createLegacyRuntime(app) {
   const FacebookPost = require('../models/FacebookPost');
   const DataPurchaseOrder = require('../models/DataPurchaseOrder');
   const PurchaseOrder = require('../models/PurchaseOrder');
-  const ShopeeCommission = require('../models/ShopeeCommission');
-  const ShopeeCommissionOrder = require('../models/ShopeeCommissionOrder');
   const ShopeeSocialOrder = require('../models/ShopeeSocialOrder');
-  const { generateExcelReport, importCommissionOrders, extractSubId2 } = require('../services/reportService');
+  const ShopeeAffAccount = require('../models/ShopeeAffAccount');
+  const ShopeeAffCommissionReceipt = require('../models/ShopeeAffCommissionReceipt');
+
+  // Campaigns in this system are created with SubID2 embedded in the campaign name
+  // (name = `{sub_id2}{18-char suffix}`) — used to attribute Shopee ad spend back to a
+  // Shopee affiliate tracking link. Used by registerShopeeSocialAdsRoutes.
+  function extractSubId2(name) {
+    const n = String(name || '').trim();
+    return n.length <= 18 ? n : n.slice(0, n.length - 18);
+  }
   const {
     buildOrderQuery,
     getOrderItemsFromRaw,
@@ -923,19 +932,26 @@ function createLegacyRuntime(app) {
     return [];
   }
   
+  // Fixed, non-configurable schedule for how often we CALL OUT to Facebook/Shopee for
+  // fresh data — separate from whether the pause/activate RULES run (they always do,
+  // see runAutoControl). This window exists purely to avoid hammering the FB/Shopee API:
+  // fast polling 00:00-12:00, throttled to 3-5 min outside it.
+  const FACEBOOK_DATA_FETCH_FAST_WINDOW_START = '00:00';
+  const FACEBOOK_DATA_FETCH_FAST_WINDOW_END = '12:00';
+
   async function getAutoCheckIntervalSeconds(account) {
-    const config = await getAccountAutoConfig(account);
-    const isShopee = account.provider === 'shopee';
-    const ruleStart = isShopee
-      ? (config?.shopeeAutoRuleStartTime || config?.autoRuleStartTime || '00:00')
-      : (config?.autoRuleStartTime || '00:00');
-    const ruleEnd = isShopee
-      ? (config?.shopeeAutoRuleEndTime || config?.autoRuleEndTime || '09:00')
-      : (config?.autoRuleEndTime || '09:00');
     const minInterval = account.provider === 'shopee' ? 60 : AUTO_CHECK_MIN_INTERVAL_SECONDS;
-    return isWithinAutoRuleTimeWindow(ruleStart, ruleEnd)
-      ? Math.max(Number(account.checkInterval || minInterval), minInterval)
-      : 300;
+    const withinFastWindow = isWithinAutoRuleTimeWindow(
+      FACEBOOK_DATA_FETCH_FAST_WINDOW_START,
+      FACEBOOK_DATA_FETCH_FAST_WINDOW_END
+    );
+    if (withinFastWindow) {
+      return Math.max(Number(account.checkInterval || minInterval), minInterval);
+    }
+    // Outside the fast window: check every 3-5 minutes instead of a fixed 5 —
+    // re-randomized each cycle (scheduleNext calls this fresh every time) so accounts
+    // don't all end up polling in lockstep.
+    return 180 + Math.floor(Math.random() * 121);
   }
   
   function isMessagingPurchaseOptimizationError(error) {
@@ -1390,6 +1406,10 @@ function createLegacyRuntime(app) {
     };
   }
   
+  // NOTE: commission is always 0 here — it used to come from the ShopeeCommission
+  // collection (removed along with the Shopee Commission page/CSV-import feature), which
+  // was the only source of commission data feeding this. getShopeeOptimizationDecision's
+  // ROI calc below will always see commission=0 as a result.
   async function getShopeePerformanceTotalsForAuto(account, campaigns = []) {
     const campaignKeys = new Set(
       campaigns
@@ -1397,9 +1417,8 @@ function createLegacyRuntime(app) {
         .filter(Boolean)
     );
     if (!campaignKeys.size) return {};
-  
+
     try {
-      const ownerUserId = account.ownerUserId || account._id;
       const accountFilter = account.ownerUserId
         ? { ...buildAccountProviderFilter('shopee'), ownerUserId: account.ownerUserId }
         : { _id: account._id };
@@ -1407,44 +1426,28 @@ function createLegacyRuntime(app) {
       const accountIds = shopeeAccounts.length
         ? shopeeAccounts.map(item => item._id)
         : [account._id];
-  
-      const [spendRows, commissionRows] = await Promise.all([
-        Campaign.aggregate([
-          {
-            $match: {
-              accountId: { $in: accountIds },
-              date: { $gte: SHOPEE_PERFORMANCE_TOTAL_FROM_DATE, $lte: todayStr() }
-            }
-          },
-          {
-            $group: {
-              _id: { $toLower: { $ifNull: ['$name', ''] } },
-              spend: { $sum: '$spend' },
-              recentDailyRows: {
-                $push: {
-                  date: '$date',
-                  spend: '$spend'
-                }
+
+      const spendRows = await Campaign.aggregate([
+        {
+          $match: {
+            accountId: { $in: accountIds },
+            date: { $gte: SHOPEE_PERFORMANCE_TOTAL_FROM_DATE, $lte: todayStr() }
+          }
+        },
+        {
+          $group: {
+            _id: { $toLower: { $ifNull: ['$name', ''] } },
+            spend: { $sum: '$spend' },
+            recentDailyRows: {
+              $push: {
+                date: '$date',
+                spend: '$spend'
               }
             }
           }
-        ]),
-        ShopeeCommission.aggregate([
-          {
-            $match: {
-              ownerUserId,
-              date: { $gte: SHOPEE_PERFORMANCE_TOTAL_FROM_DATE, $lte: todayStr() }
-            }
-          },
-          {
-            $group: {
-              _id: { $toLower: { $ifNull: ['$subId2', ''] } },
-              commission: { $sum: '$commission' }
-            }
-          }
-        ])
+        }
       ]);
-  
+
       const totals = {};
       for (const row of spendRows) {
         const key = normalizeShopeeSubIdKey(row._id);
@@ -1453,14 +1456,7 @@ function createLegacyRuntime(app) {
         totals[key].spend += Number(row.spend || 0);
         totals[key].recentSpend = getRecentShopeeSpendStats(row.recentDailyRows);
       }
-  
-      for (const row of commissionRows) {
-        const key = normalizeShopeeSubIdKey(row._id);
-        if (!campaignKeys.has(key)) continue;
-        totals[key] = totals[key] || { spend: 0, commission: 0 };
-        totals[key].commission += Number(row.commission || 0);
-      }
-  
+
       return totals;
     } catch (err) {
       console.error('Loi getShopeePerformanceTotalsForAuto:', err);
@@ -3043,102 +3039,86 @@ function createLegacyRuntime(app) {
       );
   
       const config = await getAccountAutoConfig(account);
-      const ruleStart = isShopee
-        ? (config?.shopeeAutoRuleStartTime || config?.autoRuleStartTime || '00:00')
-        : (config?.autoRuleStartTime || '00:00');
-      const ruleEnd = isShopee
-        ? (config?.shopeeAutoRuleEndTime || config?.autoRuleEndTime || '09:00')
-        : (config?.autoRuleEndTime || '09:00');
-  
-      let campaignsToPause = [];
-      let campaignsToActivate = [];
-      const isAutoRuleTime = isWithinAutoRuleTimeWindow(ruleStart, ruleEnd);
+
+      // Pause/activate rules always evaluate on every fetch — no time-of-day gate. Only
+      // the FETCH frequency itself varies by time (see getAutoCheckIntervalSeconds), so
+      // whenever fresh data comes back (every ~1-3 min in the morning, every 3-5 min
+      // after 12:00), a bad campaign gets caught and turned off right away either way.
       const canReactivateShopeeAtMidnight = isShopee
         && (options.allowShopeeReactivateAtMidnight || isVietnamTimeMinute(0, 0));
-      if (isAutoRuleTime || canReactivateShopeeAtMidnight) {
-        const skuCounts = isAutoRuleTime ? await getTodayOrderSkuCountsForAuto(account) : {};
-        const historicalShopeeCampaigns = canReactivateShopeeAtMidnight
-          ? await getShopeeHistoricalCampaignCandidatesForAuto(account, fbToken, campaigns, today)
-          : [];
-        const ruleCampaigns = isShopee ? [...campaigns, ...historicalShopeeCampaigns] : campaigns;
-        const shopeePerformanceTotals = isShopee ? await getShopeePerformanceTotalsForAuto(account, ruleCampaigns) : {};
-        const ruleCandidates = ruleCampaigns
-          .map(campaign => {
-            const { spend, messages, costPerMessage, clicks, costPerClick } = getCampaignRuleStats(campaign);
-            const shopeeKey = normalizeShopeeSubIdKey(campaign.name);
-            const shopeeTotals = isShopee ? (shopeePerformanceTotals[shopeeKey] || {}) : {};
-            const ruleSpend = isShopee ? Number(shopeeTotals.spend || spend || 0) : spend;
-            const ruleCommission = isShopee ? Number(shopeeTotals.commission || 0) : 0;
-            const shopeeRecentSpend = isShopee ? shopeeTotals.recentSpend : null;
-            const isLifetime = !!campaign.lifetimeBudget || !!campaign.lifetime_budget && parseFloat(campaign.lifetime_budget) > 0;
-            const budgetType = isLifetime ? 'LIFETIME' : 'DAILY';
-            const { pauseReason, orderCount, costPerOrder, optimizationDecision: autoOptimizationDecision } = getAutoPauseDecision({
-              provider: account.provider,
-              campaignName: campaign.name,
-              spend: ruleSpend,
-              messages,
-              costPerMessage,
-              clicks,
-              costPerClick,
-              limits: config,
-              budgetType,
-              skuCounts,
-              shopeeCommission: ruleCommission
-            });
-            const lowRecentSpendReason = isShopee
-              && shopeeRecentSpend?.hasFullWindow
-              && shopeeRecentSpend.avgDailySpend < SHOPEE_LOW_SPEND_AVG_DAILY_LIMIT
-                ? `Tieu TB ${formatAutoMoney(shopeeRecentSpend.avgDailySpend)}/ngay trong ${SHOPEE_LOW_SPEND_WINDOW_DAYS} ngay da chot gan nhat < ${formatAutoMoney(SHOPEE_LOW_SPEND_AVG_DAILY_LIMIT)}`
-                : null;
-            const optimizationDecision = isShopee
-              ? (autoOptimizationDecision || getShopeeOptimizationDecision({
-                spend: ruleSpend,
-                commission: ruleCommission,
-                minSpendLimit: config?.autoPauseShopeeMinSpendLimit
-              }))
+      const skuCounts = await getTodayOrderSkuCountsForAuto(account);
+      const historicalShopeeCampaigns = canReactivateShopeeAtMidnight
+        ? await getShopeeHistoricalCampaignCandidatesForAuto(account, fbToken, campaigns, today)
+        : [];
+      const ruleCampaigns = isShopee ? [...campaigns, ...historicalShopeeCampaigns] : campaigns;
+      const shopeePerformanceTotals = isShopee ? await getShopeePerformanceTotalsForAuto(account, ruleCampaigns) : {};
+      const ruleCandidates = ruleCampaigns
+        .map(campaign => {
+          const { spend, messages, costPerMessage, clicks, costPerClick } = getCampaignRuleStats(campaign);
+          const shopeeKey = normalizeShopeeSubIdKey(campaign.name);
+          const shopeeTotals = isShopee ? (shopeePerformanceTotals[shopeeKey] || {}) : {};
+          const ruleSpend = isShopee ? Number(shopeeTotals.spend || spend || 0) : spend;
+          const ruleCommission = isShopee ? Number(shopeeTotals.commission || 0) : 0;
+          const shopeeRecentSpend = isShopee ? shopeeTotals.recentSpend : null;
+          const isLifetime = !!campaign.lifetimeBudget || !!campaign.lifetime_budget && parseFloat(campaign.lifetime_budget) > 0;
+          const budgetType = isLifetime ? 'LIFETIME' : 'DAILY';
+          const { pauseReason, orderCount, costPerOrder, optimizationDecision: autoOptimizationDecision } = getAutoPauseDecision({
+            provider: account.provider,
+            campaignName: campaign.name,
+            spend: ruleSpend,
+            messages,
+            costPerMessage,
+            clicks,
+            costPerClick,
+            limits: config,
+            budgetType,
+            skuCounts,
+            shopeeCommission: ruleCommission
+          });
+          const lowRecentSpendReason = isShopee
+            && shopeeRecentSpend?.hasFullWindow
+            && shopeeRecentSpend.avgDailySpend < SHOPEE_LOW_SPEND_AVG_DAILY_LIMIT
+              ? `Tieu TB ${formatAutoMoney(shopeeRecentSpend.avgDailySpend)}/ngay trong ${SHOPEE_LOW_SPEND_WINDOW_DAYS} ngay da chot gan nhat < ${formatAutoMoney(SHOPEE_LOW_SPEND_AVG_DAILY_LIMIT)}`
               : null;
-            return {
-              campaign,
-              spend,
-              ruleSpend,
-              ruleCommission,
-              messages,
-              costPerMessage,
-              clicks,
-              costPerClick,
-              budgetType,
-              orderCount,
-              costPerOrder,
-              pauseReason: lowRecentSpendReason || pauseReason,
-              shopeeRecentSpend,
-              optimizationDecision
-            };
-          })
-          .filter(Boolean);
-  
-        campaignsToPause = isAutoRuleTime
-          ? ruleCandidates.filter(item =>
-            normalizeCampaignStatus(item.campaign.status) === 'ACTIVE' && item.pauseReason
-          )
-          : [];
-  
-        campaignsToActivate = canReactivateShopeeAtMidnight
-          ? ruleCandidates.filter(item =>
-            normalizeCampaignStatus(item.campaign.status) === 'PAUSED'
-            && !item.pauseReason
-            && item.optimizationDecision?.hasEnoughSpend
-            && item.optimizationDecision.roi > SHOPEE_REACTIVATE_ROI_PERCENT
-          )
-          : [];
-      } else {
-        await addLog(
-          account._id,
-          account.name,
-          'info',
-          `Ngoai khung gio auto-rule (${ruleStart}-${ruleEnd}), chi theo doi khong tat/bat camp`
-        );
-      }
-  
+          const optimizationDecision = isShopee
+            ? (autoOptimizationDecision || getShopeeOptimizationDecision({
+              spend: ruleSpend,
+              commission: ruleCommission,
+              minSpendLimit: config?.autoPauseShopeeMinSpendLimit
+            }))
+            : null;
+          return {
+            campaign,
+            spend,
+            ruleSpend,
+            ruleCommission,
+            messages,
+            costPerMessage,
+            clicks,
+            costPerClick,
+            budgetType,
+            orderCount,
+            costPerOrder,
+            pauseReason: lowRecentSpendReason || pauseReason,
+            shopeeRecentSpend,
+            optimizationDecision
+          };
+        })
+        .filter(Boolean);
+
+      const campaignsToPause = ruleCandidates.filter(item =>
+        normalizeCampaignStatus(item.campaign.status) === 'ACTIVE' && item.pauseReason
+      );
+
+      const campaignsToActivate = canReactivateShopeeAtMidnight
+        ? ruleCandidates.filter(item =>
+          normalizeCampaignStatus(item.campaign.status) === 'PAUSED'
+          && !item.pauseReason
+          && item.optimizationDecision?.hasEnoughSpend
+          && item.optimizationDecision.roi > SHOPEE_REACTIVATE_ROI_PERCENT
+        )
+        : [];
+
       await runScheduledDuplicatePauseForScope(account, config, today);
   
       if (geminiKey) {
@@ -3752,7 +3732,6 @@ function createLegacyRuntime(app) {
       sleep,
       FB_CAMPAIGN_CREATE_REQUEST_OPTIONS,
       getAppConfig,
-      importCommissionOrders,
       buildOrderQuery,
       getOrderItemsFromRaw,
       getOrderItemSku,
@@ -3833,8 +3812,6 @@ function createLegacyRuntime(app) {
       FacebookPost,
       DataPurchaseOrder,
       PurchaseOrder,
-      ShopeeCommission,
-      SHOPEE_STRONG_SCALE_ROI_PERCENT,
       SHOPEE_LOW_SPEND_WINDOW_DAYS,
       SHOPEE_LOW_SPEND_AVG_DAILY_LIMIT,
       SHOPEE_REACTIVATE_CRON,
@@ -4035,6 +4012,32 @@ function createLegacyRuntime(app) {
         throw error;
       }
     }
+
+    // Superseded again by (orderId, itemId, modelId) — buying several variants (size/
+    // color) of the same product in one order shares the same Item id but a different
+    // Model id per row, and the (orderId, itemId)-only index made a later variant's row
+    // overwrite an earlier one's, silently dropping its commission ("báo cáo 600k nhưng
+    // import chỉ còn 500k").
+    try {
+      await collection.dropIndex('shopee_social_order_user_order_item_unique');
+      console.log('Dropped legacy ShopeeSocialOrder index: shopee_social_order_user_order_item_unique');
+    } catch (error) {
+      if (!['IndexNotFound', 'NamespaceNotFound'].includes(error?.codeName)) {
+        throw error;
+      }
+    }
+
+    // Superseded once more by (orderId, itemId, modelId, promotionId) — Shopee can split
+    // the SAME item+model into two rows under different promotions/vouchers within one
+    // order, which the (orderId, itemId, modelId) index still couldn't tell apart.
+    try {
+      await collection.dropIndex('shopee_social_order_user_order_item_model_unique');
+      console.log('Dropped legacy ShopeeSocialOrder index: shopee_social_order_user_order_item_model_unique');
+    } catch (error) {
+      if (!['IndexNotFound', 'NamespaceNotFound'].includes(error?.codeName)) {
+        throw error;
+      }
+    }
   }
 
   async function ensureApplicationIndexes() {
@@ -4048,9 +4051,9 @@ function createLegacyRuntime(app) {
       FacebookPost.createIndexes(),
       DataPurchaseOrder.createIndexes(),
       PurchaseOrder.createIndexes(),
-      ShopeeCommission.createIndexes(),
-      ShopeeCommissionOrder.createIndexes(),
       ShopeeSocialOrder.createIndexes(),
+      ShopeeAffAccount.createIndexes(),
+      ShopeeAffCommissionReceipt.createIndexes(),
       Config.createIndexes(),
       ensureUserIndexes(),
       FacebookToken.createIndexes()
@@ -4075,14 +4078,7 @@ function createLegacyRuntime(app) {
     }
   }
   
-  registerReportRoutes(app, {
-    Account,
-    buildAccountProviderFilter,
-    generateExcelReport,
-    normalizeCampaignDate,
-    todayStr,
-    withUserFilter
-  });
+  registerReportRoutes(app);
 
   registerShopeeSocialAdsRoutes(app, {
     Account,
@@ -4096,6 +4092,16 @@ function createLegacyRuntime(app) {
 
   registerShopeeSocialOrdersRoutes(app, {
     ShopeeSocialOrder
+  });
+
+  registerShopeeSocialAccountsRoutes(app, {
+    ShopeeAffAccount,
+    ShopeeSocialOrder,
+    ShopeeAffCommissionReceipt
+  });
+
+  registerShopeeSocialCommissionReceiptsRoutes(app, {
+    ShopeeAffCommissionReceipt
   });
 
   async function runStartupMaintenance() {

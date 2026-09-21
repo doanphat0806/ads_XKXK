@@ -1,7 +1,7 @@
 import { normalizeHeaderText } from './utils';
 
 export function filterOrders(orders, filters) {
-  const { fromDate, toDate, platformKey, status, search } = filters;
+  const { fromDate, toDate, platformKey, status, search, accountName } = filters;
   const fromTime = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : null;
   const toTime = toDate ? new Date(`${toDate}T23:59:59`).getTime() : null;
   const searchNorm = normalizeHeaderText(search);
@@ -14,6 +14,7 @@ export function filterOrders(orders, filters) {
       if (toTime !== null && t > toTime) return false;
     }
     if (platformKey && platformKey !== 'all' && order.platformKey !== platformKey) return false;
+    if (accountName && accountName !== 'all' && (order.accountName || '') !== accountName) return false;
     if (status && status !== 'all' && order.status !== status) return false;
     if (searchNorm) {
       const haystack = normalizeHeaderText(

@@ -1,12 +1,4 @@
-function registerReportRoutes(app, deps = {}) {
-  const {
-    Account,
-    buildAccountProviderFilter,
-    generateExcelReport,
-    normalizeCampaignDate,
-    todayStr,
-    withUserFilter
-  } = deps;
+function registerReportRoutes(app) {
 
 function renderPublicPolicyPage({ title, body }) {
   return `<!doctype html>
@@ -69,42 +61,6 @@ app.get('/data-deletion', (req, res) => {
     `
   }));
 });
-
-// ─── EXCEL REPORT GENERATION ────────────────────────────────
-app.get('/api/reports/generate-excel', async (req, res) => {
-  try {
-    if (!req.currentUser?._id) return res.status(401).json({ error: 'Unauthorized' });
-
-    const targetDate = normalizeCampaignDate(req.query.date || todayStr());
-    if (!targetDate) return res.status(400).json({ error: 'Invalid date' });
-
-    const accounts = await Account.find(withUserFilter(req, buildAccountProviderFilter('shopee')))
-      .select('_id name adAccountId').lean();
-
-    if (!accounts.length) {
-      return res.status(404).json({ error: 'Không tìm thấy tài khoản Shopee nào' });
-    }
-
-    const accountIds = accounts.map(a => a._id);
-    const buffer = await generateExcelReport({
-      ownerUserId: req.currentUser._id,
-      targetDate,
-      accountIds,
-    });
-
-    const [, mm, dd] = targetDate.split('-');
-    res.set({
-      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="BaoCao_Shopee_${dd}_${mm}.xlsx"`,
-      'Content-Length': buffer.length,
-    });
-    res.send(Buffer.from(buffer));
-  } catch (err) {
-    console.error('[Report] Error generating Excel report:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-// ────────────────────────────────────────────────────────────
 }
 
 module.exports = { registerReportRoutes };

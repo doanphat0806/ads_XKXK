@@ -2,15 +2,17 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 
 import { parseOrdersFile, parseClickReportFile } from './parseFile';
-import { generateDemoOrders, generateDemoClicksBySubId, generateDemoCpcDefaults } from './demoData';
 import {
   filterOrders, computeKpis, buildSubIdMatrix, computePlatformDistribution,
   computeHourlyDistribution, computeTopProducts, computeTopShops, computeWarnings
 } from './calculations';
 import { downloadTextFile, rowsToCsv } from './utils';
 import { loadState, saveState, clearState } from './storage';
-import { fetchAdsSpendBySubId2 } from './adsSpendApi';
+import { fetchAdsSpend } from './adsSpendApi';
 import { importOrdersToServer, fetchSavedOrders, deleteSavedOrders } from './ordersApi';
+import { fetchShopeeAffAccounts, createShopeeAffAccount, updateShopeeAffAccount, deleteShopeeAffAccount } from './accountsApi';
+import { fetchCommissionReceipts, createCommissionReceipt, deleteCommissionReceipt } from './commissionReceiptsApi';
+import { buildAccountTrendSeries, toDayStr } from './accountTrend';
 
 import UploadPanel from './components/UploadPanel';
 import FiltersBar from './components/FiltersBar';
@@ -20,6 +22,9 @@ import PlatformDonutChart from './components/PlatformDonutChart';
 import HourlyBarChart from './components/HourlyBarChart';
 import Leaderboards from './components/Leaderboards';
 import OrdersTable from './components/OrdersTable';
+import CommissionReceiptsPanel from './components/CommissionReceiptsPanel';
+import AccountTrendChart from './components/AccountTrendChart';
+import AccountsSummaryTable from './components/AccountsSummaryTable';
 
 function todayStr() {
   const d = new Date();
@@ -35,7 +40,7 @@ function dateRangeOf(orders) {
   return { fromDate: toStr(new Date(Math.min(...times))), toDate: toStr(new Date(Math.max(...times))) };
 }
 
-const DEFAULT_FILTERS = { platformKey: 'all', status: 'all', search: '' };
+const DEFAULT_FILTERS = { platformKey: 'all', status: 'all', search: '', accountName: 'all' };
 
 export default function ShopeeSocial() {
   const [orders, setOrders] = useState([]);
@@ -44,10 +49,67 @@ export default function ShopeeSocial() {
   const [cpcBySubId, setCpcBySubId] = useState({});
   const [clicksBySubId, setClicksBySubId] = useState({});
   const [filters, setFilters] = useState({ ...DEFAULT_FILTERS, fromDate: todayStr(), toDate: todayStr() });
-  const [loading, setLoading] = useState(false);
   const [hydrated, setHydrated] = useState(false);
-  const [adsSpendBySubId2, setAdsSpendBySubId2] = useState({});
+  const [adsSpendBySubId2Daily, setAdsSpendBySubId2Daily] = useState({});
   const [adsSpendLoading, setAdsSpendLoading] = useState(false);
+  const [shopeeAccounts, setShopeeAccounts] = useState([]);
+  const [commissionReceipts, setCommissionReceipts] = useState([]);
+
+  useEffect(() => {
+    fetchShopeeAffAccounts().then(setShopeeAccounts).catch(() => {});
+    fetchCommissionReceipts().then(setCommissionReceipts).catch(() => {});
+  }, []);
+
+  async function handleAddCommissionReceipt(entry) {
+    try {
+      const receipt = await createCommissionReceipt(entry);
+      if (receipt) setCommissionReceipts(prev => [receipt, ...prev]);
+      return receipt;
+    } catch (err) {
+      toast.error(`Lỗi lưu hoa hồng thực nhận: ${err.message}`);
+      return null;
+    }
+  }
+
+  async function handleDeleteCommissionReceipt(id) {
+    try {
+      await deleteCommissionReceipt(id);
+      setCommissionReceipts(prev => prev.filter(r => r.id !== id));
+    } catch (err) {
+      toast.error(`Lỗi xóa: ${err.message}`);
+    }
+  }
+
+  async function handleCreateAccount(name, subIdPrefix = '') {
+    try {
+      const account = await createShopeeAffAccount(name, subIdPrefix);
+      setShopeeAccounts(prev => (prev.some(a => a._id === account._id) ? prev : [...prev, account].sort((a, b) => a.name.localeCompare(b.name))));
+      return account;
+    } catch (err) {
+      toast.error(`Lỗi tạo tài khoản: ${err.message}`);
+      return null;
+    }
+  }
+
+  async function handleUpdateAccount(id, patch) {
+    try {
+      const account = await updateShopeeAffAccount(id, patch);
+      setShopeeAccounts(prev => prev.map(a => (a._id === id ? account : a)));
+      return account;
+    } catch (err) {
+      toast.error(`Lỗi cập nhật tài khoản: ${err.message}`);
+      return null;
+    }
+  }
+
+  async function handleDeleteAccount(id) {
+    try {
+      await deleteShopeeAffAccount(id);
+      setShopeeAccounts(prev => prev.filter(a => a._id !== id));
+    } catch (err) {
+      toast.error(`Lỗi xóa tài khoản: ${err.message}`);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -89,21 +151,41 @@ export default function ShopeeSocial() {
     saveState({ orders, fileName, defaultCpc, cpcBySubId, clicksBySubId });
   }, [hydrated, orders, fileName, defaultCpc, cpcBySubId, clicksBySubId]);
 
+  // Widened date range: the top filter's range PLUS any commission-receipt dates
+  // outside it, so a receipt logged for e.g. "today" while filters still show an older
+  // report's range still gets its own day — WITH matching ad-spend data fetched for
+  // it — on the per-account trend charts, instead of silently landing outside the
+  // fetched window and showing adSpend=0 for that day.
+  const widenedDateRange = useMemo(() => {
+    let fromDate = filters.fromDate;
+    let toDate = filters.toDate;
+    commissionReceipts.forEach(r => {
+      if (!r.date) return;
+      const day = toDayStr(r.date);
+      if (!fromDate || day < fromDate) fromDate = day;
+      if (!toDate || day > toDate) toDate = day;
+    });
+    return { fromDate, toDate };
+  }, [filters.fromDate, filters.toDate, commissionReceipts]);
+
   // Real Facebook ad spend, matched to orders by SubID2 (see adsSpendApi.js). Refetches
   // whenever the selected date range changes so spend always lines up with what's on screen.
   useEffect(() => {
-    if (!orders.length || !filters.fromDate || !filters.toDate) {
-      setAdsSpendBySubId2({});
+    if (!orders.length || !widenedDateRange.fromDate || !widenedDateRange.toDate) {
+      setAdsSpendBySubId2Daily({});
       return;
     }
     let cancelled = false;
     setAdsSpendLoading(true);
-    fetchAdsSpendBySubId2(filters.fromDate, filters.toDate)
-      .then(map => { if (!cancelled) setAdsSpendBySubId2(map); })
+    fetchAdsSpend(widenedDateRange.fromDate, widenedDateRange.toDate)
+      .then(({ bySubId2Daily }) => {
+        if (cancelled) return;
+        setAdsSpendBySubId2Daily(bySubId2Daily);
+      })
       .catch(err => { if (!cancelled) toast.error(`Lỗi tải chi phí Ads: ${err.message}`); })
       .finally(() => { if (!cancelled) setAdsSpendLoading(false); });
     return () => { cancelled = true; };
-  }, [orders.length, filters.fromDate, filters.toDate]);
+  }, [orders.length, widenedDateRange.fromDate, widenedDateRange.toDate]);
 
   const applyNewDataset = useCallback((nextOrders, name, nextClicks = {}, nextCpc = {}, nextDefaultCpc = 0) => {
     setOrders(nextOrders);
@@ -114,77 +196,117 @@ export default function ShopeeSocial() {
     setFilters({ ...DEFAULT_FILTERS, ...dateRangeOf(nextOrders) });
   }, []);
 
-  async function handleFile(file) {
-    setLoading(true);
+  async function handleFile(file, accountName) {
     try {
       const parsed = await parseOrdersFile(file);
       if (!parsed.length) {
         toast.error('Không tìm thấy đơn hàng nào trong file.');
         return;
       }
-      applyNewDataset(parsed, file.name, {}, {}, 0);
+      const taggedOrders = parsed.map(o => ({ ...o, accountName }));
       try {
-        await importOrdersToServer(parsed, file.name);
-        toast.success(`Đã tải và lưu ${parsed.length} đơn hàng từ "${file.name}"`);
+        await importOrdersToServer(taggedOrders, file.name, accountName);
+        // Re-fetch the full merged dataset (all accounts) instead of only showing this
+        // upload's rows, so accounts already saved on the server stay visible/filterable.
+        const merged = await fetchSavedOrders();
+        applyNewDataset(merged, file.name, {}, {}, 0);
+        toast.success(`Đã tải và lưu ${parsed.length} đơn hàng từ "${file.name}" (tài khoản ${accountName})`);
       } catch (syncErr) {
+        applyNewDataset(taggedOrders, file.name, {}, {}, 0);
         toast.error(`Đã tải ${parsed.length} đơn nhưng lưu vào server thất bại: ${syncErr.message}`);
       }
     } catch (err) {
       toast.error(`Lỗi đọc file: ${err.message}`);
-    } finally {
-      setLoading(false);
     }
   }
 
   async function handleClickReportFile(file) {
-    setLoading(true);
     try {
       const clicksMap = await parseClickReportFile(file);
       setClicksBySubId(prev => ({ ...prev, ...clicksMap }));
       toast.success(`Đã cập nhật số click cho ${Object.keys(clicksMap).length} SubID`);
     } catch (err) {
       toast.error(`Lỗi đọc báo cáo click: ${err.message}`);
-    } finally {
-      setLoading(false);
     }
-  }
-
-  function handleLoadDemo() {
-    const demoOrders = generateDemoOrders();
-    const demoClicksByKey = generateDemoClicksBySubId(demoOrders);
-    const platformCpc = generateDemoCpcDefaults();
-    const cpcByKey = {};
-    demoOrders.forEach(o => {
-      const key = o.subIds[1] || '(Không gắn SubID2)';
-      if (cpcByKey[key] === undefined) cpcByKey[key] = platformCpc[o.subIds[0]] ?? 0;
-    });
-    applyNewDataset(demoOrders, 'Dữ liệu mẫu (demo)', demoClicksByKey, cpcByKey, 0);
-    toast.success('Đã nạp dữ liệu mẫu để trải nghiệm Dashboard');
   }
 
   async function handleClear() {
-    setOrders([]);
-    setFileName('');
-    setCpcBySubId({});
-    setClicksBySubId({});
-    setDefaultCpc(0);
-    setFilters({ ...DEFAULT_FILTERS, fromDate: todayStr(), toDate: todayStr() });
-    clearState();
+    const targetAccount = filters.accountName !== 'all' ? filters.accountName : '';
+    const confirmMsg = targetAccount
+      ? `Xóa toàn bộ dữ liệu đã lưu của tài khoản "${targetAccount}"?`
+      : 'Xóa TOÀN BỘ dữ liệu Shopee Affiliate đã lưu (tất cả tài khoản)?';
+    if (!window.confirm(confirmMsg)) return;
+
     try {
-      await deleteSavedOrders();
+      await deleteSavedOrders(targetAccount);
     } catch (err) {
       toast.error(`Lỗi xóa dữ liệu trên server: ${err.message}`);
+      return;
     }
+
+    if (targetAccount) {
+      setOrders(prev => prev.filter(o => o.accountName !== targetAccount));
+      setFilters(prev => ({ ...prev, accountName: 'all' }));
+    } else {
+      setOrders([]);
+      setFileName('');
+      setCpcBySubId({});
+      setClicksBySubId({});
+      setDefaultCpc(0);
+      setFilters({ ...DEFAULT_FILTERS, fromDate: todayStr(), toDate: todayStr() });
+      clearState();
+    }
+    toast.success('Đã xóa dữ liệu');
   }
 
   const availablePlatforms = useMemo(() => new Set(orders.map(o => o.platformKey)), [orders]);
+  const availableAccounts = useMemo(
+    () => Array.from(new Set(orders.map(o => o.accountName).filter(Boolean))).sort(),
+    [orders]
+  );
+  // Also offer accounts that have no orders yet (freshly created) in the filter dropdown —
+  // otherwise a brand-new account is invisible there until its first report is uploaded.
+  const filterableAccounts = useMemo(() => {
+    const names = new Set(availableAccounts);
+    shopeeAccounts.forEach(a => names.add(a.name));
+    return Array.from(names).sort();
+  }, [availableAccounts, shopeeAccounts]);
   const filteredOrders = useMemo(() => filterOrders(orders, filters), [orders, filters]);
   const kpis = useMemo(() => computeKpis(filteredOrders), [filteredOrders]);
+
+  // KPI/matrix totals must stay scoped to exactly the visible filter range — the fetch
+  // above may cover a WIDER range (to backfill per-account trend charts when a receipt
+  // falls outside the filter window), so re-aggregate from the daily breakdown down to
+  // just [filters.fromDate, filters.toDate] rather than using the wider fetched range.
+  const adsSpendBySubId2 = useMemo(() => {
+    if (!filters.fromDate || !filters.toDate) return {};
+    const result = {};
+    Object.entries(adsSpendBySubId2Daily).forEach(([subId2, byDay]) => {
+      let spend = 0;
+      let clicks = 0;
+      Object.entries(byDay).forEach(([day, v]) => {
+        if (day < filters.fromDate || day > filters.toDate) return;
+        spend += v.spend || 0;
+        clicks += v.clicks || 0;
+      });
+      if (spend || clicks) result[subId2] = { spend, clicks, cpc: clicks > 0 ? spend / clicks : 0 };
+    });
+    return result;
+  }, [adsSpendBySubId2Daily, filters.fromDate, filters.toDate]);
 
   const matrixRows = useMemo(
     () => buildSubIdMatrix(filteredOrders, { cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2 }),
     [filteredOrders, cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2]
   );
+
+  // When one specific account is selected and it has a configured SubID2 prefix (e.g.
+  // "1307A" vs "1307B" for two accounts sharing a "1307" batch code), scope the
+  // "unmatched campaign" fallback below to that prefix — otherwise another account's
+  // zero-order campaigns would leak into this account's totals.
+  const selectedAccountPrefix = useMemo(() => {
+    if (filters.accountName === 'all') return '';
+    return shopeeAccounts.find(a => a.name === filters.accountName)?.subIdPrefix || '';
+  }, [filters.accountName, shopeeAccounts]);
 
   // Total ad spend/clicks must count every campaign in the selected date range, including
   // SubID2s that spent money but produced zero matching orders. matrixRows only has a row
@@ -195,25 +317,68 @@ export default function ShopeeSocial() {
   const totalAdSpend = useMemo(() => {
     const matchedKeys = new Set(matrixRows.map(r => r.subIdKey));
     const matrixSpend = matrixRows.reduce((s, r) => s + r.adSpend, 0);
-    const unmatchedSpend = Object.entries(adsSpendBySubId2)
-      .filter(([key]) => !matchedKeys.has(key))
-      .reduce((s, [, v]) => s + (v.spend || 0), 0);
+    const unmatched = Object.entries(adsSpendBySubId2).filter(([key]) => !matchedKeys.has(key));
+    const scoped = selectedAccountPrefix ? unmatched.filter(([key]) => key.startsWith(selectedAccountPrefix)) : unmatched;
+    const unmatchedSpend = scoped.reduce((s, [, v]) => s + (v.spend || 0), 0);
     return matrixSpend + unmatchedSpend;
-  }, [matrixRows, adsSpendBySubId2]);
+  }, [matrixRows, adsSpendBySubId2, selectedAccountPrefix]);
   const totalClicks = useMemo(() => {
     const matchedKeys = new Set(matrixRows.map(r => r.subIdKey));
     const matrixClicks = matrixRows.reduce((s, r) => s + r.clicks, 0);
-    const unmatchedClicks = Object.entries(adsSpendBySubId2)
-      .filter(([key]) => !matchedKeys.has(key))
-      .reduce((s, [, v]) => s + (v.clicks || 0), 0);
+    const unmatched = Object.entries(adsSpendBySubId2).filter(([key]) => !matchedKeys.has(key));
+    const scoped = selectedAccountPrefix ? unmatched.filter(([key]) => key.startsWith(selectedAccountPrefix)) : unmatched;
+    const unmatchedClicks = scoped.reduce((s, [, v]) => s + (v.clicks || 0), 0);
     return matrixClicks + unmatchedClicks;
-  }, [matrixRows, adsSpendBySubId2]);
+  }, [matrixRows, adsSpendBySubId2, selectedAccountPrefix]);
   const netProfit = kpis.commissionTotal - totalAdSpend;
+
+  // "Hoa hồng thực nhận" is a running cash ledger, not a report metric tied to the order
+  // date range — a payout entered for today shouldn't vanish from the KPI just because
+  // the date filter (driven by the imported report's order dates) doesn't cover today.
+  // Only the account filter applies; date range is intentionally ignored here.
+  const totalActualReceived = useMemo(() => {
+    return commissionReceipts
+      .filter(r => filters.accountName === 'all' || r.accountName === filters.accountName)
+      .reduce((s, r) => s + r.amount, 0);
+  }, [commissionReceipts, filters.accountName]);
+  const realProfit = totalActualReceived - totalAdSpend;
   const platformDistribution = useMemo(() => computePlatformDistribution(filteredOrders), [filteredOrders]);
   const hourlyDistribution = useMemo(() => computeHourlyDistribution(filteredOrders), [filteredOrders]);
   const topProducts = useMemo(() => computeTopProducts(filteredOrders), [filteredOrders]);
   const topShops = useMemo(() => computeTopShops(filteredOrders), [filteredOrders]);
   const warnings = useMemo(() => computeWarnings(kpis, matrixRows), [kpis, matrixRows]);
+
+  const accountTrends = useMemo(() => {
+    // Union with the managed account list (not just accounts that already have orders) —
+    // an account whose campaigns are still running but haven't produced a completed
+    // order yet would otherwise have no chart at all, hiding its ad spend entirely.
+    const names = new Set(availableAccounts);
+    shopeeAccounts.forEach(a => { if (a.subIdPrefix) names.add(a.name); });
+    return Array.from(names).sort().map(accountName => {
+      const subIdPrefix = shopeeAccounts.find(a => a.name === accountName)?.subIdPrefix || '';
+
+      // Widen the range to cover this account's own commission-receipt dates — otherwise
+      // a receipt entered for a day outside the top date filter (e.g. today, while the
+      // filter still shows an older report's date range) silently has no day to land on
+      // and the chart looks unchanged even though the entry was saved fine.
+      let fromDate = filters.fromDate;
+      let toDate = filters.toDate;
+      commissionReceipts.forEach(r => {
+        if (r.accountName !== accountName || !r.date) return;
+        const day = toDayStr(r.date);
+        if (!fromDate || day < fromDate) fromDate = day;
+        if (!toDate || day > toDate) toDate = day;
+      });
+
+      return {
+        accountName,
+        series: buildAccountTrendSeries({
+          orders, accountName, subIdPrefix, fromDate, toDate,
+          adsSpendBySubId2Daily, commissionReceipts
+        })
+      };
+    });
+  }, [availableAccounts, shopeeAccounts, orders, filters.fromDate, filters.toDate, adsSpendBySubId2Daily, commissionReceipts]);
 
   function handleCpcChange(subIdKey, value) {
     setCpcBySubId(prev => ({ ...prev, [subIdKey]: value }));
@@ -225,14 +390,14 @@ export default function ShopeeSocial() {
   function handleExportCsv() {
     const cpcLookup = new Map(matrixRows.map(r => [r.subIdKey, r]));
     const headers = [
-      'Mã đơn', 'Sản phẩm', 'Shop', 'SubID (đầy đủ)', 'SubID2', 'Nền tảng', 'Kênh', 'Trạng thái',
+      'Tài khoản', 'Mã đơn', 'Sản phẩm', 'Shop', 'SubID (đầy đủ)', 'SubID2', 'Nền tảng', 'Kênh', 'Trạng thái',
       'GMV', 'Hoa hồng Shopee', 'Hoa hồng Xtra', 'Tổng hoa hồng', 'CPC SubID2', 'Nguồn chi phí', 'Lợi nhuận SubID2', 'Thời gian đặt'
     ];
     const rows = filteredOrders.map(o => {
       const subId2Key = o.subIds[1] || '(Không gắn SubID2)';
       const matrix = cpcLookup.get(subId2Key);
       return [
-        o.orderId, o.itemName, o.shopName, o.subIdKey, subId2Key, o.platformLabel, o.channel, o.status,
+        o.accountName || '', o.orderId, o.itemName, o.shopName, o.subIdKey, subId2Key, o.platformLabel, o.channel, o.status,
         o.gmv, o.commissionShopee, o.commissionXtra, o.commissionTotal,
         matrix?.cpc ?? defaultCpc, matrix?.spendSource ?? 'none', matrix?.profit ?? '', o.orderTime ? o.orderTime.toISOString() : ''
       ];
@@ -245,22 +410,55 @@ export default function ShopeeSocial() {
       <UploadPanel
         fileName={fileName}
         orderCount={orders.length}
+        accounts={shopeeAccounts}
+        onCreateAccount={handleCreateAccount}
+        onUpdateAccount={handleUpdateAccount}
+        onDeleteAccount={handleDeleteAccount}
         onFile={handleFile}
         onClickReportFile={handleClickReportFile}
-        onLoadDemo={handleLoadDemo}
         onClear={handleClear}
-        loading={loading}
       />
 
+      <CommissionReceiptsPanel
+        accounts={shopeeAccounts}
+        receipts={commissionReceipts}
+        onAdd={handleAddCommissionReceipt}
+        onDelete={handleDeleteCommissionReceipt}
+      />
+
+      {/* Account trend charts are independent of `orders` — an account with a configured
+          SubID2 prefix but zero orders yet (campaigns running, no completed order so
+          far) must still get a chart, so this can't live inside the `!orders.length`
+          branch below or it would never render for that account. */}
+      {accountTrends.length > 0 && (
+        <>
+          <AccountsSummaryTable accountTrends={accountTrends} />
+          <div className="shopee-social-account-trend-grid">
+            {accountTrends.map(({ accountName, series }) => (
+              <AccountTrendChart key={accountName} accountName={accountName} series={series} />
+            ))}
+          </div>
+        </>
+      )}
+
       {!orders.length ? (
-        <div className="empty" style={{ marginTop: 12 }}>
-          <div className="ei">📊</div>
-          <p>Tải lên báo cáo đơn hàng Shopee Affiliate hoặc bấm "Xem thử dữ liệu mẫu" để bắt đầu phân tích Social & SubID.</p>
-        </div>
+        !accountTrends.length && (
+          <div className="empty" style={{ marginTop: 12 }}>
+            <div className="ei">📊</div>
+            <p>Tải lên báo cáo đơn hàng Shopee Affiliate hoặc bấm "Xem thử dữ liệu mẫu" để bắt đầu phân tích Social & SubID.</p>
+          </div>
+        )
       ) : (
         <>
-          <FiltersBar filters={filters} onChange={setFilters} availablePlatforms={availablePlatforms} />
-          <KpiCards kpis={kpis} netProfit={netProfit} totalAdSpend={totalAdSpend} totalClicks={totalClicks} />
+          <FiltersBar filters={filters} onChange={setFilters} availablePlatforms={availablePlatforms} availableAccounts={filterableAccounts} />
+          <KpiCards
+            kpis={kpis}
+            netProfit={netProfit}
+            totalAdSpend={totalAdSpend}
+            totalClicks={totalClicks}
+            totalActualReceived={totalActualReceived}
+            realProfit={realProfit}
+          />
 
           <div className="shopee-social-charts-grid">
             <div className="card">

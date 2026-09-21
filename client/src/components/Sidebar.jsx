@@ -6,7 +6,6 @@ import {
   Boxes,
   ChevronDown,
   CirclePlus,
-  Coins,
   CopyPlus,
   FileSpreadsheet,
   LayoutDashboard,
@@ -128,9 +127,6 @@ export default function Sidebar() {
 
       {provider === 'shopee' && (
         <>
-          <NavLink to="/shopee-commission" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Hoa hong">
-            <span className="icon"><Coins size={16} strokeWidth={2} /></span><span>Hoa hong</span>
-          </NavLink>
           <NavLink to="/shopee-social" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Social Affiliate">
             <span className="icon"><Share2 size={16} strokeWidth={2} /></span><span>Social Affiliate</span>
           </NavLink>

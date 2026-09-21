@@ -3,17 +3,22 @@ import { api } from '../../lib/api';
 // Persists uploaded orders to MongoDB (scoped to the logged-in user) so the report
 // survives across browsers/devices instead of living only in this browser's localStorage.
 
-export async function importOrdersToServer(orders, sourceFileName) {
-  return api('POST', '/shopee-social/orders/import', { orders, sourceFileName });
+export async function importOrdersToServer(orders, sourceFileName, accountName = '') {
+  return api('POST', '/shopee-social/orders/import', { orders, sourceFileName, accountName });
 }
 
 export async function fetchSavedOrders() {
   const result = await api('GET', '/shopee-social/orders');
   const rows = result?.orders || [];
   return rows.map(row => ({
-    id: row.orderId,
+    // Same composite as mapping.js's client-side id — an order can have several item/
+    // variant/promotion rows, and keying on orderId alone gave them duplicate React keys.
+    id: `${row.orderId}__${row.itemId || ''}__${row.modelId || ''}__${row.promotionId || ''}`,
+    accountName: row.accountName || '',
     orderId: row.orderId,
     itemId: row.itemId || '',
+    modelId: row.modelId || '',
+    promotionId: row.promotionId || '',
     itemName: row.itemName || '',
     shopId: row.shopId || '',
     shopName: row.shopName || '',
@@ -35,6 +40,7 @@ export async function fetchSavedOrders() {
   }));
 }
 
-export async function deleteSavedOrders() {
-  return api('DELETE', '/shopee-social/orders');
+export async function deleteSavedOrders(accountName = '') {
+  const query = accountName ? `?accountName=${encodeURIComponent(accountName)}` : '';
+  return api('DELETE', `/shopee-social/orders${query}`);
 }

@@ -26,7 +26,6 @@ const Orders = React.lazy(() => import('./pages/Orders'));
 const CreateCampaign = React.lazy(() => import('./pages/Pages'));
 const PurchaseOrders = React.lazy(() => import('./pages/PurchaseOrders'));
 const ReturnSummary = React.lazy(() => import('./pages/ReturnSummary'));
-const ShopeeCommission = React.lazy(() => import('./pages/ShopeeCommission'));
 const ShopeeSocial = React.lazy(() => import('./pages/ShopeeSocial'));
 const UserManagement = React.lazy(() => import('./pages/UserManagement'));
 
@@ -85,8 +84,6 @@ function AppContent() {
         return 'Kho';
       case '/inventory-summary':
         return 'Thống kê kho';
-      case '/shopee-commission':
-        return 'Hoa hồng Shopee';
       case '/shopee-social':
         return 'Social Affiliate';
       case '/google-sheets':
@@ -154,7 +151,6 @@ function AppContent() {
                   <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
                   <Route path="/inventory" element={<Inventory />} />
                   <Route path="/inventory-summary" element={<InventorySummary />} />
-                  <Route path="/shopee-commission" element={<ShopeeCommission />} />
                   <Route path="/shopee-social" element={<ShopeeSocial />} />
                   <Route path="/google-sheets" element={<GoogleSheets />} />
                   <Route path="/creater-page" element={<CreaterPage />} />

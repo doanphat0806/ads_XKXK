@@ -19,6 +19,7 @@ function registerShopeeSocialOrdersRoutes(app, deps = {}) {
 
       const ownerUserId = req.currentUser._id;
       const sourceFileName = String(req.body?.sourceFileName || '').trim();
+      const accountName = String(req.body?.accountName || '').trim();
       const now = new Date();
       const ops = [];
 
@@ -26,16 +27,24 @@ function registerShopeeSocialOrdersRoutes(app, deps = {}) {
         const orderId = String(order?.orderId || '').trim();
         if (!orderId) continue;
         const itemId = String(order?.itemId || '').trim();
+        const modelId = String(order?.modelId || '').trim();
+        const promotionId = String(order?.promotionId || '').trim();
         const orderTime = order.orderTime ? new Date(order.orderTime) : null;
 
         ops.push({
           updateOne: {
-            // Keyed by (orderId, itemId) — a single order can have several item rows,
-            // each with its own commission/GMV, and must not overwrite one another.
-            filter: { ownerUserId, orderId, itemId },
+            // Keyed by (orderId, itemId, modelId, promotionId) — a single order can have
+            // several item rows, buying several variants (size/color) of the SAME product
+            // shares one itemId with a different modelId per row, and Shopee can even
+            // split the same item+model across two rows under different promotions —
+            // any of these must not overwrite one another.
+            filter: { ownerUserId, orderId, itemId, modelId, promotionId },
             update: {
               $set: {
+                accountName,
                 itemId: String(order.itemId || ''),
+                modelId,
+                promotionId,
                 itemName: String(order.itemName || ''),
                 shopId: String(order.shopId || ''),
                 shopName: String(order.shopName || ''),
@@ -97,7 +106,11 @@ function registerShopeeSocialOrdersRoutes(app, deps = {}) {
     try {
       if (!req.currentUser?._id) return res.status(401).json({ error: 'Unauthorized' });
 
-      const result = await ShopeeSocialOrder.deleteMany({ ownerUserId: req.currentUser._id });
+      const filter = { ownerUserId: req.currentUser._id };
+      const accountName = String(req.query?.accountName || '').trim();
+      if (accountName) filter.accountName = accountName;
+
+      const result = await ShopeeSocialOrder.deleteMany(filter);
       res.json({ ok: true, deleted: result.deletedCount });
     } catch (err) {
       console.error('[ShopeeSocial] Error deleting saved orders:', err);

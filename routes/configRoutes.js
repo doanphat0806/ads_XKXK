@@ -4,7 +4,6 @@ const express = require('express');
 const Config = require('../models/Config');
 const User = require('../models/User');
 const { clearAllReadCache } = require('../utils/cacheManager');
-const { normalizeProvider } = require('../utils/authUtils');
 const {
   AUTO_PAUSE_CPO_LIMIT,
   AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT,
@@ -126,35 +125,6 @@ router.put('/auto-limits', async (req, res) => {
 
     await User.findByIdAndUpdate(req.currentUser._id, { $set: limits }, { new: true });
     res.json({ ok: true, limits });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-router.put('/auto-rules', async (req, res) => {
-  try {
-    const { startTime, endTime } = req.body;
-    const provider = normalizeProvider(req.body.provider);
-    if (!startTime || !endTime) {
-      return res.status(400).json({ error: 'Thieu startTime hoac endTime' });
-    }
-    if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
-      return res.status(400).json({ error: 'Dinh dang thoi gian khong hop le (HH:MM)' });
-    }
-
-    const timeUpdates = provider === 'shopee'
-      ? { shopeeAutoRuleStartTime: startTime, shopeeAutoRuleEndTime: endTime, updatedAt: new Date() }
-      : { autoRuleStartTime: startTime, autoRuleEndTime: endTime, updatedAt: new Date() };
-    const user = await User.findByIdAndUpdate(req.currentUser._id, { $set: timeUpdates }, { new: true });
-
-    res.json({
-      ok: true,
-      provider,
-      autoRuleStartTime: user.autoRuleStartTime,
-      autoRuleEndTime: user.autoRuleEndTime,
-      shopeeAutoRuleStartTime: user.shopeeAutoRuleStartTime,
-      shopeeAutoRuleEndTime: user.shopeeAutoRuleEndTime
-    });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

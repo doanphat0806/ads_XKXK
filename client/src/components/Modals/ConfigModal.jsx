@@ -12,7 +12,6 @@ export default function ConfigModal() {
   const [fbOAuthLoading, setFbOAuthLoading] = useState(false);
   const [geminiKey, setGeminiKey] = useState('');
   const [pancake, setPancake] = useState({ apiKey: '', shopId: '' });
-  const [autoRules, setAutoRules] = useState({ start: '00:00', end: '09:00' });
   const [scheduledPauseTime, setScheduledPauseTime] = useState('21:00');
   const [autoLimits, setAutoLimits] = useState({
     dailyZero: 25000, dailyOne: 25000, dailyFewThreshold: 0, dailyFewSpend: 0, dailyCheapCost: 0, dailyCheapSpend: 0, dailyHighCost: 20000, dailyHighSpend: 50000,
@@ -30,10 +29,6 @@ export default function ConfigModal() {
     if (appConfig) {
       setFbApp({ id: appConfig.fbAppId || '', secret: '' });
       setPancake({ apiKey: '', shopId: appConfig.pancakeShopId || '' });
-      setAutoRules({
-        start: isShopee ? (appConfig.shopeeAutoRuleStartTime || '00:00') : (appConfig.autoRuleStartTime || '00:00'),
-        end: isShopee ? (appConfig.shopeeAutoRuleEndTime || '09:00') : (appConfig.autoRuleEndTime || '09:00')
-      });
       setScheduledPauseTime(appConfig.scheduledDuplicatePauseTime || '21:00');
       setAutoLimits({
         dailyZero: appConfig.dailyZeroMessageSpendLimit || 25000,
@@ -212,26 +207,8 @@ export default function ConfigModal() {
           </div>
         </section>
 
-        {/* Section: Auto Rules Time */}
         <section className="section-gap">
-          <div className="section-title">5. Khung giờ chạy Auto Rules</div>
-          <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-            <div className="form-group">
-              <label>Bắt đầu</label>
-              <input type="text" inputMode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:mm" value={autoRules.start} onChange={e => setAutoRules({ ...autoRules, start: e.target.value })} />
-            </div>
-            <div className="form-group">
-              <label>Kết thúc</label>
-              <input type="text" inputMode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:mm" value={autoRules.end} onChange={e => setAutoRules({ ...autoRules, end: e.target.value })} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
-            <button className="btn btn-p btn-sm" onClick={() => save('/auto-rules', { provider, startTime: autoRules.start, endTime: autoRules.end }, 'Đã lưu khung giờ')}>Lưu khung giờ</button>
-          </div>
-        </section>
-
-        <section className="section-gap">
-          <div className="section-title">6. Giờ tắt camp đã lên lịch bị trùng</div>
+          <div className="section-title">5. Giờ tắt camp đã lên lịch bị trùng</div>
           <div style={{ marginBottom: '12px', color: 'var(--muted2)' }}>
             Khi nhiều camp cùng mã/tên đang chạy, hệ thống sẽ kiểm tra từ mốc giờ này và tự tắt bớt, ưu tiên giữ camp trọn đời.
           </div>

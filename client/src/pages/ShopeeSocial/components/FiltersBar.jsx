@@ -8,7 +8,7 @@ const PLATFORM_LABELS = {
   zalo: 'Zalo', threads: 'Threads', youtube: 'YouTube', instagram: 'Instagram', khac: 'Khác'
 };
 
-export default function FiltersBar({ filters, onChange, availablePlatforms }) {
+export default function FiltersBar({ filters, onChange, availablePlatforms, availableAccounts = [] }) {
   const platformOptions = PLATFORM_ORDER.filter(p => availablePlatforms.has(p));
 
   return (
@@ -19,6 +19,20 @@ export default function FiltersBar({ filters, onChange, availablePlatforms }) {
         onChange={(fromDate, toDate) => onChange({ ...filters, fromDate, toDate })}
         centered
       />
+
+      {availableAccounts.length > 0 && (
+        <select
+          className="shopee-social-input"
+          value={filters.accountName}
+          onChange={e => onChange({ ...filters, accountName: e.target.value })}
+          title="Lọc theo tài khoản Shopee AFF"
+        >
+          <option value="all">Tất cả tài khoản</option>
+          {availableAccounts.map(name => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+      )}
 
       <select
         className="shopee-social-input"

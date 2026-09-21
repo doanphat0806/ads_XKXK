@@ -1,7 +1,7 @@
 // Matches Shopee Social Affiliate order data (uploaded client-side) to real Facebook ad spend,
 // keyed by sub_id2 — campaigns in this system are named `{sub_id2}{18-char suffix}` at creation
-// time (see extractSubId2 in services/reportService.js), so extracting that prefix from each
-// Campaign.name is how spend/clicks get attributed back to a Shopee affiliate tracking link.
+// time (see extractSubId2 in services/legacyRuntimeService.js), so extracting that prefix from
+// each Campaign.name is how spend/clicks get attributed back to a Shopee affiliate tracking link.
 function registerShopeeSocialAdsRoutes(app, deps = {}) {
   const {
     Account,
@@ -33,18 +33,27 @@ function registerShopeeSocialAdsRoutes(app, deps = {}) {
       }).select('name spend clicks').lean();
 
       const bySubId2 = {};
+      // Also grouped by day, so the frontend can plot a daily ad-spend trend per
+      // Shopee AFF account (accounts aren't tracked on Campaign — they're derived by
+      // matching a day's SubID2s back to whichever account's orders use that SubID2).
+      const bySubId2Daily = {};
       for (const camp of camps) {
         const subId2 = extractSubId2(camp.name);
         if (!subId2) continue;
         if (!bySubId2[subId2]) bySubId2[subId2] = { spend: 0, clicks: 0 };
         bySubId2[subId2].spend += Number(camp.spend || 0);
         bySubId2[subId2].clicks += Number(camp.clicks || 0);
+
+        if (!bySubId2Daily[subId2]) bySubId2Daily[subId2] = {};
+        if (!bySubId2Daily[subId2][camp.date]) bySubId2Daily[subId2][camp.date] = { spend: 0, clicks: 0 };
+        bySubId2Daily[subId2][camp.date].spend += Number(camp.spend || 0);
+        bySubId2Daily[subId2][camp.date].clicks += Number(camp.clicks || 0);
       }
       for (const row of Object.values(bySubId2)) {
         row.cpc = row.clicks > 0 ? row.spend / row.clicks : 0;
       }
 
-      res.json({ bySubId2, fromDate, toDate });
+      res.json({ bySubId2, bySubId2Daily, fromDate, toDate });
     } catch (err) {
       console.error('[ShopeeSocial] Error fetching ads spend:', err);
       res.status(500).json({ error: err.message });

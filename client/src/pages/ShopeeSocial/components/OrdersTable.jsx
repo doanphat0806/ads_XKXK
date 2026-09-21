@@ -22,6 +22,7 @@ export default function OrdersTable({ orders, onExport }) {
     () => orders.slice((clampedPage - 1) * pageSize, clampedPage * pageSize),
     [orders, clampedPage, pageSize]
   );
+  const showAccountColumn = useMemo(() => orders.some(o => o.accountName), [orders]);
 
   return (
     <div className="card shopee-social-orders-card">
@@ -35,6 +36,7 @@ export default function OrdersTable({ orders, onExport }) {
         <table className="tbl">
           <thead>
             <tr>
+              {showAccountColumn && <th>Tài khoản</th>}
               <th>Mã đơn</th>
               <th>Sản phẩm</th>
               <th>Shop</th>
@@ -49,6 +51,7 @@ export default function OrdersTable({ orders, onExport }) {
           <tbody>
             {pageRows.map(order => (
               <tr key={order.id}>
+                {showAccountColumn && <td className="mono-sm">{order.accountName || '-'}</td>}
                 <td className="mono-sm">{order.orderId}</td>
                 <td>{order.itemName}</td>
                 <td>{order.shopName}</td>
@@ -61,7 +64,7 @@ export default function OrdersTable({ orders, onExport }) {
               </tr>
             ))}
             {!pageRows.length && (
-              <tr><td colSpan={9} style={{ textAlign: 'center', padding: 20, color: 'var(--muted2)' }}>Không có đơn hàng phù hợp</td></tr>
+              <tr><td colSpan={showAccountColumn ? 10 : 9} style={{ textAlign: 'center', padding: 20, color: 'var(--muted2)' }}>Không có đơn hàng phù hợp</td></tr>
             )}
           </tbody>
         </table>

@@ -12,7 +12,7 @@ function Kpi({ tone, label, value, sub }) {
   );
 }
 
-export default function KpiCards({ kpis, netProfit, totalAdSpend, totalClicks }) {
+export default function KpiCards({ kpis, netProfit, totalAdSpend, totalClicks, totalActualReceived, realProfit }) {
   const blendedCpc = totalClicks > 0 ? totalAdSpend / totalClicks : 0;
   return (
     <div className="shopee-social-kpi-grid">
@@ -37,15 +37,15 @@ export default function KpiCards({ kpis, netProfit, totalAdSpend, totalClicks })
       />
       <Kpi
         tone="teal"
-        label="Tỷ Lệ Đơn Social"
-        value={formatPercent(kpis.socialRate)}
-        sub={`${formatNumber(kpis.socialOrders)}/${formatNumber(kpis.totalOrders)} đơn`}
+        label="Hoa Hồng Thực Nhận"
+        value={formatVND(totalActualReceived)}
+        sub="Ghi tay · tổng cộng dồn (không theo ngày lọc)"
       />
       <Kpi
-        tone="p"
-        label="Đơn Hàng"
-        value={formatNumber(kpis.totalOrders)}
-        sub={`Hoàn thành ${formatNumber(kpis.completed)} · Chờ ${formatNumber(kpis.pending)} · Hủy ${formatNumber(kpis.cancelled)}`}
+        tone={realProfit >= 0 ? 'g' : 'r'}
+        label="Lợi Nhuận Thực"
+        value={formatVND(realProfit)}
+        sub="Thực nhận − Chi phí Ads"
       />
       <Kpi
         tone="o"

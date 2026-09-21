@@ -5,6 +5,13 @@ import { normalizeHeaderText, parseNumber, parseDateTime, detectPlatform, classi
 const FIELD_MATCHERS = [
   { field: 'orderId', test: h => /ma don|order id|order sn|ordersn|so don hang|id don hang/.test(h) },
   { field: 'itemId', test: h => /id san pham|item id|ma san pham/.test(h) },
+  // Distinguishes variants (size/color) of the same product within one order — those
+  // rows share the same Item id but a different Model id, and must not be merged.
+  { field: 'modelId', test: h => /id model|model id|ma bien the|variation id|variant id/.test(h) },
+  // Rare but real: Shopee can split the SAME item+model into two rows under different
+  // promotions/vouchers within one order — (orderId, itemId, modelId) alone still
+  // collides there, so promotionId is the final disambiguator.
+  { field: 'promotionId', test: h => /promotion id|ma khuyen mai|promo id/.test(h) },
   { field: 'itemName', test: h => /ten san pham|item name|ten hang|ten item/.test(h) },
   { field: 'shopId', test: h => /id shop|shop id|ma shop/.test(h) },
   { field: 'shopName', test: h => /ten shop|shop name/.test(h) },
@@ -78,17 +85,30 @@ export function rowToOrder(row, columnMap, index) {
     ? parseNumber(commissionTotalRaw)
     : commissionShopee + commissionXtra;
 
+  const orderId = get('orderId') || `(#${index + 1})`;
+  const itemId = get('itemId') || '';
+  const modelId = get('modelId') || '';
+  const promotionId = get('promotionId') || '';
+
   return {
-    id: get('orderId') || `row-${index}`,
-    orderId: get('orderId') || `(#${index + 1})`,
-    itemId: get('itemId') || '',
+    // React key only (server dedupe uses orderId+itemId+modelId+promotionId, see import
+    // route) — the row index is tacked on so it's always unique even before that matters.
+    id: `${orderId}__${itemId}__${modelId}__${promotionId}__${index}`,
+    orderId,
+    itemId,
+    modelId,
+    promotionId,
     itemName: get('itemName') || '(Không rõ sản phẩm)',
     shopId: get('shopId') || '',
     shopName: get('shopName') || '(Không rõ shop)',
     gmv: parseNumber(get('gmv')),
     commissionShopee,
     commissionXtra,
-    commissionTotal: commissionTotal || (commissionShopee + commissionXtra),
+    // commissionTotal is already correctly resolved above (parsed value, or the
+    // Shopee+Xtra sum only when the column was absent) — re-applying `||` here would
+    // wrongly treat a legitimate 0 (e.g. a zeroed/returned order) as "missing" and
+    // substitute a possibly-stale Shopee+Xtra sum, inflating that order's commission.
+    commissionTotal,
     channelRaw,
     channel: classifyChannel(channelRaw, platform.key),
     statusRaw,
