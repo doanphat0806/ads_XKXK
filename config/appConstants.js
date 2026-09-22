@@ -25,7 +25,9 @@ module.exports = {
   CAMPAIGN_DUPLICATE_COPY_STATUS: 'PAUSED',
   FB_RATE_LIMIT_BACKOFF_MS: parseBoundedInt(process.env.FB_RATE_LIMIT_BACKOFF_MS, 60000, 5000, 300000),
   FB_RATE_LIMIT_RETRIES: parseBoundedInt(process.env.FB_RATE_LIMIT_RETRIES, 3, 1, 10),
-  SHOPEE_AD_ACCOUNT_NAME_PATTERN: /^XK(1[1-3]|2[1-9]|[3-9]\d)$/i,
+  // Requires "XK" + a number in range, but now allows anything after it (e.g. "XK11 P",
+  // "XK11-B") so multiple ad accounts can share one XK number with a distinguishing suffix.
+  SHOPEE_AD_ACCOUNT_NAME_PATTERN: /^XK(1[1-3]|2[1-9]|[3-9]\d).*$/i,
   FACEBOOK_GRAPH_API_VERSION: process.env.FB_GRAPH_API_VERSION || 'v24.0',
   FINAL_SPEND_CRON: process.env.FINAL_SPEND_CRON || '20 0 * * *',
   FINAL_SPEND_TIMEZONE: process.env.FINAL_SPEND_TIMEZONE || 'Asia/Ho_Chi_Minh',

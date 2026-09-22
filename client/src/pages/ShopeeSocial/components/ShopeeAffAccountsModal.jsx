@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { Plus, Trash2, Save } from 'lucide-react';
 
@@ -33,25 +33,72 @@ export default function ShopeeAffAccountsModal({ accounts, adAccounts = [], onCr
     setIds(ids.includes(accId) ? ids.filter(x => x !== accId) : [...ids, accId]);
   }
 
+  // A dropdown (not an always-open checkbox list) so this stays usable with dozens of ad
+  // accounts — search filters the list, and the trigger shows a compact summary instead
+  // of every option taking up vertical space in the table row.
   function AdAccountPicker({ selectedIds, onToggle }) {
+    const [open, setOpen] = useState(false);
+    const [search, setSearch] = useState('');
+    const containerRef = useRef(null);
+
+    useEffect(() => {
+      if (!open) return;
+      function handleClickOutside(e) {
+        if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+      }
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [open]);
+
     if (!adAccounts.length) {
       return <div style={{ fontSize: 11, color: 'var(--muted2)' }}>Chưa có tài khoản QC</div>;
     }
+
+    const selectedNames = adAccounts.filter(a => selectedIds.includes(a._id)).map(a => a.name);
+    const filtered = search.trim()
+      ? adAccounts.filter(a => a.name.toLowerCase().includes(search.trim().toLowerCase()))
+      : adAccounts;
+
     return (
-      <div style={{
-        border: '1px solid var(--border)', borderRadius: 6, maxHeight: 84, overflowY: 'auto',
-        padding: '4px 6px', display: 'flex', flexDirection: 'column', gap: 2
-      }}>
-        {adAccounts.map(acc => (
-          <label key={acc._id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={selectedIds.includes(acc._id)}
-              onChange={() => onToggle(acc._id)}
-            />
-            {acc.name}
-          </label>
-        ))}
+      <div ref={containerRef} style={{ position: 'relative' }}>
+        <button
+          type="button"
+          className="shopee-social-input"
+          style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }}
+          onClick={() => setOpen(v => !v)}
+        >
+          {selectedNames.length ? `${selectedNames.length} đã chọn: ${selectedNames.join(', ')}` : 'Mặc định (chưa pin)'}
+        </button>
+        {open && (
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 30, width: 240,
+            background: 'var(--s1)', border: '1px solid var(--border)', borderRadius: 8,
+            boxShadow: '0 6px 20px rgba(0,0,0,0.18)', padding: 8
+          }}>
+            {adAccounts.length > 6 && (
+              <input
+                autoFocus
+                className="shopee-social-input"
+                style={{ width: '100%', marginBottom: 6 }}
+                placeholder="Tìm tài khoản QC..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            )}
+            <div style={{ maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {filtered.length ? filtered.map(acc => (
+                <label key={acc._id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, cursor: 'pointer', padding: '2px 4px' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(acc._id)}
+                    onChange={() => onToggle(acc._id)}
+                  />
+                  {acc.name}
+                </label>
+              )) : <div style={{ fontSize: 11, color: 'var(--muted2)', padding: 4 }}>Không tìm thấy</div>}
+            </div>
+          </div>
+        )}
       </div>
     );
   }

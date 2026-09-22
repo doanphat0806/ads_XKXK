@@ -50,7 +50,6 @@ export default function ShopeeSocial() {
   const [clicksBySubId, setClicksBySubId] = useState({});
   const [filters, setFilters] = useState({ ...DEFAULT_FILTERS, fromDate: todayStr(), toDate: todayStr() });
   const [hydrated, setHydrated] = useState(false);
-  const [adsSpendBySubId2Daily, setAdsSpendBySubId2Daily] = useState({});
   const [adsSpendCampaigns, setAdsSpendCampaigns] = useState([]);
   const [adsSpendLoading, setAdsSpendLoading] = useState(false);
   const [shopeeAccounts, setShopeeAccounts] = useState([]);
@@ -175,16 +174,14 @@ export default function ShopeeSocial() {
   // whenever the selected date range changes so spend always lines up with what's on screen.
   useEffect(() => {
     if (!orders.length || !widenedDateRange.fromDate || !widenedDateRange.toDate) {
-      setAdsSpendBySubId2Daily({});
       setAdsSpendCampaigns([]);
       return;
     }
     let cancelled = false;
     setAdsSpendLoading(true);
     fetchAdsSpend(widenedDateRange.fromDate, widenedDateRange.toDate)
-      .then(({ bySubId2Daily, campaigns }) => {
+      .then(({ campaigns }) => {
         if (cancelled) return;
-        setAdsSpendBySubId2Daily(bySubId2Daily);
         setAdsSpendCampaigns(campaigns);
       })
       .catch(err => { if (!cancelled) toast.error(`Lỗi tải chi phí Ads: ${err.message}`); })
@@ -279,36 +276,13 @@ export default function ShopeeSocial() {
   const filteredOrders = useMemo(() => filterOrders(orders, filters), [orders, filters]);
   const kpis = useMemo(() => computeKpis(filteredOrders), [filteredOrders]);
 
-  // KPI/matrix totals must stay scoped to exactly the visible filter range — the fetch
-  // above may cover a WIDER range (to backfill per-account trend charts when a receipt
-  // falls outside the filter window), so re-aggregate from the daily breakdown down to
-  // just [filters.fromDate, filters.toDate] rather than using the wider fetched range.
-  const adsSpendBySubId2 = useMemo(() => {
-    if (!filters.fromDate || !filters.toDate) return {};
-    const result = {};
-    Object.entries(adsSpendBySubId2Daily).forEach(([subId2, byDay]) => {
-      let spend = 0;
-      let clicks = 0;
-      Object.entries(byDay).forEach(([day, v]) => {
-        if (day < filters.fromDate || day > filters.toDate) return;
-        spend += v.spend || 0;
-        clicks += v.clicks || 0;
-      });
-      if (spend || clicks) result[subId2] = { spend, clicks, cpc: clicks > 0 ? spend / clicks : 0 };
-    });
-    return result;
-  }, [adsSpendBySubId2Daily, filters.fromDate, filters.toDate]);
-
-  const matrixRows = useMemo(
-    () => buildSubIdMatrix(filteredOrders, { cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2 }),
-    [filteredOrders, cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2]
-  );
-
   // When one specific account is selected, resolve which ad accounts "belong" to it —
   // either hand-picked (adAccountIds) or, by default, every ad account not explicitly
   // claimed by another AFF account — plus its configured SubID2 codes (used only for the
-  // default/non-explicit case). Otherwise another account's zero-order campaigns would
-  // leak into this account's totals.
+  // default/non-explicit case). Otherwise another account's campaigns would leak into
+  // this account's totals — including ones that already produced a completed order, so
+  // this must gate BOTH the "matched" (order-backed) and "unmatched" spend below, not
+  // just the unmatched fallback.
   const selectedAccountScope = useMemo(() => {
     if (filters.accountName === 'all') return null;
     return resolveAdAccountScope(shopeeAccounts, filters.accountName);
@@ -318,31 +292,60 @@ export default function ShopeeSocial() {
     return shopeeAccounts.find(a => a.name === filters.accountName)?.subIdPrefix || '';
   }, [filters.accountName, shopeeAccounts]);
 
-  const unmatchedCampaignsInRange = useMemo(() => {
+  const campaignsInRange = useMemo(() => {
     if (!filters.fromDate || !filters.toDate) return [];
     return adsSpendCampaigns.filter(c => c.date >= filters.fromDate && c.date <= filters.toDate);
   }, [adsSpendCampaigns, filters.fromDate, filters.toDate]);
+
+  const scopedCampaignsInRange = useMemo(
+    () => campaignsInRange.filter(c => campaignBelongsToScope(c, selectedAccountScope, selectedAccountPrefix)),
+    [campaignsInRange, selectedAccountScope, selectedAccountPrefix]
+  );
+
+  // KPI/matrix totals must stay scoped to exactly the visible filter range AND to the
+  // selected account's ad-account scope above — otherwise a SubID2 that already has a
+  // completed order but belongs to another account's ad account would still count its
+  // real spend here, silently ignoring the account picker for every SubID2 that already
+  // has an order (only "no order yet" campaigns would actually respect the picker).
+  const adsSpendBySubId2 = useMemo(() => {
+    const result = {};
+    scopedCampaignsInRange.forEach(c => {
+      if (!result[c.subId2]) result[c.subId2] = { spend: 0, clicks: 0 };
+      result[c.subId2].spend += c.spend || 0;
+      result[c.subId2].clicks += c.clicks || 0;
+    });
+    Object.values(result).forEach(v => { v.cpc = v.clicks > 0 ? v.spend / v.clicks : 0; });
+    return result;
+  }, [scopedCampaignsInRange]);
+
+  const matrixRows = useMemo(
+    () => buildSubIdMatrix(filteredOrders, { cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2 }),
+    [filteredOrders, cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2]
+  );
 
   // Total ad spend/clicks must count every campaign in the selected date range, including
   // SubID2s that spent money but produced zero matching orders. matrixRows only has a row
   // per SubID2 that already appears in an order, so summing just that silently dropped
   // spend on campaigns with zero conversions — understating "Chi phí Ads" and inflating
   // "Lợi nhuận ròng". Matched SubID2s still use matrixRows' figure (which respects manual
-  // CPC/click overrides); unmatched ones are added straight from the real campaign data.
+  // CPC/click overrides, and is already scope-filtered via adsSpendBySubId2 above);
+  // unmatched ones are added straight from the (already scope-filtered) campaign data.
   const totalAdSpend = useMemo(() => {
     const matchedKeys = new Set(matrixRows.map(r => r.subIdKey));
     const matrixSpend = matrixRows.reduce((s, r) => s + r.adSpend, 0);
-    const scoped = unmatchedCampaignsInRange.filter(c => !matchedKeys.has(c.subId2) && campaignBelongsToScope(c, selectedAccountScope, selectedAccountPrefix));
-    const unmatchedSpend = scoped.reduce((s, c) => s + (c.spend || 0), 0);
+    const unmatchedSpend = scopedCampaignsInRange
+      .filter(c => !matchedKeys.has(c.subId2))
+      .reduce((s, c) => s + (c.spend || 0), 0);
     return matrixSpend + unmatchedSpend;
-  }, [matrixRows, unmatchedCampaignsInRange, selectedAccountScope, selectedAccountPrefix]);
+  }, [matrixRows, scopedCampaignsInRange]);
   const totalClicks = useMemo(() => {
     const matchedKeys = new Set(matrixRows.map(r => r.subIdKey));
     const matrixClicks = matrixRows.reduce((s, r) => s + r.clicks, 0);
-    const scoped = unmatchedCampaignsInRange.filter(c => !matchedKeys.has(c.subId2) && campaignBelongsToScope(c, selectedAccountScope, selectedAccountPrefix));
-    const unmatchedClicks = scoped.reduce((s, c) => s + (c.clicks || 0), 0);
+    const unmatchedClicks = scopedCampaignsInRange
+      .filter(c => !matchedKeys.has(c.subId2))
+      .reduce((s, c) => s + (c.clicks || 0), 0);
     return matrixClicks + unmatchedClicks;
-  }, [matrixRows, unmatchedCampaignsInRange, selectedAccountScope, selectedAccountPrefix]);
+  }, [matrixRows, scopedCampaignsInRange]);
   const netProfit = kpis.commissionTotal - totalAdSpend;
 
   // "Hoa hồng thực nhận" is a running cash ledger, not a report metric tied to the order
