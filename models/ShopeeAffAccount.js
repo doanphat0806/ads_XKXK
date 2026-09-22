@@ -11,6 +11,12 @@ const ShopeeAffAccountSchema = new mongoose.Schema({
   // right account even for campaigns that haven't produced a completed order yet — an
   // order-based match alone would silently drop that spend from every account's total.
   subIdPrefix: { type: String, default: '', trim: true },
+  // Explicit ad accounts (Account docs, provider=shopee) hand-picked as "belonging" to
+  // this AFF account. When empty, this account falls back to every ad account NOT
+  // explicitly claimed by another AFF account (see accountTrend.js resolveAdAccountScope)
+  // — so picking an ad account for one account implicitly excludes it from every other
+  // account's default pool, without needing to touch their configs.
+  adAccountIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: [] }],
   createdAt: { type: Date, default: Date.now }
 }, { autoIndex: false });
 

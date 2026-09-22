@@ -4,7 +4,7 @@ import { UploadCloud, FileSpreadsheet, MousePointerClick, Trash2, CloudCheck, Pe
 import ShopeeAffAccountsModal from './ShopeeAffAccountsModal';
 
 export default function UploadPanel({
-  fileName, orderCount, accounts = [], onFile, onClickReportFile, onClear,
+  fileName, orderCount, accounts = [], adAccounts = [], onFile, onClickReportFile, onClear,
   onCreateAccount, onUpdateAccount, onDeleteAccount
 }) {
   const [selectedAccountId, setSelectedAccountId] = useState('');
@@ -109,6 +109,7 @@ export default function UploadPanel({
       {showAccountsModal && (
         <ShopeeAffAccountsModal
           accounts={accounts}
+          adAccounts={adAccounts}
           onCreate={onCreateAccount}
           onUpdate={onUpdateAccount}
           onDelete={onDeleteAccount}

@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { toast } from 'react-toastify';
 import { Plus, Trash2, Save } from 'lucide-react';
 
-export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, onDelete, onClose }) {
-  const [rows, setRows] = useState(() => accounts.map(a => ({ ...a })));
+export default function ShopeeAffAccountsModal({ accounts, adAccounts = [], onCreate, onUpdate, onDelete, onClose }) {
+  const [rows, setRows] = useState(() => accounts.map(a => ({ ...a, adAccountIds: (a.adAccountIds || []).map(String) })));
   const [newName, setNewName] = useState('');
   const [newPrefix, setNewPrefix] = useState('');
+  const [newAdAccountIds, setNewAdAccountIds] = useState([]);
   const [savingId, setSavingId] = useState(null);
   const [adding, setAdding] = useState(false);
 
@@ -19,9 +20,40 @@ export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, o
     const name = row.name.trim();
     if (!name) { toast.error('Tên tài khoản không được để trống'); return; }
     setSavingId(id);
-    const account = await onUpdate(id, { name, subIdPrefix: (row.subIdPrefix || '').trim() });
+    const account = await onUpdate(id, {
+      name,
+      subIdPrefix: (row.subIdPrefix || '').trim(),
+      adAccountIds: row.adAccountIds || []
+    });
     setSavingId(null);
     if (account) toast.success(`Đã lưu "${account.name}"`);
+  }
+
+  function toggleAdAccountId(ids, setIds, accId) {
+    setIds(ids.includes(accId) ? ids.filter(x => x !== accId) : [...ids, accId]);
+  }
+
+  function AdAccountPicker({ selectedIds, onToggle }) {
+    if (!adAccounts.length) {
+      return <div style={{ fontSize: 11, color: 'var(--muted2)' }}>Chưa có tài khoản QC</div>;
+    }
+    return (
+      <div style={{
+        border: '1px solid var(--border)', borderRadius: 6, maxHeight: 84, overflowY: 'auto',
+        padding: '4px 6px', display: 'flex', flexDirection: 'column', gap: 2
+      }}>
+        {adAccounts.map(acc => (
+          <label key={acc._id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={selectedIds.includes(acc._id)}
+              onChange={() => onToggle(acc._id)}
+            />
+            {acc.name}
+          </label>
+        ))}
+      </div>
+    );
   }
 
   async function handleDeleteRow(id, name) {
@@ -34,12 +66,13 @@ export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, o
     const name = newName.trim();
     if (!name) { toast.error('Nhập tên tài khoản'); return; }
     setAdding(true);
-    const account = await onCreate(name, newPrefix.trim());
+    const account = await onCreate(name, newPrefix.trim(), newAdAccountIds);
     setAdding(false);
     if (account) {
-      setRows(prev => (prev.some(r => r._id === account._id) ? prev : [...prev, account]));
+      setRows(prev => (prev.some(r => r._id === account._id) ? prev : [...prev, { ...account, adAccountIds: (account.adAccountIds || []).map(String) }]));
       setNewName('');
       setNewPrefix('');
+      setNewAdAccountIds([]);
     }
   }
 
@@ -47,7 +80,7 @@ export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, o
     <div className="modal-overlay open" onClick={onClose}>
       <div
         className="card"
-        style={{ border: 'none', margin: 0, width: 560, maxWidth: '95vw', maxHeight: '85vh', overflowY: 'auto' }}
+        style={{ border: 'none', margin: 0, width: 700, maxWidth: '95vw', maxHeight: '85vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}
       >
         <div className="card-header">
@@ -56,6 +89,8 @@ export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, o
         </div>
         <div style={{ padding: '0 18px 10px', fontSize: 11.5, color: 'var(--muted2)' }}>
           Mã SubID2 là phần chữ ngay sau 4 số đầu (ngày/tháng đổi mỗi ngày) — VD SubID2 "1707AB06" thì mã là "AB". 1 tài khoản có thể gõ nhiều mã, cách nhau dấu phẩy.
+          <br />
+          Tài khoản QC: chọn thủ công tài khoản quảng cáo thuộc về tài khoản này (không cần khớp mã SubID2 nữa). Nếu không chọn, tài khoản này sẽ tự nhận tất cả tài khoản QC nào chưa bị tài khoản AFF khác chọn.
         </div>
 
         <div className="tbl-wrap" style={{ padding: '0 18px' }}>
@@ -64,6 +99,7 @@ export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, o
               <tr>
                 <th>Tên tài khoản</th>
                 <th>Mã SubID2 (VD: AB,AC)</th>
+                <th>Tài khoản QC</th>
                 <th></th>
               </tr>
             </thead>
@@ -85,6 +121,14 @@ export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, o
                       placeholder="VD: AB,AC,AD"
                       value={r.subIdPrefix || ''}
                       onChange={e => updateRow(r._id, 'subIdPrefix', e.target.value)}
+                    />
+                  </td>
+                  <td style={{ minWidth: 140 }}>
+                    <AdAccountPicker
+                      selectedIds={r.adAccountIds || []}
+                      onToggle={accId => updateRow(r._id, 'adAccountIds', (r.adAccountIds || []).includes(accId)
+                        ? r.adAccountIds.filter(x => x !== accId)
+                        : [...(r.adAccountIds || []), accId])}
                     />
                   </td>
                   <td>
@@ -112,7 +156,7 @@ export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, o
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={3} style={{ textAlign: 'center', padding: 16, color: 'var(--muted2)' }}>
+                  <td colSpan={4} style={{ textAlign: 'center', padding: 16, color: 'var(--muted2)' }}>
                     Chưa có tài khoản nào
                   </td>
                 </tr>
@@ -121,22 +165,30 @@ export default function ShopeeAffAccountsModal({ accounts, onCreate, onUpdate, o
           </table>
         </div>
 
-        <div className="shopee-social-receipts-form" style={{ padding: '14px 18px 20px' }}>
-          <input
-            className="shopee-social-input"
-            placeholder="Tên tài khoản mới, VD: AFF 05"
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
-          />
-          <input
-            className="shopee-social-input"
-            placeholder="Mã SubID2, VD: AB,AC (cách nhau dấu phẩy)"
-            value={newPrefix}
-            onChange={e => setNewPrefix(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
-          />
-          <button type="button" className="btn btn-sm" onClick={handleAdd} disabled={adding}>
+        <div className="shopee-social-receipts-form" style={{ padding: '14px 18px 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              className="shopee-social-input"
+              placeholder="Tên tài khoản mới, VD: AFF 05"
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
+            />
+            <input
+              className="shopee-social-input"
+              placeholder="Mã SubID2, VD: AB,AC (cách nhau dấu phẩy)"
+              value={newPrefix}
+              onChange={e => setNewPrefix(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
+            />
+          </div>
+          <div style={{ maxWidth: 260 }}>
+            <AdAccountPicker
+              selectedIds={newAdAccountIds}
+              onToggle={accId => toggleAdAccountId(newAdAccountIds, setNewAdAccountIds, accId)}
+            />
+          </div>
+          <button type="button" className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={handleAdd} disabled={adding}>
             <Plus size={14} strokeWidth={2} /> Thêm tài khoản
           </button>
         </div>

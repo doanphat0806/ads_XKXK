@@ -10,9 +10,9 @@ import { downloadTextFile, rowsToCsv } from './utils';
 import { loadState, saveState, clearState } from './storage';
 import { fetchAdsSpend } from './adsSpendApi';
 import { importOrdersToServer, fetchSavedOrders, deleteSavedOrders } from './ordersApi';
-import { fetchShopeeAffAccounts, createShopeeAffAccount, updateShopeeAffAccount, deleteShopeeAffAccount } from './accountsApi';
+import { fetchShopeeAffAccounts, createShopeeAffAccount, updateShopeeAffAccount, deleteShopeeAffAccount, fetchShopeeAdAccounts } from './accountsApi';
 import { fetchCommissionReceipts, createCommissionReceipt, deleteCommissionReceipt } from './commissionReceiptsApi';
-import { buildAccountTrendSeries, toDayStr, subIdMatchesAccountCodes } from './accountTrend';
+import { buildAccountTrendSeries, toDayStr, resolveAdAccountScope, campaignBelongsToScope } from './accountTrend';
 
 import UploadPanel from './components/UploadPanel';
 import FiltersBar from './components/FiltersBar';
@@ -51,12 +51,15 @@ export default function ShopeeSocial() {
   const [filters, setFilters] = useState({ ...DEFAULT_FILTERS, fromDate: todayStr(), toDate: todayStr() });
   const [hydrated, setHydrated] = useState(false);
   const [adsSpendBySubId2Daily, setAdsSpendBySubId2Daily] = useState({});
+  const [adsSpendCampaigns, setAdsSpendCampaigns] = useState([]);
   const [adsSpendLoading, setAdsSpendLoading] = useState(false);
   const [shopeeAccounts, setShopeeAccounts] = useState([]);
+  const [shopeeAdAccounts, setShopeeAdAccounts] = useState([]);
   const [commissionReceipts, setCommissionReceipts] = useState([]);
 
   useEffect(() => {
     fetchShopeeAffAccounts().then(setShopeeAccounts).catch(() => {});
+    fetchShopeeAdAccounts().then(setShopeeAdAccounts).catch(() => {});
     fetchCommissionReceipts().then(setCommissionReceipts).catch(() => {});
   }, []);
 
@@ -80,9 +83,9 @@ export default function ShopeeSocial() {
     }
   }
 
-  async function handleCreateAccount(name, subIdPrefix = '') {
+  async function handleCreateAccount(name, subIdPrefix = '', adAccountIds = []) {
     try {
-      const account = await createShopeeAffAccount(name, subIdPrefix);
+      const account = await createShopeeAffAccount(name, subIdPrefix, adAccountIds);
       setShopeeAccounts(prev => (prev.some(a => a._id === account._id) ? prev : [...prev, account].sort((a, b) => a.name.localeCompare(b.name))));
       return account;
     } catch (err) {
@@ -173,14 +176,16 @@ export default function ShopeeSocial() {
   useEffect(() => {
     if (!orders.length || !widenedDateRange.fromDate || !widenedDateRange.toDate) {
       setAdsSpendBySubId2Daily({});
+      setAdsSpendCampaigns([]);
       return;
     }
     let cancelled = false;
     setAdsSpendLoading(true);
     fetchAdsSpend(widenedDateRange.fromDate, widenedDateRange.toDate)
-      .then(({ bySubId2Daily }) => {
+      .then(({ bySubId2Daily, campaigns }) => {
         if (cancelled) return;
         setAdsSpendBySubId2Daily(bySubId2Daily);
+        setAdsSpendCampaigns(campaigns);
       })
       .catch(err => { if (!cancelled) toast.error(`Lỗi tải chi phí Ads: ${err.message}`); })
       .finally(() => { if (!cancelled) setAdsSpendLoading(false); });
@@ -299,14 +304,24 @@ export default function ShopeeSocial() {
     [filteredOrders, cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2]
   );
 
-  // When one specific account is selected and it has configured SubID2 account codes
-  // (e.g. "AA,AB,AC" — the fixed 2-letter segment right after each day's changing
-  // 4-digit batch code), scope the "unmatched campaign" fallback below to those codes —
-  // otherwise another account's zero-order campaigns would leak into this account's totals.
+  // When one specific account is selected, resolve which ad accounts "belong" to it —
+  // either hand-picked (adAccountIds) or, by default, every ad account not explicitly
+  // claimed by another AFF account — plus its configured SubID2 codes (used only for the
+  // default/non-explicit case). Otherwise another account's zero-order campaigns would
+  // leak into this account's totals.
+  const selectedAccountScope = useMemo(() => {
+    if (filters.accountName === 'all') return null;
+    return resolveAdAccountScope(shopeeAccounts, filters.accountName);
+  }, [filters.accountName, shopeeAccounts]);
   const selectedAccountPrefix = useMemo(() => {
     if (filters.accountName === 'all') return '';
     return shopeeAccounts.find(a => a.name === filters.accountName)?.subIdPrefix || '';
   }, [filters.accountName, shopeeAccounts]);
+
+  const unmatchedCampaignsInRange = useMemo(() => {
+    if (!filters.fromDate || !filters.toDate) return [];
+    return adsSpendCampaigns.filter(c => c.date >= filters.fromDate && c.date <= filters.toDate);
+  }, [adsSpendCampaigns, filters.fromDate, filters.toDate]);
 
   // Total ad spend/clicks must count every campaign in the selected date range, including
   // SubID2s that spent money but produced zero matching orders. matrixRows only has a row
@@ -317,19 +332,17 @@ export default function ShopeeSocial() {
   const totalAdSpend = useMemo(() => {
     const matchedKeys = new Set(matrixRows.map(r => r.subIdKey));
     const matrixSpend = matrixRows.reduce((s, r) => s + r.adSpend, 0);
-    const unmatched = Object.entries(adsSpendBySubId2).filter(([key]) => !matchedKeys.has(key));
-    const scoped = selectedAccountPrefix ? unmatched.filter(([key]) => subIdMatchesAccountCodes(key, selectedAccountPrefix)) : unmatched;
-    const unmatchedSpend = scoped.reduce((s, [, v]) => s + (v.spend || 0), 0);
+    const scoped = unmatchedCampaignsInRange.filter(c => !matchedKeys.has(c.subId2) && campaignBelongsToScope(c, selectedAccountScope, selectedAccountPrefix));
+    const unmatchedSpend = scoped.reduce((s, c) => s + (c.spend || 0), 0);
     return matrixSpend + unmatchedSpend;
-  }, [matrixRows, adsSpendBySubId2, selectedAccountPrefix]);
+  }, [matrixRows, unmatchedCampaignsInRange, selectedAccountScope, selectedAccountPrefix]);
   const totalClicks = useMemo(() => {
     const matchedKeys = new Set(matrixRows.map(r => r.subIdKey));
     const matrixClicks = matrixRows.reduce((s, r) => s + r.clicks, 0);
-    const unmatched = Object.entries(adsSpendBySubId2).filter(([key]) => !matchedKeys.has(key));
-    const scoped = selectedAccountPrefix ? unmatched.filter(([key]) => subIdMatchesAccountCodes(key, selectedAccountPrefix)) : unmatched;
-    const unmatchedClicks = scoped.reduce((s, [, v]) => s + (v.clicks || 0), 0);
+    const scoped = unmatchedCampaignsInRange.filter(c => !matchedKeys.has(c.subId2) && campaignBelongsToScope(c, selectedAccountScope, selectedAccountPrefix));
+    const unmatchedClicks = scoped.reduce((s, c) => s + (c.clicks || 0), 0);
     return matrixClicks + unmatchedClicks;
-  }, [matrixRows, adsSpendBySubId2, selectedAccountPrefix]);
+  }, [matrixRows, unmatchedCampaignsInRange, selectedAccountScope, selectedAccountPrefix]);
   const netProfit = kpis.commissionTotal - totalAdSpend;
 
   // "Hoa hồng thực nhận" is a running cash ledger, not a report metric tied to the order
@@ -353,9 +366,10 @@ export default function ShopeeSocial() {
     // an account whose campaigns are still running but haven't produced a completed
     // order yet would otherwise have no chart at all, hiding its ad spend entirely.
     const names = new Set(availableAccounts);
-    shopeeAccounts.forEach(a => { if (a.subIdPrefix) names.add(a.name); });
+    shopeeAccounts.forEach(a => { if (a.subIdPrefix || a.adAccountIds?.length) names.add(a.name); });
     return Array.from(names).sort().map(accountName => {
       const subIdPrefix = shopeeAccounts.find(a => a.name === accountName)?.subIdPrefix || '';
+      const adAccountScope = resolveAdAccountScope(shopeeAccounts, accountName);
 
       // Widen the range to cover this account's own commission-receipt dates — otherwise
       // a receipt entered for a day outside the top date filter (e.g. today, while the
@@ -373,12 +387,12 @@ export default function ShopeeSocial() {
       return {
         accountName,
         series: buildAccountTrendSeries({
-          orders, accountName, subIdPrefix, fromDate, toDate,
-          adsSpendBySubId2Daily, commissionReceipts
+          orders, accountName, subIdPrefix, adAccountScope, fromDate, toDate,
+          campaigns: adsSpendCampaigns, commissionReceipts
         })
       };
     });
-  }, [availableAccounts, shopeeAccounts, orders, filters.fromDate, filters.toDate, adsSpendBySubId2Daily, commissionReceipts]);
+  }, [availableAccounts, shopeeAccounts, orders, filters.fromDate, filters.toDate, adsSpendCampaigns, commissionReceipts]);
 
   function handleCpcChange(subIdKey, value) {
     setCpcBySubId(prev => ({ ...prev, [subIdKey]: value }));
@@ -411,6 +425,7 @@ export default function ShopeeSocial() {
         fileName={fileName}
         orderCount={orders.length}
         accounts={shopeeAccounts}
+        adAccounts={shopeeAdAccounts}
         onCreateAccount={handleCreateAccount}
         onUpdateAccount={handleUpdateAccount}
         onDeleteAccount={handleDeleteAccount}

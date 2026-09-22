@@ -1,8 +1,15 @@
+const mongoose = require('mongoose');
+
 // Manages the user's list of Shopee Affiliate account names, so the Shopee Social
 // upload panel can offer a dropdown of accounts to tag an import with instead of
 // retyping a name (and risking typos that split one account's data in two) each time.
 function registerShopeeSocialAccountsRoutes(app, deps = {}) {
   const { ShopeeAffAccount, ShopeeSocialOrder, ShopeeAffCommissionReceipt } = deps;
+
+  function sanitizeAdAccountIds(value) {
+    if (!Array.isArray(value)) return [];
+    return value.filter(id => mongoose.Types.ObjectId.isValid(id));
+  }
 
   app.get('/api/shopee-social/accounts', async (req, res) => {
     try {
@@ -24,6 +31,7 @@ function registerShopeeSocialAccountsRoutes(app, deps = {}) {
 
       const name = String(req.body?.name || '').trim();
       const subIdPrefix = String(req.body?.subIdPrefix || '').trim();
+      const adAccountIds = sanitizeAdAccountIds(req.body?.adAccountIds);
       if (!name) return res.status(400).json({ error: 'Tên tài khoản không được để trống' });
 
       const ownerUserId = req.currentUser._id;
@@ -34,6 +42,8 @@ function registerShopeeSocialAccountsRoutes(app, deps = {}) {
       const update = { $setOnInsert: { ownerUserId, name } };
       if (subIdPrefix) update.$set = { subIdPrefix };
       else update.$setOnInsert.subIdPrefix = subIdPrefix;
+      if (adAccountIds.length) update.$set = { ...(update.$set || {}), adAccountIds };
+      else update.$setOnInsert.adAccountIds = adAccountIds;
 
       const account = await ShopeeAffAccount.findOneAndUpdate(
         { ownerUserId, name },
@@ -65,6 +75,9 @@ function registerShopeeSocialAccountsRoutes(app, deps = {}) {
       }
       if (req.body?.subIdPrefix !== undefined) {
         update.subIdPrefix = String(req.body.subIdPrefix).trim();
+      }
+      if (req.body?.adAccountIds !== undefined) {
+        update.adAccountIds = sanitizeAdAccountIds(req.body.adAccountIds);
       }
 
       const account = await ShopeeAffAccount.findOneAndUpdate(

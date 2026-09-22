@@ -17,6 +17,38 @@ export function subIdMatchesAccountCodes(subId2, codesCsv) {
   return codes.some(code => rest.startsWith(code));
 }
 
+// Resolves which real ad accounts (Facebook accounts, provider="shopee") "belong" to a
+// given Shopee AFF account:
+//  - if the account has hand-picked ad account(s) (adAccountIds), that exact set is it —
+//    every campaign under those accounts counts, no SubID2 code check needed.
+//  - otherwise it falls back to every ad account NOT explicitly claimed by ANOTHER AFF
+//    account, still filtered by SubID2 code match (the original behavior) — so picking
+//    an ad account for one account automatically keeps its spend out of every other
+//    account's default pool, without having to edit their configs too.
+export function resolveAdAccountScope(shopeeAccounts, accountName) {
+  const account = (shopeeAccounts || []).find(a => a.name === accountName);
+  const explicitIds = (account?.adAccountIds || []).map(String);
+  if (explicitIds.length) return { explicit: true, ids: new Set(explicitIds) };
+
+  const claimed = new Set();
+  (shopeeAccounts || []).forEach(a => {
+    if (a.name === accountName) return;
+    (a.adAccountIds || []).forEach(id => claimed.add(String(id)));
+  });
+  return { explicit: false, claimed };
+}
+
+// A single ads-spend campaign row ({ accountId, subId2, date, spend, clicks }) belongs to
+// an account if it falls within that account's resolved ad-account scope — and, for the
+// default (non-explicit) scope, its SubID2 also matches the account's configured codes.
+// `scope === null` means "no account filter" (used for the "all accounts" view).
+export function campaignBelongsToScope(campaign, scope, subIdPrefix) {
+  if (!scope) return true;
+  if (scope.explicit) return scope.ids.has(String(campaign.accountId));
+  if (scope.claimed.has(String(campaign.accountId))) return false;
+  return subIdMatchesAccountCodes(campaign.subId2, subIdPrefix);
+}
+
 function enumerateDays(fromDate, toDate) {
   const days = [];
   const cur = new Date(`${fromDate}T00:00:00`);
@@ -45,7 +77,7 @@ function enumerateDays(fromDate, toDate) {
 // SubID2/ngày đó. "Thực nhận" vẫn được cộng dồn riêng (actualReceived) để đối chiếu
 // dòng tiền thật — xem summarizeAccountTrend().
 export function buildAccountTrendSeries({
-  orders, accountName, subIdPrefix = '', fromDate, toDate, adsSpendBySubId2Daily = {}, commissionReceipts = []
+  orders, accountName, subIdPrefix = '', adAccountScope = null, fromDate, toDate, campaigns = [], commissionReceipts = []
 }) {
   const days = enumerateDays(fromDate, toDate);
   if (!days.length) return [];
@@ -53,7 +85,6 @@ export function buildAccountTrendSeries({
   const accountOrders = orders.filter(o => (o.accountName || '') === accountName);
 
   const commissionByDay = new Map();
-  const subId2Set = new Set();
   accountOrders.forEach(o => {
     if (!o.orderTime) return;
     const day = toDayStr(o.orderTime);
@@ -63,18 +94,16 @@ export function buildAccountTrendSeries({
     if (o.status !== 'cancelled') {
       commissionByDay.set(day, (commissionByDay.get(day) || 0) + o.commissionTotal);
     }
-    subId2Set.add(o.subIds[1] || '(Không gắn SubID2)');
   });
 
-  // Prefer code-based matching (e.g. account "A1" -> SubID2s whose account-code segment
-  // is "AA", "AB", "AC"...) so a campaign that's still running but hasn't produced a
-  // completed order yet still counts as cost for the right account — matching only
-  // via orders would silently drop that spend from every account's total.
-  if (subIdPrefix) {
-    Object.keys(adsSpendBySubId2Daily).forEach(subId2 => {
-      if (subIdMatchesAccountCodes(subId2, subIdPrefix)) subId2Set.add(subId2);
-    });
-  }
+  // Every campaign whose ad account falls in this account's resolved scope counts as
+  // cost here — not just SubID2s that already produced a completed order, or a campaign
+  // still running with zero orders so far would silently drop out of every account's total.
+  const adSpendByDay = new Map();
+  campaigns.forEach(c => {
+    if (!campaignBelongsToScope(c, adAccountScope, subIdPrefix)) return;
+    adSpendByDay.set(c.date, (adSpendByDay.get(c.date) || 0) + (c.spend || 0));
+  });
 
   const receiptByDay = new Map();
   commissionReceipts.forEach(r => {
@@ -86,8 +115,7 @@ export function buildAccountTrendSeries({
   let cumulative = 0;
   return days.map(day => {
     const commission = commissionByDay.get(day) || 0;
-    let adSpend = 0;
-    subId2Set.forEach(subId2 => { adSpend += adsSpendBySubId2Daily[subId2]?.[day]?.spend || 0; });
+    const adSpend = adSpendByDay.get(day) || 0;
     const actualReceived = receiptByDay.get(day) || 0;
     const reportProfit = commission - adSpend;
     cumulative += reportProfit;
