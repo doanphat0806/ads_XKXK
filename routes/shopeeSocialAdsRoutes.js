@@ -30,7 +30,7 @@ function registerShopeeSocialAdsRoutes(app, deps = {}) {
       const camps = await Campaign.find({
         accountId: { $in: accountIds },
         date: { $gte: fromDate, $lte: toDate }
-      }).select('name spend clicks').lean();
+      }).select('name date spend clicks').lean();
 
       const bySubId2 = {};
       // Also grouped by day, so the frontend can plot a daily ad-spend trend per

@@ -428,9 +428,10 @@ export default function ShopeeSocial() {
 
       {/* Account trend charts are independent of `orders` — an account with a configured
           SubID2 prefix but zero orders yet (campaigns running, no completed order so
-          far) must still get a chart, so this can't live inside the `!orders.length`
-          branch below or it would never render for that account. */}
-      {accountTrends.length > 0 && (
+          far) must still get a chart. When there ARE orders, this renders after the KPI
+          grid below; this branch only covers the zero-orders case, where there's no KPI
+          grid to follow. */}
+      {!orders.length && accountTrends.length > 0 && (
         <>
           <AccountsSummaryTable accountTrends={accountTrends} />
           <div className="shopee-social-account-trend-grid">
@@ -459,6 +460,17 @@ export default function ShopeeSocial() {
             totalActualReceived={totalActualReceived}
             realProfit={realProfit}
           />
+
+          {accountTrends.length > 0 && (
+            <>
+              <AccountsSummaryTable accountTrends={accountTrends} />
+              <div className="shopee-social-account-trend-grid">
+                {accountTrends.map(({ accountName, series }) => (
+                  <AccountTrendChart key={accountName} accountName={accountName} series={series} />
+                ))}
+              </div>
+            </>
+          )}
 
           <div className="shopee-social-charts-grid">
             <div className="card">

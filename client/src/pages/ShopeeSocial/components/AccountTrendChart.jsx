@@ -151,6 +151,19 @@ export default function AccountTrendChart({ accountName, series }) {
               <path key={l.key} d={pathFor(l.key)} fill="none" stroke={l.color} strokeWidth={l.key === PRIMARY_KEY ? 2.5 : 1.5} />
             ))}
 
+            {/* A path with a single "M" (moveto) command and no "L" draws nothing — so a
+                1-day range (series.length === 1) would render empty axes with no visible
+                data. Draw dots explicitly for that case. */}
+            {series.length === 1 && LINES.map(l => (
+              <circle
+                key={l.key}
+                cx={xFor(0)}
+                cy={yFor(series[0][l.key])}
+                r={l.key === PRIMARY_KEY ? 3.5 : 2.5}
+                fill={l.color}
+              />
+            ))}
+
             {hoverIndex !== null && (
               <line x1={xFor(hoverIndex)} x2={xFor(hoverIndex)} y1={PAD_TOP} y2={HEIGHT - PAD_BOTTOM} stroke="var(--border2)" strokeWidth="1" />
             )}
