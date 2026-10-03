@@ -17,6 +17,9 @@ const ShopeeAffAccountSchema = new mongoose.Schema({
   // — so picking an ad account for one account implicitly excludes it from every other
   // account's default pool, without needing to touch their configs.
   adAccountIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: [] }],
+  // % thuế áp trên hoa hồng của tài khoản này (VD: 1.5 = 1.5%), trừ thẳng vào lợi nhuận
+  // theo báo cáo lẫn lợi nhuận thực khi tính toán phía client.
+  taxRate: { type: Number, default: 0, min: 0, max: 100 },
   createdAt: { type: Date, default: Date.now }
 }, { autoIndex: false });
 

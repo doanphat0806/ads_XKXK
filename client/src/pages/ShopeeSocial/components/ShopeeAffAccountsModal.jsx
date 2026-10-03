@@ -7,6 +7,7 @@ export default function ShopeeAffAccountsModal({ accounts, adAccounts = [], onCr
   const [newName, setNewName] = useState('');
   const [newPrefix, setNewPrefix] = useState('');
   const [newAdAccountIds, setNewAdAccountIds] = useState([]);
+  const [newTaxRate, setNewTaxRate] = useState('');
   const [savingId, setSavingId] = useState(null);
   const [adding, setAdding] = useState(false);
 
@@ -23,7 +24,8 @@ export default function ShopeeAffAccountsModal({ accounts, adAccounts = [], onCr
     const account = await onUpdate(id, {
       name,
       subIdPrefix: (row.subIdPrefix || '').trim(),
-      adAccountIds: row.adAccountIds || []
+      adAccountIds: row.adAccountIds || [],
+      taxRate: Math.min(100, Math.max(0, Number(row.taxRate) || 0))
     });
     setSavingId(null);
     if (account) toast.success(`Đã lưu "${account.name}"`);
@@ -113,13 +115,15 @@ export default function ShopeeAffAccountsModal({ accounts, adAccounts = [], onCr
     const name = newName.trim();
     if (!name) { toast.error('Nhập tên tài khoản'); return; }
     setAdding(true);
-    const account = await onCreate(name, newPrefix.trim(), newAdAccountIds);
+    const taxRate = Math.min(100, Math.max(0, Number(newTaxRate) || 0));
+    const account = await onCreate(name, newPrefix.trim(), newAdAccountIds, taxRate);
     setAdding(false);
     if (account) {
       setRows(prev => (prev.some(r => r._id === account._id) ? prev : [...prev, { ...account, adAccountIds: (account.adAccountIds || []).map(String) }]));
       setNewName('');
       setNewPrefix('');
       setNewAdAccountIds([]);
+      setNewTaxRate('');
     }
   }
 
@@ -138,6 +142,8 @@ export default function ShopeeAffAccountsModal({ accounts, adAccounts = [], onCr
           Mã SubID2 là phần chữ ngay sau 4 số đầu (ngày/tháng đổi mỗi ngày) — VD SubID2 "1707AB06" thì mã là "AB". 1 tài khoản có thể gõ nhiều mã, cách nhau dấu phẩy.
           <br />
           Tài khoản QC: chọn thủ công tài khoản quảng cáo thuộc về tài khoản này (không cần khớp mã SubID2 nữa). Nếu không chọn, tài khoản này sẽ tự nhận tất cả tài khoản QC nào chưa bị tài khoản AFF khác chọn.
+          <br />
+          Thuế (%): % trừ thẳng vào hoa hồng của tài khoản này khi tính Lợi nhuận (báo cáo) và Lợi nhuận thực. Để 0 nếu không áp thuế.
         </div>
 
         <div className="tbl-wrap" style={{ padding: '0 18px' }}>
@@ -147,6 +153,7 @@ export default function ShopeeAffAccountsModal({ accounts, adAccounts = [], onCr
                 <th>Tên tài khoản</th>
                 <th>Mã SubID2 (VD: AB,AC)</th>
                 <th>Tài khoản QC</th>
+                <th>Thuế (%)</th>
                 <th></th>
               </tr>
             </thead>
@@ -179,6 +186,18 @@ export default function ShopeeAffAccountsModal({ accounts, adAccounts = [], onCr
                     />
                   </td>
                   <td>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      className="shopee-social-input"
+                      style={{ width: 70 }}
+                      value={r.taxRate ?? 0}
+                      onChange={e => updateRow(r._id, 'taxRate', e.target.value)}
+                    />
+                  </td>
+                  <td>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button
                         type="button"
@@ -203,7 +222,7 @@ export default function ShopeeAffAccountsModal({ accounts, adAccounts = [], onCr
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={4} style={{ textAlign: 'center', padding: 16, color: 'var(--muted2)' }}>
+                  <td colSpan={5} style={{ textAlign: 'center', padding: 16, color: 'var(--muted2)' }}>
                     Chưa có tài khoản nào
                   </td>
                 </tr>
@@ -226,6 +245,18 @@ export default function ShopeeAffAccountsModal({ accounts, adAccounts = [], onCr
               placeholder="Mã SubID2, VD: AB,AC (cách nhau dấu phẩy)"
               value={newPrefix}
               onChange={e => setNewPrefix(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
+            />
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.1"
+              className="shopee-social-input"
+              style={{ width: 90 }}
+              placeholder="Thuế (%)"
+              value={newTaxRate}
+              onChange={e => setNewTaxRate(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
             />
           </div>

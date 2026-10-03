@@ -8,16 +8,17 @@ export async function fetchShopeeAffAccounts() {
   return result?.accounts || [];
 }
 
-export async function createShopeeAffAccount(name, subIdPrefix = '', adAccountIds = []) {
-  const result = await api('POST', '/shopee-social/accounts', { name, subIdPrefix, adAccountIds });
+export async function createShopeeAffAccount(name, subIdPrefix = '', adAccountIds = [], taxRate = 0) {
+  const result = await api('POST', '/shopee-social/accounts', { name, subIdPrefix, adAccountIds, taxRate });
   return result?.account;
 }
 
-export async function updateShopeeAffAccount(id, { name, subIdPrefix, adAccountIds } = {}) {
+export async function updateShopeeAffAccount(id, { name, subIdPrefix, adAccountIds, taxRate } = {}) {
   const body = {};
   if (name !== undefined) body.name = name;
   if (subIdPrefix !== undefined) body.subIdPrefix = subIdPrefix;
   if (adAccountIds !== undefined) body.adAccountIds = adAccountIds;
+  if (taxRate !== undefined) body.taxRate = taxRate;
   const result = await api('PATCH', `/shopee-social/accounts/${id}`, body);
   return result?.account;
 }

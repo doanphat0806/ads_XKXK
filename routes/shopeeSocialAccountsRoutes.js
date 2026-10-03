@@ -11,6 +11,12 @@ function registerShopeeSocialAccountsRoutes(app, deps = {}) {
     return value.filter(id => mongoose.Types.ObjectId.isValid(id));
   }
 
+  function sanitizeTaxRate(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    return Math.min(100, Math.max(0, n));
+  }
+
   app.get('/api/shopee-social/accounts', async (req, res) => {
     try {
       if (!req.currentUser?._id) return res.status(401).json({ error: 'Unauthorized' });
@@ -32,6 +38,7 @@ function registerShopeeSocialAccountsRoutes(app, deps = {}) {
       const name = String(req.body?.name || '').trim();
       const subIdPrefix = String(req.body?.subIdPrefix || '').trim();
       const adAccountIds = sanitizeAdAccountIds(req.body?.adAccountIds);
+      const taxRate = sanitizeTaxRate(req.body?.taxRate);
       if (!name) return res.status(400).json({ error: 'Tên tài khoản không được để trống' });
 
       const ownerUserId = req.currentUser._id;
@@ -44,6 +51,8 @@ function registerShopeeSocialAccountsRoutes(app, deps = {}) {
       else update.$setOnInsert.subIdPrefix = subIdPrefix;
       if (adAccountIds.length) update.$set = { ...(update.$set || {}), adAccountIds };
       else update.$setOnInsert.adAccountIds = adAccountIds;
+      if (taxRate) update.$set = { ...(update.$set || {}), taxRate };
+      else update.$setOnInsert.taxRate = taxRate;
 
       const account = await ShopeeAffAccount.findOneAndUpdate(
         { ownerUserId, name },
@@ -78,6 +87,9 @@ function registerShopeeSocialAccountsRoutes(app, deps = {}) {
       }
       if (req.body?.adAccountIds !== undefined) {
         update.adAccountIds = sanitizeAdAccountIds(req.body.adAccountIds);
+      }
+      if (req.body?.taxRate !== undefined) {
+        update.taxRate = sanitizeTaxRate(req.body.taxRate);
       }
 
       const account = await ShopeeAffAccount.findOneAndUpdate(

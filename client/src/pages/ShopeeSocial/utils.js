@@ -127,6 +127,13 @@ export const CHANNEL_LABELS = {
   other: 'Khác'
 };
 
+// Maps account name -> tax % (0-100) for quick lookup while computing profit figures.
+export function buildTaxRateMap(shopeeAccounts) {
+  const map = {};
+  (shopeeAccounts || []).forEach(a => { map[a.name] = Number(a.taxRate) || 0; });
+  return map;
+}
+
 export function buildSubIdKey(subIds) {
   const parts = subIds.map(v => (v || '').trim()).filter(Boolean);
   return parts.length ? parts.join(' / ') : '(Không gắn SubID)';

@@ -6,7 +6,7 @@ import {
   filterOrders, computeKpis, buildSubIdMatrix, computePlatformDistribution,
   computeHourlyDistribution, computeTopProducts, computeTopShops, computeWarnings
 } from './calculations';
-import { downloadTextFile, rowsToCsv } from './utils';
+import { downloadTextFile, rowsToCsv, buildTaxRateMap } from './utils';
 import { loadState, saveState, clearState } from './storage';
 import { fetchAdsSpend } from './adsSpendApi';
 import { importOrdersToServer, fetchSavedOrders, deleteSavedOrders } from './ordersApi';
@@ -82,9 +82,9 @@ export default function ShopeeSocial() {
     }
   }
 
-  async function handleCreateAccount(name, subIdPrefix = '', adAccountIds = []) {
+  async function handleCreateAccount(name, subIdPrefix = '', adAccountIds = [], taxRate = 0) {
     try {
-      const account = await createShopeeAffAccount(name, subIdPrefix, adAccountIds);
+      const account = await createShopeeAffAccount(name, subIdPrefix, adAccountIds, taxRate);
       setShopeeAccounts(prev => (prev.some(a => a._id === account._id) ? prev : [...prev, account].sort((a, b) => a.name.localeCompare(b.name))));
       return account;
     } catch (err) {
@@ -318,9 +318,11 @@ export default function ShopeeSocial() {
     return result;
   }, [scopedCampaignsInRange]);
 
+  const taxRateByAccountName = useMemo(() => buildTaxRateMap(shopeeAccounts), [shopeeAccounts]);
+
   const matrixRows = useMemo(
-    () => buildSubIdMatrix(filteredOrders, { cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2 }),
-    [filteredOrders, cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2]
+    () => buildSubIdMatrix(filteredOrders, { cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2, taxRateByAccountName }),
+    [filteredOrders, cpcBySubId, defaultCpc, clicksBySubId, adsSpendBySubId2, taxRateByAccountName]
   );
 
   // Total ad spend/clicks must count every campaign in the selected date range, including
@@ -346,7 +348,11 @@ export default function ShopeeSocial() {
       .reduce((s, c) => s + (c.clicks || 0), 0);
     return matrixClicks + unmatchedClicks;
   }, [matrixRows, scopedCampaignsInRange]);
-  const netProfit = kpis.commissionTotal - totalAdSpend;
+  // Every filtered order lands in exactly one matrixRows group (even unmatched SubID2s
+  // get a "(Không gắn SubID2)" row), so summing taxAmount here covers the same order set
+  // as kpis.commissionTotal — unlike totalAdSpend, there's no "unmatched" leftover to add.
+  const totalTax = useMemo(() => matrixRows.reduce((s, r) => s + r.taxAmount, 0), [matrixRows]);
+  const netProfit = kpis.commissionTotal - totalTax - totalAdSpend;
 
   // "Hoa hồng thực nhận" is a running cash ledger, not a report metric tied to the order
   // date range — a payout entered for today shouldn't vanish from the KPI just because
@@ -357,7 +363,12 @@ export default function ShopeeSocial() {
       .filter(r => filters.accountName === 'all' || r.accountName === filters.accountName)
       .reduce((s, r) => s + r.amount, 0);
   }, [commissionReceipts, filters.accountName]);
-  const realProfit = totalActualReceived - totalAdSpend;
+  const totalActualTax = useMemo(() => {
+    return commissionReceipts
+      .filter(r => filters.accountName === 'all' || r.accountName === filters.accountName)
+      .reduce((s, r) => s + r.amount * ((taxRateByAccountName[r.accountName] || 0) / 100), 0);
+  }, [commissionReceipts, filters.accountName, taxRateByAccountName]);
+  const realProfit = totalActualReceived - totalActualTax - totalAdSpend;
   const platformDistribution = useMemo(() => computePlatformDistribution(filteredOrders), [filteredOrders]);
   const hourlyDistribution = useMemo(() => computeHourlyDistribution(filteredOrders), [filteredOrders]);
   const topProducts = useMemo(() => computeTopProducts(filteredOrders), [filteredOrders]);
@@ -372,6 +383,7 @@ export default function ShopeeSocial() {
     shopeeAccounts.forEach(a => { if (a.subIdPrefix || a.adAccountIds?.length) names.add(a.name); });
     return Array.from(names).sort().map(accountName => {
       const subIdPrefix = shopeeAccounts.find(a => a.name === accountName)?.subIdPrefix || '';
+      const taxRate = taxRateByAccountName[accountName] || 0;
       const adAccountScope = resolveAdAccountScope(shopeeAccounts, accountName);
 
       // Widen the range to cover this account's own commission-receipt dates — otherwise
@@ -389,13 +401,14 @@ export default function ShopeeSocial() {
 
       return {
         accountName,
+        taxRate,
         series: buildAccountTrendSeries({
           orders, accountName, subIdPrefix, adAccountScope, fromDate, toDate,
-          campaigns: adsSpendCampaigns, commissionReceipts
+          campaigns: adsSpendCampaigns, commissionReceipts, taxRate
         })
       };
     });
-  }, [availableAccounts, shopeeAccounts, orders, filters.fromDate, filters.toDate, adsSpendCampaigns, commissionReceipts]);
+  }, [availableAccounts, shopeeAccounts, orders, filters.fromDate, filters.toDate, adsSpendCampaigns, commissionReceipts, taxRateByAccountName]);
 
   function handleCpcChange(subIdKey, value) {
     setCpcBySubId(prev => ({ ...prev, [subIdKey]: value }));
@@ -453,8 +466,8 @@ export default function ShopeeSocial() {
         <>
           <AccountsSummaryTable accountTrends={accountTrends} />
           <div className="shopee-social-account-trend-grid">
-            {accountTrends.map(({ accountName, series }) => (
-              <AccountTrendChart key={accountName} accountName={accountName} series={series} />
+            {accountTrends.map(({ accountName, series, taxRate }) => (
+              <AccountTrendChart key={accountName} accountName={accountName} series={series} taxRate={taxRate} />
             ))}
           </div>
         </>
@@ -477,14 +490,16 @@ export default function ShopeeSocial() {
             totalClicks={totalClicks}
             totalActualReceived={totalActualReceived}
             realProfit={realProfit}
+            totalTax={totalTax}
+            totalActualTax={totalActualTax}
           />
 
           {accountTrends.length > 0 && (
             <>
               <AccountsSummaryTable accountTrends={accountTrends} />
               <div className="shopee-social-account-trend-grid">
-                {accountTrends.map(({ accountName, series }) => (
-                  <AccountTrendChart key={accountName} accountName={accountName} series={series} />
+                {accountTrends.map(({ accountName, series, taxRate }) => (
+                  <AccountTrendChart key={accountName} accountName={accountName} series={series} taxRate={taxRate} />
                 ))}
               </div>
             </>

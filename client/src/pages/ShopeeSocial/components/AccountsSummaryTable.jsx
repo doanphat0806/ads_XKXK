@@ -4,7 +4,7 @@ import { summarizeAccountTrend } from '../accountTrend';
 
 export default function AccountsSummaryTable({ accountTrends }) {
   const rows = useMemo(
-    () => accountTrends.map(({ accountName, series }) => ({ accountName, ...summarizeAccountTrend(series) })),
+    () => accountTrends.map(({ accountName, series, taxRate }) => ({ accountName, ...summarizeAccountTrend(series, taxRate) })),
     [accountTrends]
   );
 
@@ -12,12 +12,14 @@ export default function AccountsSummaryTable({ accountTrends }) {
     totalCommission: acc.totalCommission + r.totalCommission,
     totalAdSpend: acc.totalAdSpend + r.totalAdSpend,
     totalActualReceived: acc.totalActualReceived + r.totalActualReceived,
-    reportProfitTotal: acc.reportProfitTotal + r.reportProfitTotal
-  }), { totalCommission: 0, totalAdSpend: 0, totalActualReceived: 0, reportProfitTotal: 0 }), [rows]);
+    totalTax: acc.totalTax + r.totalTax,
+    reportProfitTotal: acc.reportProfitTotal + r.reportProfitTotal,
+    realProfit: acc.realProfit + r.realProfit
+  }), { totalCommission: 0, totalAdSpend: 0, totalActualReceived: 0, totalTax: 0, reportProfitTotal: 0, realProfit: 0 }), [rows]);
 
   const totalAdsOverCommission = totals.totalCommission > 0 ? (totals.totalAdSpend / totals.totalCommission) * 100 : 0;
   const totalReceivedOverReported = totals.totalCommission > 0 ? (totals.totalActualReceived / totals.totalCommission) * 100 : 0;
-  const totalRealProfit = totals.totalActualReceived - totals.totalAdSpend;
+  const totalRealProfit = totals.realProfit;
 
   if (!rows.length) return null;
 
@@ -35,6 +37,7 @@ export default function AccountsSummaryTable({ accountTrends }) {
         <div className="shopee-social-summary-row shopee-social-summary-head">
           <div>Tài khoản</div>
           <div className="text-right">Hoa hồng</div>
+          <div className="text-right">Thuế</div>
           <div className="text-right">Chi phí Ads</div>
           <div className="text-right">Lợi nhuận (báo cáo)</div>
           <div className="text-right">Hoa hồng thực nhận</div>
@@ -47,6 +50,7 @@ export default function AccountsSummaryTable({ accountTrends }) {
           <div className="shopee-social-summary-row" key={r.accountName}>
             <div>{r.accountName}</div>
             <div className="text-right mono-sm">{formatVND(r.totalCommission)}</div>
+            <div className="text-right mono-sm" style={{ color: 'var(--muted2)' }}>{formatVND(r.totalTax)}</div>
             <div className="text-right mono-sm">{formatVND(r.totalAdSpend)}</div>
             <div className="text-right mono-sm" style={{ color: r.reportProfitTotal >= 0 ? 'var(--g)' : 'var(--r)', fontWeight: 600 }}>
               {formatVND(r.reportProfitTotal)}
@@ -63,6 +67,7 @@ export default function AccountsSummaryTable({ accountTrends }) {
         <div className="shopee-social-summary-row shopee-social-summary-foot">
           <div><strong>Tổng cộng</strong></div>
           <div className="text-right mono-sm"><strong>{formatVND(totals.totalCommission)}</strong></div>
+          <div className="text-right mono-sm" style={{ color: 'var(--muted2)' }}><strong>{formatVND(totals.totalTax)}</strong></div>
           <div className="text-right mono-sm"><strong>{formatVND(totals.totalAdSpend)}</strong></div>
           <div className="text-right mono-sm" style={{ color: totals.reportProfitTotal >= 0 ? 'var(--g)' : 'var(--r)' }}>
             <strong>{formatVND(totals.reportProfitTotal)}</strong>

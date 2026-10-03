@@ -74,7 +74,11 @@ export function evaluateSubIdRow(row) {
 // Ad spend is only known at the SubID2 level — that's the unit a campaign is actually created
 // for (campaign name = SubID2 + fixed suffix), so grouping the matrix any finer (full 5-level
 // combo) would either misattribute or double-count spend shared across sibling products/posts.
-export function buildSubIdMatrix(orders, { cpcBySubId = {}, defaultCpc = 0, clicksBySubId = {}, adsSpendBySubId2 = {} } = {}) {
+// taxRateByAccountName: { [accountName]: percent (0-100) } — each order's commission is
+// taxed at ITS OWN account's rate before summing into the row, so a SubID2 row whose
+// orders span more than one account (e.g. when viewing "all accounts") still taxes each
+// order's commission at the correct rate instead of one blended rate for the whole row.
+export function buildSubIdMatrix(orders, { cpcBySubId = {}, defaultCpc = 0, clicksBySubId = {}, adsSpendBySubId2 = {}, taxRateByAccountName = {} } = {}) {
   const groups = new Map();
 
   orders.forEach(order => {
@@ -91,7 +95,8 @@ export function buildSubIdMatrix(orders, { cpcBySubId = {}, defaultCpc = 0, clic
         gmv: 0,
         commissionShopee: 0,
         commissionXtra: 0,
-        commissionTotal: 0
+        commissionTotal: 0,
+        taxAmount: 0
       });
     }
     const g = groups.get(key);
@@ -102,6 +107,8 @@ export function buildSubIdMatrix(orders, { cpcBySubId = {}, defaultCpc = 0, clic
     g.commissionShopee += order.commissionShopee;
     g.commissionXtra += order.commissionXtra;
     g.commissionTotal += order.commissionTotal;
+    const taxRate = taxRateByAccountName[order.accountName || ''] || 0;
+    g.taxAmount += order.commissionTotal * (taxRate / 100);
   });
 
   return Array.from(groups.values()).map(row => {
@@ -128,7 +135,7 @@ export function buildSubIdMatrix(orders, { cpcBySubId = {}, defaultCpc = 0, clic
       spendSource = 'none';
     }
 
-    const profit = row.commissionTotal - adSpend;
+    const profit = row.commissionTotal - row.taxAmount - adSpend;
     const epc = clicks > 0 ? row.commissionTotal / clicks : 0;
     const cvr = clicks > 0 ? row.orders / clicks : 0;
     const enriched = { ...row, cpc, clicks, adSpend, profit, epc, cvr, spendSource };

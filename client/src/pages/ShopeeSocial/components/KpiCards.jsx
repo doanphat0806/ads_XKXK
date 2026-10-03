@@ -12,7 +12,7 @@ function Kpi({ tone, label, value, sub }) {
   );
 }
 
-export default function KpiCards({ kpis, netProfit, totalAdSpend, totalClicks, totalActualReceived, realProfit }) {
+export default function KpiCards({ kpis, netProfit, totalAdSpend, totalClicks, totalActualReceived, realProfit, totalTax = 0, totalActualTax = 0 }) {
   const blendedCpc = totalClicks > 0 ? totalAdSpend / totalClicks : 0;
   return (
     <div className="shopee-social-kpi-grid">
@@ -29,11 +29,19 @@ export default function KpiCards({ kpis, netProfit, totalAdSpend, totalClicks, t
         value={formatVND(totalAdSpend)}
         sub={`${formatNumber(totalClicks)} clicks · CPC TB ${formatVND(blendedCpc)}`}
       />
+      {totalTax > 0 && (
+        <Kpi
+          tone="o"
+          label="Thuế"
+          value={formatVND(totalTax)}
+          sub="Theo % thuế từng tài khoản"
+        />
+      )}
       <Kpi
         tone={netProfit >= 0 ? 'g' : 'r'}
         label="Lợi Nhuận Ròng"
         value={formatVND(netProfit)}
-        sub="Hoa hồng − Chi phí Ads"
+        sub="Hoa hồng − Thuế − Chi phí Ads"
       />
       <Kpi
         tone="teal"
@@ -45,7 +53,7 @@ export default function KpiCards({ kpis, netProfit, totalAdSpend, totalClicks, t
         tone={realProfit >= 0 ? 'g' : 'r'}
         label="Lợi Nhuận Thực"
         value={formatVND(realProfit)}
-        sub="Thực nhận − Chi phí Ads"
+        sub={totalActualTax > 0 ? `Thực nhận − Thuế (${formatVND(totalActualTax)}) − Chi phí Ads` : 'Thực nhận − Chi phí Ads'}
       />
       <Kpi
         tone="o"

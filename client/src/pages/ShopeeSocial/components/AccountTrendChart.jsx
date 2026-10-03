@@ -23,14 +23,14 @@ const LINES = [
 // ra "lỗ giả" ở ngày mới chi Ads. Thực nhận chỉ dùng để đối chiếu ở dòng "Đã nhận/Báo cáo".
 const PRIMARY_KEY = 'reportProfit';
 
-export default function AccountTrendChart({ accountName, series }) {
+export default function AccountTrendChart({ accountName, series, taxRate = 0 }) {
   const [hoverIndex, setHoverIndex] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const gradientId = useId();
   const plotWidth = WIDTH - PAD_LEFT - PAD_RIGHT;
   const plotHeight = HEIGHT - PAD_TOP - PAD_BOTTOM;
 
-  const summary = useMemo(() => summarizeAccountTrend(series), [series]);
+  const summary = useMemo(() => summarizeAccountTrend(series, taxRate), [series, taxRate]);
 
   const { min, max } = useMemo(() => {
     let mn = 0;
@@ -73,6 +73,7 @@ export default function AccountTrendChart({ accountName, series }) {
       <span>Lợi nhuận (báo cáo): <b style={{ color: summary.reportProfitTotal >= 0 ? 'var(--g)' : 'var(--r)' }}>{formatVND(summary.reportProfitTotal)}</b></span>
       <span>Chi phí Ads: <b>{formatVND(summary.totalAdSpend)}</b></span>
       <span>Hoa hồng: <b>{formatVND(summary.totalCommission)}</b></span>
+      {taxRate > 0 && <span>Thuế ({taxRate}%): <b style={{ color: 'var(--muted2)' }}>{formatVND(summary.totalTax)}</b></span>}
       <span>Hoa hồng thực nhận: <b style={{ color: 'var(--g)' }}>{formatVND(summary.totalActualReceived)}</b></span>
       <span>Lợi nhuận thực: <b style={{ color: summary.realProfit >= 0 ? 'var(--g)' : 'var(--r)' }}>{formatVND(summary.realProfit)}</b></span>
       <span>ADS/HH: <b>{summary.adsOverCommission.toFixed(1)}%</b></span>
