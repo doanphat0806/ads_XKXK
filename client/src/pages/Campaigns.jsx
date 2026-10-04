@@ -693,10 +693,21 @@ export default function Campaigns() {
                   <th style={{ width: '240px' }}>Tên Campaign</th>
                   <th>Trạng thái</th>
                   <th>Ngân sách</th>
+                  <th className="text-right">Giá bid</th>
                   <th style={{ width: '180px' }}>Chi tiêu</th>
                   <th className="text-right">Tin nhắn</th>
                   <th className="text-right">Chi phí/TN</th>
                   <th className="text-right">Clicks</th>
+                  <th className="text-right">Hiển thị</th>
+                  <th className="text-right">Tiếp cận</th>
+                  <th className="text-right">Tương tác</th>
+                  <th className="text-right">CPC</th>
+                  <th className="text-right">CPM</th>
+                  <th className="text-right">CTR</th>
+                  <th className="text-right">Click liên kết</th>
+                  <th className="text-right">CPC liên kết</th>
+                  <th className="text-right">Tần suất</th>
+                  <th className="text-right">CPP</th>
                   <th></th>
                 </tr>
               </thead>
@@ -711,6 +722,11 @@ export default function Campaigns() {
                   const account = getCampaignAccount(campaign, allAccounts);
                   const selectionKey = getCampaignSelectionKey(campaign);
                   const isSelected = selectedCampaignKeys.has(selectionKey);
+                  const spend = Number(campaign.spend || 0);
+                  const clicks = Number(campaign.clicks || 0);
+                  const impressions = Number(campaign.impressions || 0);
+                  const reach = Number(campaign.reach || 0);
+                  const linkClicks = Number(campaign.linkClicks || 0);
 
                   return (
                     <tr
@@ -757,6 +773,7 @@ export default function Campaigns() {
                           </>
                         ) : '-'}
                       </td>
+                      <td className="text-right mono-sm">{Number(campaign.bidAmount || 0) > 0 ? formatVND(campaign.bidAmount) : '-'}</td>
                       <td>
                         <div className="spend-col">
                           <div className="pbar"><div className="pbar-fill" style={{ width: `${pct}%`, background: pColor }}></div></div>
@@ -767,7 +784,17 @@ export default function Campaigns() {
                       <td className="text-right" style={{ color: 'var(--g2)', fontFamily: 'var(--mono)' }}>
                         {campaign.messages > 0 ? formatVND(campaign.spend / campaign.messages) : '-'}
                       </td>
-                      <td className="text-right mono-sm" style={{ color: 'var(--muted2)' }}>{formatNumber(campaign.clicks || 0)}</td>
+                      <td className="text-right mono-sm" style={{ color: 'var(--muted2)' }}>{formatNumber(clicks)}</td>
+                      <td className="text-right mono-sm" style={{ color: 'var(--muted2)' }}>{formatNumber(impressions)}</td>
+                      <td className="text-right mono-sm" style={{ color: 'var(--muted2)' }}>{formatNumber(reach)}</td>
+                      <td className="text-right mono-sm" style={{ color: 'var(--muted2)' }}>{formatNumber(campaign.engagements || 0)}</td>
+                      <td className="text-right mono-sm">{clicks > 0 ? formatVND(spend / clicks) : '-'}</td>
+                      <td className="text-right mono-sm">{impressions > 0 ? formatVND((spend / impressions) * 1000) : '-'}</td>
+                      <td className="text-right mono-sm">{impressions > 0 ? `${((clicks / impressions) * 100).toFixed(2)}%` : '-'}</td>
+                      <td className="text-right mono-sm" style={{ color: 'var(--muted2)' }}>{formatNumber(linkClicks)}</td>
+                      <td className="text-right mono-sm">{linkClicks > 0 ? formatVND(spend / linkClicks) : '-'}</td>
+                      <td className="text-right mono-sm">{reach > 0 ? (impressions / reach).toFixed(2) : '-'}</td>
+                      <td className="text-right mono-sm">{reach > 0 ? formatVND((spend / reach) * 1000) : '-'}</td>
                       <td>
                         <label
                           className="tgl"

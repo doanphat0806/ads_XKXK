@@ -1611,10 +1611,14 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           lifetimeBudget: { $last: '$lifetimeBudget' },
           budgetType: { $last: '$budgetType' },
           createdTime: { $last: '$createdTime' },
+          bidAmount: { $last: '$bidAmount' },
           spend: { $sum: '$spend' },
           messages: { $sum: '$messages' },
           clicks: { $sum: '$clicks' },
           impressions: { $sum: '$impressions' },
+          reach: { $sum: '$reach' },
+          engagements: { $sum: '$engagements' },
+          linkClicks: { $sum: '$linkClicks' },
           costPerMessage: { $last: '$costPerMessage' },
           metaOrders: { $sum: '$metaOrders' }
         }
@@ -1631,10 +1635,14 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           lifetimeBudget: 1,
           budgetType: 1,
           createdTime: 1,
+          bidAmount: 1,
           spend: 1,
           messages: 1,
           clicks: 1,
           impressions: 1,
+          reach: 1,
+          engagements: 1,
+          linkClicks: 1,
           metaOrders: 1,
           costPerMessage: 1
         }
@@ -1744,10 +1752,14 @@ app.get('/api/campaigns/today', async (req, res) => {
           lifetimeBudget: { $last: '$lifetimeBudget' },
           budgetType: { $last: '$budgetType' },
           createdTime: { $last: '$createdTime' },
+          bidAmount: { $last: '$bidAmount' },
           spend: { $sum: '$spend' },
           messages: { $sum: '$messages' },
           clicks: { $sum: '$clicks' },
           impressions: { $sum: '$impressions' },
+          reach: { $sum: '$reach' },
+          engagements: { $sum: '$engagements' },
+          linkClicks: { $sum: '$linkClicks' },
           costPerMessage: { $last: '$costPerMessage' },
           metaOrders: { $sum: '$metaOrders' }
         }
@@ -1764,10 +1776,14 @@ app.get('/api/campaigns/today', async (req, res) => {
           lifetimeBudget: 1,
           budgetType: 1,
           createdTime: 1,
+          bidAmount: 1,
           spend: 1,
           messages: 1,
           clicks: 1,
           impressions: 1,
+          reach: 1,
+          engagements: 1,
+          linkClicks: 1,
           metaOrders: 1,
           costPerMessage: 1
         }
@@ -1838,7 +1854,7 @@ async function fetchAccountInsightsInRange(account, fromDate, toDate) {
     : `act_${account.adAccountId}`;
 
   const { items } = await fetchAllFbEdge(fbToken, `${acctId}/insights`, {
-    fields: 'campaign_id,campaign_name,spend,impressions,clicks,actions,conversions,cost_per_action_type',
+    fields: 'campaign_id,campaign_name,spend,impressions,reach,clicks,inline_link_clicks,inline_post_engagement,actions,conversions,cost_per_action_type',
     time_range: JSON.stringify({ since: fromDate, until: toDate }),
     level: 'campaign',
     limit: 500,
@@ -1903,6 +1919,9 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
     const spend = parseFloat(insight.spend || 0);
     const impressions = parseInt(insight.impressions || 0, 10);
     const clicks = parseInt(insight.clicks || 0, 10);
+    const reach = getMetaReachFromInsight(insight);
+    const engagements = getMetaEngagementsFromInsight(insight);
+    const linkClicks = getMetaLinkClicksFromInsight(insight);
     const msgAction = isShopee ? null : getMetaMessageActionFromInsight(insight);
     const messages = isShopee ? 0 : parseInt(msgAction?.value || 0, 10);
     const costPerMessage = isShopee ? 0 : getMetaCostPerMessageFromInsight(insight);
@@ -1911,10 +1930,12 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
 
     const campaignUpdate = {
       name: insight.campaign_name,
-      bidAmount: 0,
       spend,
       impressions,
+      reach,
       clicks,
+      engagements,
+      linkClicks,
       messages,
       costPerMessage,
       metaOrders
@@ -2737,10 +2758,20 @@ app.get('/api/reports/export-spending', async (req, res) => {
       'Ten Campaign': c.name,
       'Ten quang cao': c.adName || '',
       'Chi tieu': c.spend,
+      'Gia bid': c.bidAmount || 0,
       'Tin nhan': c.messages,
       'Gia/TN': c.costPerMessage,
       'Clicks': c.clicks,
-      'Hien thi': c.impressions
+      'Hien thi': c.impressions,
+      'Tiep can': c.reach || 0,
+      'Tuong tac': c.engagements || 0,
+      'Click lien ket': c.linkClicks || 0,
+      'CPC': c.clicks > 0 ? Math.round(c.spend / c.clicks) : 0,
+      'CPM': c.impressions > 0 ? Math.round((c.spend / c.impressions) * 1000) : 0,
+      'CTR (%)': c.impressions > 0 ? ((c.clicks / c.impressions) * 100).toFixed(2) : 0,
+      'CPC lien ket': c.linkClicks > 0 ? Math.round(c.spend / c.linkClicks) : 0,
+      'Tan suat': c.reach > 0 ? (c.impressions / c.reach).toFixed(2) : 0,
+      'CPP': c.reach > 0 ? Math.round((c.spend / c.reach) * 1000) : 0
     }));
 
     const header = Object.keys(rows[0]).join(',');

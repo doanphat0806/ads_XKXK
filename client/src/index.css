@@ -4018,19 +4018,77 @@
       border-right: 1px solid #dfe9f2;
     }
 
+    #page-dashboard .dashboard-column-menu {
+      position: relative;
+    }
+
+    #page-dashboard .dashboard-column-menu-panel {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 50;
+      min-width: 200px;
+      max-height: 360px;
+      overflow-y: auto;
+      padding: 6px;
+      background: #ffffff;
+      border: 1px solid #dfe9f2;
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+    }
+
+    #page-dashboard .dashboard-column-menu-actions {
+      display: flex;
+      justify-content: flex-end;
+      padding: 2px 4px 6px;
+      border-bottom: 1px solid #dfe9f2;
+      margin-bottom: 4px;
+    }
+
+    #page-dashboard .dashboard-column-menu-actions button {
+      border: 0;
+      background: transparent;
+      color: var(--b);
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    #page-dashboard .dashboard-column-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--txt);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    #page-dashboard .dashboard-column-menu-item:hover {
+      background: #eef6fb;
+    }
+
+    #dashCampTable {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
     #dashCampTable table {
-      table-layout: fixed;
+      width: max-content;
+      min-width: 100%;
+      table-layout: auto;
     }
 
     #dashCampTable th,
     #dashCampTable td {
-      overflow: hidden;
-      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     #dashCampTable th:first-child,
     #dashCampTable td:first-child {
-      width: 24%;
+      min-width: 220px;
+      white-space: normal;
     }
 
     @media (max-width: 900px) {

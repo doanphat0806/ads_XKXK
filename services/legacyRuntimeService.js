@@ -315,6 +315,22 @@ function createLegacyRuntime(app) {
     return values.length ? Math.round(Math.max(...values)) : 0;
   }
   
+  function getMetaEngagementsFromInsight(insight = {}) {
+    const inline = parseInsightMetricValue(insight.inline_post_engagement);
+    if (inline > 0) return Math.round(inline);
+    const actions = Array.isArray(insight.actions) ? insight.actions : [];
+    const action = actions.find(item => String(item?.action_type || '').toLowerCase() === 'post_engagement');
+    return Math.round(parseInsightMetricValue(action?.value));
+  }
+
+  function getMetaLinkClicksFromInsight(insight = {}) {
+    return Math.round(parseInsightMetricValue(insight.inline_link_clicks));
+  }
+
+  function getMetaReachFromInsight(insight = {}) {
+    return Math.round(parseInsightMetricValue(insight.reach));
+  }
+
   const META_MESSAGE_ACTION_TYPES = [
     'onsite_conversion.messaging_conversation_started_7d',
     'onsite_conversion.total_messaging_connection',
@@ -1848,20 +1864,25 @@ function createLegacyRuntime(app) {
     for (const chunk of chunkArray(normalizedIds, 50)) {
       const metaResponse = await fbGet(fbToken, '', {
         ids: chunk.join(','),
-        fields: 'id,name,status,daily_budget,lifetime_budget,created_time'
+        fields: 'id,name,status,daily_budget,lifetime_budget,created_time,adsets.limit(25){bid_amount}'
       });
       for (const campaign of Object.values(metaResponse || {})) {
         if (!campaign?.id) continue;
         const isLifetime = !!campaign.lifetime_budget && parseFloat(campaign.lifetime_budget) > 0;
         const dailyBudget = parseFloat(campaign.daily_budget || 0);
         const lifetimeBudget = parseFloat(campaign.lifetime_budget || 0);
+        const adSetBids = (campaign.adsets?.data || [])
+          .map(adSet => Number(adSet?.bid_amount || 0))
+          .filter(bid => Number.isFinite(bid) && bid > 0);
         campaignMetaById.set(String(campaign.id), {
           name: campaign.name,
           status: campaign.status,
           dailyBudget: isLifetime ? 0 : dailyBudget,
           lifetimeBudget: isLifetime ? lifetimeBudget : 0,
           budgetType: isLifetime ? 'LIFETIME' : 'DAILY',
-          createdTime: campaign.created_time ? new Date(campaign.created_time) : undefined
+          createdTime: campaign.created_time ? new Date(campaign.created_time) : undefined,
+          // Camp khong dat bid (chi phi thap nhat) -> bo trong de giu gia tri dang luu
+          ...(adSetBids.length ? { bidAmount: Math.max(...adSetBids) } : {})
         });
       }
     }
@@ -1907,7 +1928,10 @@ function createLegacyRuntime(app) {
     return {
       spend: Number.isFinite(spend) ? spend : 0,
       impressions: Number.isFinite(impressions) ? impressions : 0,
+      reach: getMetaReachFromInsight(insight),
       clicks: Number.isFinite(clicks) ? clicks : 0,
+      engagements: getMetaEngagementsFromInsight(insight),
+      linkClicks: getMetaLinkClicksFromInsight(insight),
       messages: Number.isFinite(messages) ? messages : 0,
       metaOrders: Number.isFinite(metaOrders) ? metaOrders : 0,
       costPerMessage: Number.isFinite(costPerMessage) ? costPerMessage : 0,
@@ -1927,6 +1951,9 @@ function createLegacyRuntime(app) {
     target.spend = Number(target.spend || 0) + Number(source.spend || 0);
     target.impressions = Number(target.impressions || 0) + Number(source.impressions || 0);
     target.clicks = Number(target.clicks || 0) + Number(source.clicks || 0);
+    target.reach = Number(target.reach || 0) + Number(source.reach || 0);
+    target.engagements = Number(target.engagements || 0) + Number(source.engagements || 0);
+    target.linkClicks = Number(target.linkClicks || 0) + Number(source.linkClicks || 0);
     target.messages = Number(target.messages || 0) + Number(source.messages || 0);
     target.metaOrders = Number(target.metaOrders || 0) + Number(source.metaOrders || 0);
     const currentWeight = Number(target.costPerMessageWeight || 0);
@@ -1960,7 +1987,7 @@ function createLegacyRuntime(app) {
       : `act_${account.adAccountId}`;
 
     const { items } = await fetchAllFbEdge(fbToken, `${acctId}/insights`, {
-      fields: 'campaign_id,campaign_name,spend,impressions,clicks,actions,conversions,cost_per_action_type',
+      fields: 'campaign_id,campaign_name,spend,impressions,reach,clicks,inline_link_clicks,inline_post_engagement,actions,conversions,cost_per_action_type',
       time_range: JSON.stringify({ since: fromDate, until: toDate }),
       level: 'campaign',
       limit: 500,
@@ -2044,7 +2071,10 @@ function createLegacyRuntime(app) {
               adName: '',
               spend: 0,
               impressions: 0,
+              reach: 0,
               clicks: 0,
+              engagements: 0,
+              linkClicks: 0,
               messages: 0,
               metaOrders: 0,
               costPerMessage: 0
@@ -2078,7 +2108,10 @@ function createLegacyRuntime(app) {
               name: dailyRow.insight.campaign_name || meta.name || '',
               spend: dailyRow.metrics.spend,
               impressions: dailyRow.metrics.impressions,
+              reach: dailyRow.metrics.reach,
               clicks: dailyRow.metrics.clicks,
+              engagements: dailyRow.metrics.engagements,
+              linkClicks: dailyRow.metrics.linkClicks,
               messages: dailyRow.metrics.messages,
               costPerMessage: dailyRow.metrics.costPerMessage,
               metaOrders: dailyRow.metrics.metaOrders
@@ -2102,10 +2135,14 @@ function createLegacyRuntime(app) {
             lifetimeBudget: Number(meta.lifetimeBudget || 0),
             budgetType: meta.budgetType || (Number(meta.lifetimeBudget || 0) > 0 ? 'LIFETIME' : 'DAILY'),
             createdTime: meta.createdTime,
+            bidAmount: Number(meta.bidAmount || 0),
             spend: metricRow.spend,
             messages: metricRow.messages,
             clicks: metricRow.clicks,
             impressions: metricRow.impressions,
+            reach: metricRow.reach,
+            engagements: metricRow.engagements,
+            linkClicks: metricRow.linkClicks,
             metaOrders: metricRow.metaOrders,
             costPerMessage: metricRow.costPerMessage
           };
@@ -2148,10 +2185,14 @@ function createLegacyRuntime(app) {
           lifetimeBudget: Number(metaRow.lifetimeBudget || 0) > 0 ? metaRow.lifetimeBudget : existing.lifetimeBudget,
           budgetType: metaRow.budgetType || existing.budgetType,
           createdTime: metaRow.createdTime || existing.createdTime,
+          bidAmount: Number(metaRow.bidAmount || 0) > 0 ? metaRow.bidAmount : existing.bidAmount,
           spend: Number(metaRow.spend || 0),
           messages: Number(metaRow.messages || 0),
           clicks: Number(metaRow.clicks || 0),
           impressions: Number(metaRow.impressions || 0),
+          reach: Number(metaRow.reach || 0),
+          engagements: Number(metaRow.engagements || 0),
+          linkClicks: Number(metaRow.linkClicks || 0),
           metaOrders: Number(metaRow.metaOrders || 0),
           costPerMessage: Number(metaRow.costPerMessage || 0)
         });
@@ -2283,6 +2324,9 @@ function createLegacyRuntime(app) {
       messages: 0,
       clicks: 0,
       impressions: 0,
+      reach: 0,
+      engagements: 0,
+      linkClicks: 0,
       metaOrders: 0,
       costPerMessage: 0,
       isScheduled: scheduledStatus === 'SCHEDULED',
@@ -2363,6 +2407,9 @@ function createLegacyRuntime(app) {
         messages: 0,
         clicks: 0,
         impressions: 0,
+        reach: 0,
+        engagements: 0,
+        linkClicks: 0,
         metaOrders: 0,
         costPerMessage: 0,
         isScheduled: true,
@@ -2811,7 +2858,10 @@ function createLegacyRuntime(app) {
         const impressions = parseInt(insight.impressions || 0, 10);
         const clicks = parseInt(insight.clicks || 0, 10);
         if (spend <= 0 && impressions <= 0 && clicks <= 0) continue;
-        metricInsights.push({ ...insight, spend, impressions, clicks });
+        const reach = getMetaReachFromInsight(insight);
+        const engagements = getMetaEngagementsFromInsight(insight);
+        const linkClicks = getMetaLinkClicksFromInsight(insight);
+        metricInsights.push({ ...insight, spend, impressions, reach, clicks, engagements, linkClicks });
         campaignIds.add(String(insight.campaign_id));
       }
   
@@ -2821,7 +2871,7 @@ function createLegacyRuntime(app) {
         const campaignId = String(insight.campaign_id);
         const meta = campaignMetaById.get(campaignId) || {};
         const existingCampaign = campaigns.find(campaign => String(campaign.campaignId || '').trim() === campaignId) || {};
-        const bidAmount = Number(existingCampaign.bidAmount || 0);
+        const bidAmount = Number(meta.bidAmount || existingCampaign.bidAmount || 0);
         const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || '';
         const campaignUpdate = {
           ...meta,
@@ -2829,7 +2879,10 @@ function createLegacyRuntime(app) {
           name: insight.campaign_name,
           spend: insight.spend,
           impressions: insight.impressions,
+          reach: insight.reach,
           clicks: insight.clicks,
+          engagements: insight.engagements,
+          linkClicks: insight.linkClicks,
           messages: 0,
           costPerMessage: 0
         };
@@ -2877,7 +2930,10 @@ function createLegacyRuntime(app) {
       const costPerMessage = getMetaCostPerMessageFromInsight(insight);
       const metaOrders = getMetaOrdersFromInsight(insight);
       if (spend <= 0 && impressions <= 0 && clicks <= 0 && messages <= 0) continue;
-      metricInsights.push({ ...insight, spend, impressions, clicks, messages, costPerMessage, metaOrders });
+      const reach = getMetaReachFromInsight(insight);
+      const engagements = getMetaEngagementsFromInsight(insight);
+      const linkClicks = getMetaLinkClicksFromInsight(insight);
+      metricInsights.push({ ...insight, spend, impressions, reach, clicks, engagements, linkClicks, messages, costPerMessage, metaOrders });
       seenCampaignIds.add(String(insight.campaign_id));
     }
   
@@ -2894,12 +2950,12 @@ function createLegacyRuntime(app) {
     for (const insight of metricInsights) {
       const campaignId = String(insight.campaign_id);
       const actions = insight.actions || [];
-      const { spend, impressions, clicks, messages, costPerMessage } = insight;
+      const { spend, impressions, reach, clicks, engagements, linkClicks, messages, costPerMessage } = insight;
       insightTotalSpend += spend;
       insightTotalMessages += messages;
       const meta = campaignMetaById.get(campaignId) || {};
       const existingCampaign = existingCampaigns.find(campaign => String(campaign.campaignId || '').trim() === campaignId) || {};
-      const bidAmount = Number(existingCampaign.bidAmount || 0);
+      const bidAmount = Number(meta.bidAmount || existingCampaign.bidAmount || 0);
       const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || '';
   
       const campaignUpdate = {
@@ -2908,7 +2964,10 @@ function createLegacyRuntime(app) {
         name: insight.campaign_name,
         spend,
         impressions,
+        reach,
         clicks,
+        engagements,
+        linkClicks,
         messages,
         costPerMessage,
         metaOrders: insight.metaOrders || 0,
@@ -2937,6 +2996,9 @@ function createLegacyRuntime(app) {
         messages,
         clicks,
         impressions,
+        reach,
+        engagements,
+        linkClicks,
         isScheduled: Boolean(existingCampaign.isScheduled),
         scheduledStartTimeUtc: existingCampaign.scheduledStartTimeUtc,
         insights: {
@@ -2955,7 +3017,7 @@ function createLegacyRuntime(app) {
       if (!campaignId || seenCampaignIds.has(campaignId)) continue;
   
       const meta = campaignMetaById.get(campaignId) || {};
-      const bidAmount = Number(storedCampaign.bidAmount || 0);
+      const bidAmount = Number(meta.bidAmount || storedCampaign.bidAmount || 0);
       const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || storedCampaign.adName || '';
       await upsertDailyCampaign(account._id, campaignId, today, {
         ...meta,
@@ -2989,6 +3051,9 @@ function createLegacyRuntime(app) {
         messages: Number(storedCampaign.messages || 0),
         clicks: Number(storedCampaign.clicks || 0),
         impressions: Number(storedCampaign.impressions || 0),
+        reach: Number(storedCampaign.reach || 0),
+        engagements: Number(storedCampaign.engagements || 0),
+        linkClicks: Number(storedCampaign.linkClicks || 0),
         isScheduled: Boolean(storedCampaign.isScheduled),
         scheduledStartTimeUtc: storedCampaign.scheduledStartTimeUtc,
         insights: {
@@ -3823,6 +3888,9 @@ function createLegacyRuntime(app) {
       normalizeCampaignStatus,
       isCampaignServingStatus,
       getMetaOrdersFromInsight,
+      getMetaEngagementsFromInsight,
+      getMetaLinkClicksFromInsight,
+      getMetaReachFromInsight,
       getMetaMessageActionFromInsight,
       getMetaCostPerMessageFromInsight,
       getInventoryOwnerUserId,
