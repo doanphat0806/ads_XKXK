@@ -116,9 +116,6 @@ const buildStatsFromCampaigns = (campaigns = [], isShopee = false) => {
     items.totalSpend += spend;
     items.totalMessages += messages;
     items.totalClicks += clicks;
-    items.totalImpressions += Number(campaign.impressions || 0);
-    items.totalReach += Number(campaign.reach || 0);
-    items.totalEngagements += Number(campaign.engagements || 0);
     if (hasSpend && status === 'ACTIVE') items.activeCount += 1;
     if (hasSpend && status === 'PAUSED') items.pausedCount += 1;
     return items;
@@ -127,18 +124,12 @@ const buildStatsFromCampaigns = (campaigns = [], isShopee = false) => {
     pausedCount: 0,
     totalSpend: 0,
     totalMessages: 0,
-    totalClicks: 0,
-    totalImpressions: 0,
-    totalReach: 0,
-    totalEngagements: 0
+    totalClicks: 0
   });
 
   return {
     ...totals,
-    avgCPM: !isShopee && totals.totalMessages > 0 ? totals.totalSpend / totals.totalMessages : 0,
-    cpc: totals.totalClicks > 0 ? totals.totalSpend / totals.totalClicks : 0,
-    cpm: totals.totalImpressions > 0 ? (totals.totalSpend / totals.totalImpressions) * 1000 : 0,
-    ctr: totals.totalImpressions > 0 ? totals.totalClicks / totals.totalImpressions : 0
+    avgCPM: !isShopee && totals.totalMessages > 0 ? totals.totalSpend / totals.totalMessages : 0
   };
 };
 
@@ -952,21 +943,6 @@ export default function Dashboard() {
           <div className="stat-value p" id="sMessages">{isShopee ? formatNumber(campaignStats.totalClicks || 0) : (campaignStats.totalMessages ? formatNumber(campaignStats.totalMessages) : '-')}</div>
           <div className="stat-sub">{!isShopee && metaAvgCPM > 0 ? `Chi phi/luot tro chuyen: ${formatVND(metaAvgCPM)}` : '-'}</div>
         </div>
-        <div className="stat b">
-          <div className="stat-label">Tiếp cận {dateLabel}</div>
-          <div className="stat-value b stat-value-compact">{campaignStats.totalReach ? formatNumber(campaignStats.totalReach) : '-'}</div>
-          <div className="stat-sub">Hiển thị: {formatNumber(campaignStats.totalImpressions || 0)} · Tần suất: {campaignStats.totalReach > 0 ? (campaignStats.totalImpressions / campaignStats.totalReach).toFixed(2).replace('.', ',') : '-'}</div>
-        </div>
-        <div className="stat g">
-          <div className="stat-label">Tương tác {dateLabel}</div>
-          <div className="stat-value g stat-value-compact">{campaignStats.totalEngagements ? formatNumber(campaignStats.totalEngagements) : '-'}</div>
-          <div className="stat-sub">Click: {formatNumber(campaignStats.totalClicks || 0)}</div>
-        </div>
-        <div className="stat o">
-          <div className="stat-label">CPC {dateLabel}</div>
-          <div className="stat-value o stat-value-compact">{campaignStats.cpc ? formatVND(campaignStats.cpc) : '-'}</div>
-          <div className="stat-sub">CPM: {campaignStats.cpm ? formatVND(campaignStats.cpm) : '-'} · CTR: {campaignStats.ctr ? formatPercent(campaignStats.ctr) : '-'}</div>
-        </div>
         {showOrders && (
           <div className="stat g2" style={{ borderColor: 'var(--g2)' }}>
             <div className="stat-label">Don hang {dateLabel}</div>
@@ -1063,8 +1039,8 @@ export default function Dashboard() {
                   {isColumnVisible('status') && <th className="text-center">Trạng Thái</th>}
                   {isColumnVisible('orderCount') && <th className="text-center" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('orderCount')}>Tổng Đơn<SortIcon field="orderCount" sortField={sortField} sortDir={sortDir} /></th>}
                   {isColumnVisible('metaOrders') && <th className="text-center" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('metaOrders')}>Đơn Meta<SortIcon field="metaOrders" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('messages') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('messages')}>
-                    {isShopee ? 'Luot click (Gia/click)' : 'Bat dau tro chuyen (Gia/BDCT)'}<SortIcon field="messages" sortField={sortField} sortDir={sortDir} />
+                  {isColumnVisible('messages') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('messages')} title={isShopee ? undefined : 'Chi phí / lượt bắt đầu trò chuyện'}>
+                    {isShopee ? 'Luot click (Gia/click)' : 'Giá/TN'}<SortIcon field="messages" sortField={sortField} sortDir={sortDir} />
                   </th>}
                   {isColumnVisible('costPerOrder') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('costPerOrder')}>CPO<SortIcon field="costPerOrder" sortField={sortField} sortDir={sortDir} /></th>}
                   {isColumnVisible('spend') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('spend')}>Chi Tiêu<SortIcon field="spend" sortField={sortField} sortDir={sortDir} /></th>}
