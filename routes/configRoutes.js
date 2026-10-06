@@ -66,6 +66,12 @@ router.put('/config', async (req, res) => {
     );
     clearAppConfigCache();
 
+    // Luu key Pancake khi server da khoi dong ma chua co key -> bat dong bo POS ngay, khong can restart
+    if (updates.pancakeApiKey) {
+      require('../services/posOrderService').startPosOrderSync()
+        .catch(error => console.error(`[pos-orders] khoi dong dong bo loi: ${error.message}`));
+    }
+
     if (typeof req.body.fbToken === 'string' && req.body.fbToken.trim()) {
       await User.findByIdAndUpdate(req.currentUser._id, {
         fbToken: req.body.fbToken.trim(),

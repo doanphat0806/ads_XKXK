@@ -43,7 +43,7 @@ export default function ReturnReasonChart({ data, loading = false, source = '' }
         <div>
           <div className="card-title">Lý do hoàn của khách</div>
           <div className="return-reason-sub">
-            {view.returnCount > 0 ? (
+            {view.returnCount > 0 && !isSheetSource ? (
               <>
                 {formatNumber(view.withReason)} / {formatNumber(view.returnCount)} đơn hoàn có ghi lý do
                 {view.noReason > 0 && <> · {formatNumber(view.noReason)} đơn chưa ghi ({formatShare(view.noReason / view.returnCount)})</>}
@@ -77,7 +77,7 @@ export default function ReturnReasonChart({ data, loading = false, source = '' }
         {loading && !data ? (
           <div className="empty"><span className="spin">...</span><p>Đang tải...</p></div>
         ) : isSheetSource ? (
-          <div className="empty"><p>Lý do hoàn lấy từ thẻ đơn trên Pancake POS — nguồn đơn hiện là Google Sheet nên chưa có dữ liệu.</p></div>
+          <div className="empty"><p>Lý do hoàn lấy từ thẻ đơn trên Pancake POS. Đang dùng Google Sheet (chưa tải xong lịch sử đơn POS hoặc chưa cấu hình API key POS) nên chưa có dữ liệu.</p></div>
         ) : view.rows.length === 0 ? (
           <div className="empty"><div className="ei">0</div><p>Chưa có đơn hoàn ghi lý do</p></div>
         ) : showTable ? (
