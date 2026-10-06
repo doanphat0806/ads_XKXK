@@ -2920,18 +2920,6 @@ app.delete('/api/logs', async (req, res) => {
   }
 });
 
-app.post('/api/test-token', async (req, res) => {
-  try {
-    const { fbToken } = req.body;
-    if (!fbToken) return res.status(400).json({ error: 'Thieu token' });
-
-    const me = await fbGet(fbToken, 'me', { fields: 'name,id' });
-    res.json({ ok: true, name: me.name, id: me.id });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
 app.post('/api/webhooks/pancake', async (req, res) => {
   try {
     const payload = req.body;
@@ -2991,7 +2979,10 @@ app.get('/api/orders', async (req, res) => {
       ];
     }
     if (wantsPaged) {
-      const [orders, total, statsOrders] = await Promise.all([
+      // Thong ke giong nhau cho moi trang cua cung bo loc -> nho theo bo loc + version don, chi lay truong can dung
+      const statsKey = `${JSON.stringify(query)}:${getOrderDataVersion({ fromDate })}`;
+      const cachedStats = getReadCache(`order-table-stats:${statsKey}`);
+      const [orders, total, stats] = await Promise.all([
         Order.find(query)
           .select('orderId status rawData createdAt')
           .sort('-createdAt')
@@ -2999,7 +2990,8 @@ app.get('/api/orders', async (req, res) => {
           .limit(limit)
           .lean(),
         Order.countDocuments(query),
-        Order.find(query).select('rawData orderId status customerName').limit(200000).lean()
+        cachedStats || Order.find(query).select('status rawData.status_name rawData.items').limit(200000).lean()
+          .then(statsOrders => setReadCache(`order-table-stats:${statsKey}`, buildOrderTableStats(statsOrders)))
       ]);
       res.json({
         ok: true,
@@ -3010,7 +3002,7 @@ app.get('/api/orders', async (req, res) => {
         page,
         limit,
         totalPages: Math.ceil(total / limit) || 1,
-        stats: buildOrderTableStats(statsOrders)
+        stats
       });
       return;
     }
@@ -3766,73 +3758,6 @@ async function buildReturnSummaryPayload({ accountFilter, provider, fromDate, to
     campaignRowCount: campaignRows.length
   };
 }
-
-app.post('/api/orders/sku-cpo', async (req, res) => {
-  try {
-    const rawCodes = Array.isArray(req.body?.codes) ? req.body.codes : [];
-    const codes = [...new Set(rawCodes.map(code => normalizeDealStopCode(code)).filter(Boolean))].slice(0, 1000);
-
-    if (!codes.length) {
-      return res.json({ ok: true, cpoByCode: {} });
-    }
-
-    const fromDate = String(req.body?.fromDate || '').slice(0, 10);
-    const toDate = String(req.body?.toDate || '').slice(0, 10);
-    const hasValidFromDate = !fromDate || /^\d{4}-\d{2}-\d{2}$/.test(fromDate);
-    const hasValidToDate = !toDate || /^\d{4}-\d{2}-\d{2}$/.test(toDate);
-    if (!hasValidFromDate || !hasValidToDate || (fromDate && toDate && fromDate > toDate)) {
-      return res.status(400).json({ error: 'Khoang ngay khong hop le' });
-    }
-
-    const facebookAccounts = await Account.find(withUserFilter(req, buildAccountProviderFilter('facebook')))
-      .select('_id')
-      .lean();
-    const accountIds = facebookAccounts.map(account => account._id);
-
-    const campaignMatch = {
-      accountId: { $in: accountIds }
-    };
-    if (fromDate || toDate) {
-      campaignMatch.date = {};
-      if (fromDate) campaignMatch.date.$gte = fromDate;
-      if (toDate) campaignMatch.date.$lte = toDate;
-    }
-
-    const [orderRows, campaignRows] = await Promise.all([
-      useSheetOrders({ fromDate })
-        ? getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
-        : Order.find(buildOrderQuery({ fromDate, toDate }))
-          .select('orderId status rawData createdAt')
-          .limit(200000)
-          .lean(),
-      accountIds.length ? Campaign.aggregate([
-        {
-          $match: campaignMatch
-        },
-        {
-          $group: {
-            _id: '$adName',
-            adName: { $first: '$adName' },
-            amount: { $sum: '$spend' }
-          }
-        },
-        { $project: { _id: 0, adName: 1, amount: 1 } }
-      ]).allowDiskUse(true) : Promise.resolve([])
-    ]);
-
-    const skuStats = buildOrderSkuStats(orderRows);
-    const cpoByCode = buildSkuCpoByCode(codes, skuStats.counts || {}, campaignRows);
-
-    res.json({
-      ok: true,
-      fromDate,
-      toDate,
-      cpoByCode
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
 
 app.get('/api/orders/deal-stop-rows', async (req, res) => {
   try {

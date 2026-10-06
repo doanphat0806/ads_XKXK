@@ -650,9 +650,13 @@ function createLegacyRuntime(app) {
   }
   
   async function buildInventoryPendingOrderCounts() {
+    // DB: loc san don "Cho hang" (POS status 11) thay vi tai toan bo don; vong for ben duoi van loc lai nhu cu
     const orders = useSheetOrders()
       ? await getOrderSheetOrders({ limit: 200000 })
-      : await Order.find(buildOrderQuery({})).select('rawData orderId status').limit(200000).lean();
+      : await Order.find({
+        ...buildOrderQuery({}),
+        $or: [{ 'rawData.status': 11 }, { status: /ch[ờo] h[àa]ng/i }]
+      }).select('status rawData.status rawData.status_name rawData.items').limit(200000).lean();
   
     const byCode = new Map();
     const byCodeSize = new Map();
