@@ -652,9 +652,16 @@ function buildReturnReasonStats(orders = []) {
   const groups = { total: createGroup() };
   RETURN_SUMMARY_BUCKETS.forEach(bucket => { groups[bucket.key] = createGroup(); });
 
+  const seenOrderIds = new Set();
+
   for (const order of orders) {
     const status = classifyReturnStatus(order);
     if (status !== 'returned' && status !== 'returning') continue;
+    const orderId = String(order.orderId || order.rawData?.sheetColumns?.col12 || '').trim();
+    if (orderId) {
+      if (seenOrderIds.has(orderId)) continue;
+      seenOrderIds.add(orderId);
+    }
     const reasons = getOrderReturnReasons(order);
     const labels = reasons.length ? reasons : [NO_RETURN_REASON_LABEL];
     const bucketKey = classifyReturnOrderTagBucket(getOrderTagText(order));
@@ -724,6 +731,9 @@ function buildReturnSummaryOrderStats(orders = [], { fromDate = '', toDate = '' 
     returnRate: 0
   };
 
+  // Google Sheet: 1 dong = 1 san pham -> don nhieu san pham co nhieu dong cung ma don, chi dem 1 lan
+  const seenOrderIds = new Set();
+
   for (const order of orders) {
     const dateKey = getOrderDateKey(order);
     if (!dateKey) continue;
@@ -732,6 +742,8 @@ function buildReturnSummaryOrderStats(orders = [], { fromDate = '', toDate = '' 
 
     const orderId = String(order.orderId || order.rawData?.sheetColumns?.col12 || '').trim();
     if (!orderId) continue;
+    if (seenOrderIds.has(orderId)) continue;
+    seenOrderIds.add(orderId);
     const monthKey = dateKey.slice(0, 7);
 
     if (!daily[dateKey]) {
