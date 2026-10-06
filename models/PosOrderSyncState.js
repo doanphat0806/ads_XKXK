@@ -5,7 +5,9 @@ const PosOrderSyncStateSchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true },
   shopId: { type: String, default: '' },
   backfillFrom: { type: String, default: '' },
-  // Ngay (YYYY-MM-DD, gio VN) da tai lich su toi; tai xong -> backfillDone
+  // 'desc': tai tu hom nay lui ve backfillFrom
+  backfillDirection: { type: String, default: '' },
+  // Ngay (YYYY-MM-DD, gio VN) som nhat da tai du don; tai xong -> backfillDone
   backfillCursor: { type: String, default: '' },
   backfillDone: { type: Boolean, default: false },
   backfillDoneAt: { type: Date, default: null },

@@ -352,10 +352,11 @@ async function syncRecentPosOrders() {
 // Goi khi khoi dong server (ORDERS_SOURCE=pos)
 async function startPosOrderSync() {
   if (orderSourceState.source !== 'pos' || syncTimer) return;
-  try {
-    await getPosCredentials();
-  } catch (error) {
-    console.warn(`[pos-orders] khong dong bo duoc, van dung Google Sheet: ${error.message}`);
+  // Chi kiem tra co key (khong goi mang) de khong chan khoi dong server khi POS cham/loi;
+  // loi mang de vong dong bo moi phut tu thu lai.
+  const config = await getAppConfig();
+  if (!String(process.env.PANCAKE_API_KEY || config?.pancakeApiKey || '').trim()) {
+    console.warn('[pos-orders] chua cau hinh Pancake POS API key, van dung Google Sheet');
     return;
   }
 

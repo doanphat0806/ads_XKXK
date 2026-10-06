@@ -66,6 +66,7 @@ const CAMPAIGN_TOGGLE_RELOAD_DELAY_MS = 2 * 60 * 1000;
 const CAMPAIGN_RETURN_STATS_FROM_DATE = '2026-02-22';
 const CPO_WARNING_THRESHOLD = 100000;
 const ORDER_REFRESH_MS = 10000;
+const HOURLY_REFRESH_MS = 2 * 60 * 1000;
 const DASHBOARD_HIDDEN_COLUMNS_KEY = 'dashboard:hiddenColumns';
 const DASHBOARD_COLUMNS = [
   { id: 'duplicateCount', label: 'Trùng' },
@@ -638,17 +639,22 @@ export default function Dashboard() {
 
   // Dang chon khung gio (khac ca ngay) -> chi tieu/click/hien thi/don Meta cua camp chi tinh trong khung gio do.
   // Tiep can (va tan suat, CPP) khong cong don theo gio duoc -> an ("-") khi dang chon khung gio.
-  const hourlyDataReady = Boolean(hourlyData && hourlyData.fromDate === reportFromDate && hourlyData.toDate === reportToDate);
+  const hourlyDataReady = Boolean(
+    hourlyData && hourlyData.provider === provider &&
+    hourlyData.fromDate === reportFromDate && hourlyData.toDate === reportToDate
+  );
 
-  // Chi tai du lieu theo gio (Meta Insights breakdown theo gio) khi dang chon khung gio
+  // Chi tai du lieu theo gio (Meta Insights breakdown theo gio) khi dang chon khung gio; tai lai dinh ky de gio hien tai cap nhat
   useEffect(() => {
     if (!hourRangeActive) return undefined;
     let cancelled = false;
     setHourlyError('');
-    api('GET', `/campaigns/hourly-spend?provider=${provider}&fromDate=${reportFromDate}&toDate=${reportToDate}`, null, { timeoutMs: 5 * 60 * 1000 })
-      .then(data => { if (!cancelled) setHourlyData(data); })
+    const load = () => api('GET', `/campaigns/hourly-spend?provider=${provider}&fromDate=${reportFromDate}&toDate=${reportToDate}`, null, { timeoutMs: 5 * 60 * 1000 })
+      .then(data => { if (!cancelled) { setHourlyData({ ...data, provider }); setHourlyError(''); } })
       .catch(error => { if (!cancelled) setHourlyError(error?.message || 'Khong tai duoc so lieu theo gio'); });
-    return () => { cancelled = true; };
+    load();
+    const interval = setInterval(load, HOURLY_REFRESH_MS);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [hourRangeActive, provider, reportFromDate, reportToDate]);
   const hourAdjustedCampaigns = useMemo(() => {
     if (!hourRangeActive || !hourlyDataReady) return localCampaigns;

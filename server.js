@@ -67,7 +67,11 @@ mongoose.connect(MONGO_URI).then(async () => {
 
     await legacyRuntime.bootstrapFacebookToken();
     await legacyRuntime.initializeQueues();
-    await startPosOrderSync();
+    try {
+      await startPosOrderSync();
+    } catch (error) {
+      console.error(`[pos-orders] khoi dong dong bo loi, van dung Google Sheet: ${error.message}`);
+    }
     legacyRuntime.startSheetRefresh();
     legacyRuntime.startCronTasks();
     await legacyRuntime.resumeAutoAccounts();
