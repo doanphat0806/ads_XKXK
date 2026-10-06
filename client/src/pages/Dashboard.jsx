@@ -240,7 +240,7 @@ const CampaignRow = React.memo(function CampaignRow({
         </td>
       )}
       {show('impressions') && <td className="text-right mono-sm">{formatNumber(campaign.impressions || 0)}</td>}
-      {show('reach') && <td className="text-right mono-sm">{formatNumber(campaign.reach || 0)}</td>}
+      {show('reach') && <td className="text-right mono-sm" title={campaign.reachUnavailable ? 'Meta không có tiếp cận theo giờ' : undefined}>{campaign.reachUnavailable ? '-' : formatNumber(campaign.reach || 0)}</td>}
       {show('engagements') && <td className="text-right mono-sm">{formatNumber(campaign.engagements || 0)}</td>}
       {show('costPerClick') && <td className="text-right mono-sm">{campaign.costPerClick > 0 ? formatVND(campaign.costPerClick) : '-'}</td>}
       {show('costPerMille') && <td className="text-right mono-sm">{campaign.costPerMille > 0 ? formatVND(campaign.costPerMille) : '-'}</td>}
@@ -637,7 +637,7 @@ export default function Dashboard() {
   }, [returnStatsBySku, hasReturnStatsBySku]);
 
   // Dang chon khung gio (khac ca ngay) -> chi tieu/click/hien thi/don Meta cua camp chi tinh trong khung gio do.
-  // Cac chi so khong cong don theo gio duoc (tiep can, tuong tac, tin nhan...) van la ca ngay.
+  // Tiep can (va tan suat, CPP) khong cong don theo gio duoc -> an ("-") khi dang chon khung gio.
   const hourlyDataReady = Boolean(hourlyData && hourlyData.fromDate === reportFromDate && hourlyData.toDate === reportToDate);
 
   // Chi tai du lieu theo gio (Meta Insights breakdown theo gio) khi dang chon khung gio
@@ -662,12 +662,19 @@ export default function Dashboard() {
     return localCampaigns.map(campaign => {
       const id = String(campaign.campaignId);
       const metrics = hourlyData.metricsByCampaign?.[id] || {};
+      const spend = sumRange(hourlyData.byCampaign?.[id]);
+      const messages = sumRange(metrics.messages);
       return {
         ...campaign,
-        spend: sumRange(hourlyData.byCampaign?.[id]),
+        spend,
         clicks: sumRange(metrics.clicks),
         impressions: sumRange(metrics.impressions),
         linkClicks: sumRange(metrics.linkClicks),
+        engagements: sumRange(metrics.engagements),
+        messages,
+        costPerMessage: messages > 0 ? spend / messages : 0,
+        reach: 0,
+        reachUnavailable: true,
         metaOrders: sumRange(hourlyData.ordersByCampaign?.[id])
       };
     });
@@ -959,7 +966,7 @@ export default function Dashboard() {
         if (showOrders) row['Ti le hoan (%)'] = Number(((campaign.returnRate || 0) * 100).toFixed(2));
         Object.assign(row, {
           'Hien thi': Number(campaign.impressions || 0),
-          'Tiep can': Number(campaign.reach || 0),
+          'Tiep can': campaign.reachUnavailable ? '' : Number(campaign.reach || 0),
           'Tuong tac': Number(campaign.engagements || 0),
           'Clicks': Number(campaign.clicks || 0),
           'CPC': Math.round(campaign.costPerClick || 0),
@@ -1105,8 +1112,8 @@ export default function Dashboard() {
             ? <span style={{ color: 'var(--r)' }}>Không tải được số liệu theo giờ: {hourlyError}</span>
             : hourlyDataReady
             ? <span>
-                Đang tính <b>chi tiêu, click, hiển thị, click liên kết, đơn Meta{hourlySkuReady ? ', Tổng đơn (POS)' : ''}</b> trong khung <b>{reportHours.fromHour}h–{reportHours.toHour}h59</b>.
-                {' '}Tiếp cận, tương tác, tin nhắn{hourlySkuReady ? '' : ', Tổng đơn'} vẫn là cả ngày.
+                Đang tính <b>chi tiêu, click, hiển thị, tương tác, tin nhắn, đơn Meta{hourlySkuReady ? ', Tổng đơn (POS)' : ''}</b> trong khung <b>{reportHours.fromHour}h–{reportHours.toHour}h59</b>.
+                {' '}Tiếp cận, tần suất, CPP không có theo giờ (hiện "-"){hourlySkuReady ? '' : '; Tổng đơn vẫn là cả ngày'}.
                 {showOrders && hourlySkuError && !hourlySkuReady && <span style={{ color: 'var(--r)' }}> Không lấy được đơn theo giờ từ POS: {hourlySkuError}</span>}
               </span>
             : <span>Đang tải số liệu khung {reportHours.fromHour}h–{reportHours.toHour}h59... bảng tạm hiện số cả ngày.</span>}

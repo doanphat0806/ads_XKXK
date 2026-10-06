@@ -1897,7 +1897,7 @@ app.get('/api/campaigns/hourly-spend', async (req, res) => {
         if (!fbToken) throw new Error('Thieu Facebook Access Token');
         const acctId = account.adAccountId.startsWith('act_') ? account.adAccountId : `act_${account.adAccountId}`;
         const { items } = await fetchAllFbEdge(fbToken, `${acctId}/insights`, {
-          fields: 'campaign_id,spend,clicks,impressions,inline_link_clicks,actions,conversions',
+          fields: 'campaign_id,spend,clicks,impressions,inline_link_clicks,inline_post_engagement,actions,conversions',
           time_range: JSON.stringify({ since: fDate, until: tDate }),
           level: 'campaign',
           breakdowns: HOURLY_BREAKDOWN,
@@ -1928,6 +1928,8 @@ app.get('/api/campaigns/hourly-spend', async (req, res) => {
           addCampaignHourMetric(campaignId, 'clicks', hour, Number(row.clicks || 0));
           addCampaignHourMetric(campaignId, 'impressions', hour, Number(row.impressions || 0));
           addCampaignHourMetric(campaignId, 'linkClicks', hour, getMetaLinkClicksFromInsight(row));
+          addCampaignHourMetric(campaignId, 'engagements', hour, getMetaEngagementsFromInsight(row));
+          if (!isShopee) addCampaignHourMetric(campaignId, 'messages', hour, parseInt(getMetaMessageActionFromInsight(row)?.value || 0, 10) || 0);
         }
       } catch (error) {
         failedAccounts.push({ accountId, name: account.name, error: error.message });
