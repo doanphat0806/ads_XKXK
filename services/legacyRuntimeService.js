@@ -59,6 +59,7 @@ function createLegacyRuntime(app) {
   const User = require('../models/User');
   const FacebookToken = require('../models/FacebookToken');
   const Order = require('../models/Order');
+  const OrderSheetRow = require('../models/OrderSheetRow');
   const InventoryItem = require('../models/InventoryItem');
   const FacebookPost = require('../models/FacebookPost');
   const DataPurchaseOrder = require('../models/DataPurchaseOrder');
@@ -4157,7 +4158,9 @@ function createLegacyRuntime(app) {
       ShopeeAffCommissionReceipt.createIndexes(),
       Config.createIndexes(),
       ensureUserIndexes(),
-      FacebookToken.createIndexes()
+      FacebookToken.createIndexes(),
+      // Thieu index rowNumber -> moi lan luu ban sao Sheet (~130k dong upsert theo rowNumber) quet toan bang, khong chay xong
+      OrderSheetRow.createIndexes()
     ]);
     console.log('Application indexes ready');
   }

@@ -53,6 +53,7 @@ let detectedShop = { apiKey: '', shopId: '' };
 let syncTimer = null;
 let syncRunning = false;
 let backfillRunning = false;
+let deletedCleanupRunning = false;
 let legacyOrdersMigrated = false;
 
 async function getPosCredentials() {
@@ -93,12 +94,14 @@ async function getPosPage(url, params) {
 
 // Tai tat ca trang don trong khoang thoi gian (giay unix). byUpdatedAt: loc theo updated_at thay vi inserted_at.
 // API POS cham (~9s/trang 200 don) -> trang dau lay tong so trang, cac trang con lai tai song song.
-async function fetchPosOrderPages({ startDateTime, endDateTime, byUpdatedAt = false, pageSize = POS_PAGE_SIZE, concurrency = 1, onPage } = {}) {
+// status: chi lay don co trang thai nay (API mac dinh KHONG tra don da xoa, phai hoi rieng status=7).
+async function fetchPosOrderPages({ startDateTime, endDateTime, byUpdatedAt = false, status, pageSize = POS_PAGE_SIZE, concurrency = 1, onPage } = {}) {
   const { apiKey, shopId } = await getPosCredentials();
   const orders = [];
   const loadPage = async page => {
     const params = { api_key: apiKey, page_size: pageSize, page_number: page, startDateTime, endDateTime };
     if (byUpdatedAt) params.updateStatus = 'updated_at';
+    if (status !== undefined) params.status = status;
     const data = await getPosPage(`${POS_API_BASE}/shops/${shopId}/orders`, params);
     const items = Array.isArray(data?.data) ? data.data : [];
     if (onPage) await onPage(items, shopId);
@@ -229,8 +232,20 @@ function normalizePosOrder(order = {}, shopId = '') {
 async function upsertPosOrders(orders = [], shopId = '') {
   // Webhook khong truyen shopId -> lay shop dang cau hinh (don co shop_id thi uu tien shop_id)
   if (!shopId && orders.some(order => !order?.shop_id)) shopId = (await getPosCredentials()).shopId;
-  const docs = orders.map(order => normalizePosOrder(order, shopId)).filter(doc => doc.orderId);
+  // Don huy/xoa khong luu: xoa khoi DB neu da luu truoc do (luc con la don thuong)
+  const removedIds = orders
+    .filter(order => POS_EXCLUDED_STATUSES.has(Number(order.status)))
+    .map(order => normalizePosOrder(order, shopId).orderId)
+    .filter(Boolean);
   let changed = 0;
+  if (removedIds.length) {
+    const { deletedCount } = await Order.deleteMany({ orderId: { $in: removedIds } });
+    changed += Number(deletedCount || 0);
+  }
+  const docs = orders
+    .filter(order => !POS_EXCLUDED_STATUSES.has(Number(order.status)))
+    .map(order => normalizePosOrder(order, shopId))
+    .filter(doc => doc.orderId);
   for (let start = 0; start < docs.length; start += BULK_WRITE_SIZE) {
     const chunk = docs.slice(start, start + BULK_WRITE_SIZE);
     // Tai lich su va dong bo dinh ky chay song song: chi ghi de khi ban moi co updated_at >= ban dang luu.
@@ -323,6 +338,7 @@ async function ensureSyncStateShop() {
     backfillDone: false,
     backfillDoneAt: null,
     lastSyncedAt: null,
+    deletedCleanupDone: false,
     hasPreviousShopOrders: Boolean(state.hasPreviousShopOrders || state.backfillDone || state.backfillDirection === 'desc')
   };
   await saveSyncState(reset);
@@ -398,22 +414,59 @@ async function syncRecentPosOrders() {
     const since = state.lastSyncedAt ? new Date(state.lastSyncedAt).getTime() - POS_SYNC_OVERLAP_MS : now - 24 * 3600 * 1000;
     let received = 0;
     let changed = 0;
-    await fetchPosOrderPages({
-      startDateTime: Math.floor(since / 1000),
-      endDateTime: Math.floor(now / 1000),
-      byUpdatedAt: true,
-      onPage: async (items, shopId) => {
-        const result = await upsertPosOrders(items, shopId);
-        received += result.received;
-        changed += result.changed;
-      }
-    });
+    const range = { startDateTime: Math.floor(since / 1000), endDateTime: Math.floor(now / 1000), byUpdatedAt: true };
+    const onPage = async (items, shopId) => {
+      const result = await upsertPosOrders(items, shopId);
+      received += result.received;
+      changed += result.changed;
+    };
+    await fetchPosOrderPages({ ...range, onPage });
+    // API mac dinh bo don huy/xoa -> don da dong bo luc vua tao roi moi bi xoa se ket o trang thai cu
+    // (van bi dem). Hoi rieng tung trang thai de xoa cac don do khoi DB (upsertPosOrders).
+    for (const status of POS_EXCLUDED_STATUSES) {
+      await fetchPosOrderPages({ ...range, status, onPage });
+    }
     await saveSyncState({ lastSyncedAt: new Date(now) });
     orderSourceState.posLastSyncedAt = new Date(now);
     if (changed) console.log(`[pos-orders] dong bo: ${received} don, ${changed} thay doi`);
     return { received, changed };
   } finally {
     syncRunning = false;
+  }
+}
+
+// Chay 1 lan: truoc khi dong bo hoi rieng don huy/xoa, don bi xoa sau khi da luu van nam trong DB nhu don thuong.
+// Quet toan bo don huy/xoa tu backfillFrom de xoa khoi DB.
+async function runPosDeletedCleanup() {
+  if (deletedCleanupRunning) return;
+  deletedCleanupRunning = true;
+  const startedAt = Date.now();
+  try {
+    const state = await getSyncState();
+    if (state.deletedCleanupDone) return;
+    // Ban cu tung luu don huy/xoa (webhook) -> xoa luon
+    await Order.deleteMany({ 'rawData.source': 'pancake_pos', status: { $in: ['cancelled', 'deleted'] } });
+    let scanned = 0;
+    let removed = 0;
+    for (const status of POS_EXCLUDED_STATUSES) {
+      await fetchPosOrderPages({
+        startDateTime: vnDayStartUnix(state.backfillFrom || POS_BACKFILL_FROM),
+        endDateTime: Math.floor(startedAt / 1000),
+        status,
+        pageSize: POS_BACKFILL_PAGE_SIZE,
+        concurrency: POS_BACKFILL_CONCURRENCY,
+        onPage: async (items, shopId) => {
+          scanned += items.length;
+          removed += (await upsertPosOrders(items, shopId)).changed;
+        }
+      });
+    }
+    await saveSyncState({ deletedCleanupDone: true });
+    console.log(`[pos-orders] quet ${scanned} don huy/xoa tren POS, xoa ${removed} don khoi DB trong ${Math.round((Date.now() - startedAt) / 1000)}s`);
+  } catch (error) {
+    console.error(`[pos-orders] quet don huy/xoa loi (se thu lai lan dong bo sau): ${error.message}`);
+  } finally {
+    deletedCleanupRunning = false;
   }
 }
 
@@ -442,6 +495,7 @@ async function startPosOrderSync() {
       const shopState = await ensureSyncStateShop();
       if (shopState.hasPreviousShopOrders) orderSourceState.posReady = true;
       if (!shopState.backfillDone) runPosBackfill();
+      if (!shopState.deletedCleanupDone) runPosDeletedCleanup();
       await syncRecentPosOrders();
     } catch (error) {
       console.error(`[pos-orders] dong bo loi: ${error.message}`);

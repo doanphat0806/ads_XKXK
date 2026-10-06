@@ -14,6 +14,8 @@ const PosOrderSyncStateSchema = new mongoose.Schema({
   lastSyncedAt: { type: Date, default: null },
   // Da tung dong bo shop khac (doi shop/tai khoan) -> DB da co don cu, khong can quay lai Google Sheet khi tai lich su shop moi
   hasPreviousShopOrders: { type: Boolean, default: false },
+  // Da quet 1 lan toan bo don huy/xoa tu backfillFrom -> danh dau cac don da luu truoc khi bi xoa tren POS
+  deletedCleanupDone: { type: Boolean, default: false },
   updatedAt: { type: Date, default: Date.now }
 });
 
