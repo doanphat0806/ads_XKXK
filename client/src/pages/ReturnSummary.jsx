@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import { useAppContext } from '../contexts/AppContext';
 import { api, formatNumber, formatVND } from '../lib/api';
+import ReturnReasonChart from '../components/ReturnReasonChart';
 
 const EMPTY_ARRAY = [];
 const BUCKET_KEYS = ['san', 'sale', 'sale119', 'od'];
@@ -159,6 +160,8 @@ export default function ReturnSummary() {
           </div>
         </div>
       </div>
+
+      <ReturnReasonChart data={summary?.returnReasons} loading={loading} source={summary?.source?.orders} />
 
       <div className="card section-gap">
         <div className="card-header">

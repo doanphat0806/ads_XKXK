@@ -272,6 +272,12 @@ export default function Dashboard() {
   const [sortDir, setSortDir] = useState('desc');
   const [currentPage, setCurrentPage] = useState(1);
   const [reportFromDate, setReportFromDate] = useState(() => todayString());
+  const [reportHours, setReportHours] = useState({ fromHour: 0, toHour: 23 });
+  const [hourlyData, setHourlyData] = useState(null);
+  const [hourlyError, setHourlyError] = useState('');
+  const [hourlySkuStats, setHourlySkuStats] = useState(null);
+  const [hourlySkuError, setHourlySkuError] = useState('');
+  const hourRangeActive = reportHours.fromHour !== 0 || reportHours.toHour !== 23;
   const [reportToDate, setReportToDate] = useState(() => todayString());
   const [localStats, setLocalStats] = useState({});
   const [localCampaigns, setLocalCampaigns] = useState([]);
@@ -586,17 +592,40 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [provider, reportFromDate, reportToDate, loadSkuCounts]);
 
-  const hasSkuCounts = useMemo(() => Object.keys(skuCounts || {}).length > 0, [skuCounts]);
+  // Dang chon khung gio -> Tong don lay tu Pancake POS (co gio tao don), sheet chi co ngay
+  useEffect(() => {
+    if (!hourRangeActive || !showOrders) return undefined;
+    let cancelled = false;
+    const { fromHour, toHour } = reportHours;
+    const load = () => api('GET', `/orders/hourly-sku-counts?fromDate=${reportFromDate}&toDate=${reportToDate}&fromHour=${fromHour}&toHour=${toHour}`, null, { timeoutMs: 5 * 60 * 1000 })
+      .then(data => { if (!cancelled) { setHourlySkuStats(data); setHourlySkuError(''); } })
+      .catch(error => { if (!cancelled) setHourlySkuError(error?.message || 'Khong tai duoc don theo gio'); });
+    load();
+    const interval = setInterval(load, 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [hourRangeActive, showOrders, reportFromDate, reportToDate, reportHours]);
+
+  const hourlySkuReady = Boolean(
+    hourRangeActive && hourlySkuStats &&
+    hourlySkuStats.fromDate === reportFromDate && hourlySkuStats.toDate === reportToDate &&
+    hourlySkuStats.fromHour === reportHours.fromHour && hourlySkuStats.toHour === reportHours.toHour
+  );
+  const effectiveSkuCounts = useMemo(() => (
+    hourlySkuReady ? (hourlySkuStats.counts || {}) : skuCounts
+  ), [hourlySkuReady, hourlySkuStats, skuCounts]);
+  const effectiveSkuTotal = hourlySkuReady ? Number(hourlySkuStats.totalOrders || 0) : skuTotal;
+
+  const hasSkuCounts = useMemo(() => Object.keys(effectiveSkuCounts || {}).length > 0, [effectiveSkuCounts]);
   const hasReturnStatsBySku = useMemo(() => Object.keys(returnStatsBySku || {}).length > 0, [returnStatsBySku]);
 
   const getOrderCountForCampaign = useCallback((campaignName) => {
     if (!campaignName || !hasSkuCounts) return 0;
     for (const skuKey of getCampaignSkuCandidates(campaignName)) {
-      const count = Number(skuCounts[skuKey] || 0);
+      const count = Number(effectiveSkuCounts[skuKey] || 0);
       if (count > 0) return count;
     }
     return 0;
-  }, [skuCounts, hasSkuCounts]);
+  }, [effectiveSkuCounts, hasSkuCounts]);
 
   const getReturnStatsForCampaign = useCallback((campaignName) => {
     if (!campaignName || !hasReturnStatsBySku) return EMPTY_RETURN_STATS;
@@ -607,9 +636,46 @@ export default function Dashboard() {
     return EMPTY_RETURN_STATS;
   }, [returnStatsBySku, hasReturnStatsBySku]);
 
+  // Dang chon khung gio (khac ca ngay) -> chi tieu/click/hien thi/don Meta cua camp chi tinh trong khung gio do.
+  // Cac chi so khong cong don theo gio duoc (tiep can, tuong tac, tin nhan...) van la ca ngay.
+  const hourlyDataReady = Boolean(hourlyData && hourlyData.fromDate === reportFromDate && hourlyData.toDate === reportToDate);
+
+  // Chi tai du lieu theo gio (Meta Insights breakdown theo gio) khi dang chon khung gio
+  useEffect(() => {
+    if (!hourRangeActive) return undefined;
+    let cancelled = false;
+    setHourlyError('');
+    api('GET', `/campaigns/hourly-spend?provider=${provider}&fromDate=${reportFromDate}&toDate=${reportToDate}`, null, { timeoutMs: 5 * 60 * 1000 })
+      .then(data => { if (!cancelled) setHourlyData(data); })
+      .catch(error => { if (!cancelled) setHourlyError(error?.message || 'Khong tai duoc so lieu theo gio'); });
+    return () => { cancelled = true; };
+  }, [hourRangeActive, provider, reportFromDate, reportToDate]);
+  const hourAdjustedCampaigns = useMemo(() => {
+    if (!hourRangeActive || !hourlyDataReady) return localCampaigns;
+    const { fromHour, toHour } = reportHours;
+    const sumRange = (row) => {
+      if (!row) return 0;
+      let total = 0;
+      for (let hour = fromHour; hour <= toHour; hour += 1) total += Number(row[hour] || 0);
+      return total;
+    };
+    return localCampaigns.map(campaign => {
+      const id = String(campaign.campaignId);
+      const metrics = hourlyData.metricsByCampaign?.[id] || {};
+      return {
+        ...campaign,
+        spend: sumRange(hourlyData.byCampaign?.[id]),
+        clicks: sumRange(metrics.clicks),
+        impressions: sumRange(metrics.impressions),
+        linkClicks: sumRange(metrics.linkClicks),
+        metaOrders: sumRange(hourlyData.ordersByCampaign?.[id])
+      };
+    });
+  }, [localCampaigns, hourRangeActive, hourlyDataReady, hourlyData, reportHours]);
+
   const filteredCampaigns = useMemo(() => {
     const search = deferredCampaignSearch.trim().toLowerCase();
-    return localCampaigns
+    return hourAdjustedCampaigns
       .filter(c => Number(c.spend || 0) > 0)
       .filter(c => {
         if (!search) return true;
@@ -617,7 +683,7 @@ export default function Dashboard() {
           String(value || '').toLowerCase().includes(search)
         );
       });
-  }, [localCampaigns, deferredCampaignSearch]);
+  }, [hourAdjustedCampaigns, deferredCampaignSearch]);
 
   const enrichedCampaigns = useMemo(() => {
     return filteredCampaigns.map(campaign => {
@@ -702,7 +768,7 @@ export default function Dashboard() {
     return processedCampaigns.slice((page - 1) * DASHBOARD_CAMPAIGNS_PER_PAGE, page * DASHBOARD_CAMPAIGNS_PER_PAGE);
   }, [currentPage, processedCampaigns, totalPages]);
   const visibleCampaigns = useMemo(() => pageCampaigns.slice(0, renderLimit), [pageCampaigns, renderLimit]);
-  const campaignStats = useMemo(() => buildStatsFromCampaigns(localCampaigns, isShopee), [localCampaigns, isShopee]);
+  const campaignStats = useMemo(() => buildStatsFromCampaigns(hourAdjustedCampaigns, isShopee), [hourAdjustedCampaigns, isShopee]);
   const metaAvgCPM = useMemo(() => {
     if (isShopee) return 0;
     return Number(campaignStats.avgCPM || 0);
@@ -946,7 +1012,7 @@ export default function Dashboard() {
         {showOrders && (
           <div className="stat g2" style={{ borderColor: 'var(--g2)' }}>
             <div className="stat-label">Don hang {dateLabel}</div>
-            <div className="stat-value g2" id="sOrders" style={{ color: 'var(--g2)' }}>{skuLoading ? '...' : skuTotal}</div>
+            <div className="stat-value g2" id="sOrders" style={{ color: 'var(--g2)' }}>{skuLoading ? '...' : effectiveSkuTotal}</div>
             <div className="stat-sub">Tu Google Sheet</div>
           </div>
         )}
@@ -954,7 +1020,7 @@ export default function Dashboard() {
           <div className="stat r" style={{ borderColor: 'var(--r)' }}>
             <div className="stat-label">CPO {dateLabel}</div>
             <div className="stat-value" id="sCPO" style={{ color: 'var(--r)', fontSize: skuLoading ? '1.4rem' : undefined }}>
-              {skuLoading ? '...' : (skuTotal > 0 && campaignStats.totalSpend > 0) ? formatVND(campaignStats.totalSpend / skuTotal) : '-'}
+              {skuLoading ? '...' : (effectiveSkuTotal > 0 && campaignStats.totalSpend > 0) ? formatVND(campaignStats.totalSpend / effectiveSkuTotal) : '-'}
             </div>
             <div className="stat-sub">Chi tiêu / Đơn</div>
           </div>
@@ -974,7 +1040,19 @@ export default function Dashboard() {
         <div className="card-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
             <div className="card-title" style={{ margin: 0 }}>Bao cao chi tiet {dateLabel}</div>
-            <DateRangePicker fromDate={reportFromDate} toDate={reportToDate} onChange={(from, to) => { setReportFromDate(from); setReportToDate(to); }} centered />
+            <DateRangePicker
+              fromDate={reportFromDate}
+              toDate={reportToDate}
+              fromHour={reportHours.fromHour}
+              toHour={reportHours.toHour}
+              showHours
+              onChange={(from, to, hours) => {
+                setReportFromDate(from);
+                setReportToDate(to);
+                if (hours) setReportHours(hours);
+              }}
+              centered
+            />
             <button className="btn btn-ghost btn-sm" onClick={reloadDashboardNow} disabled={statsLoading}>
               Reload
             </button>
@@ -1020,6 +1098,21 @@ export default function Dashboard() {
         </div>
       </div>
       </div>
+
+      {hourRangeActive && (
+        <div className="hourly-table-note">
+          {hourlyError && !hourlyDataReady
+            ? <span style={{ color: 'var(--r)' }}>Không tải được số liệu theo giờ: {hourlyError}</span>
+            : hourlyDataReady
+            ? <span>
+                Đang tính <b>chi tiêu, click, hiển thị, click liên kết, đơn Meta{hourlySkuReady ? ', Tổng đơn (POS)' : ''}</b> trong khung <b>{reportHours.fromHour}h–{reportHours.toHour}h59</b>.
+                {' '}Tiếp cận, tương tác, tin nhắn{hourlySkuReady ? '' : ', Tổng đơn'} vẫn là cả ngày.
+                {showOrders && hourlySkuError && !hourlySkuReady && <span style={{ color: 'var(--r)' }}> Không lấy được đơn theo giờ từ POS: {hourlySkuError}</span>}
+              </span>
+            : <span>Đang tải số liệu khung {reportHours.fromHour}h–{reportHours.toHour}h59... bảng tạm hiện số cả ngày.</span>}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReportHours({ fromHour: 0, toHour: 23 })}>Xem cả ngày</button>
+        </div>
+      )}
 
       <div className="card dashboard-table-card">
         <div className="tbl-wrap" id="dashCampTable">

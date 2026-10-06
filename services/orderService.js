@@ -10,7 +10,7 @@ const ORDERS_SHEET_ID = process.env.ORDERS_SHEET_ID || DEFAULT_ORDERS_SHEET_ID;
 const ORDERS_SHEET_NAME = process.env.ORDERS_SHEET_NAME || DEFAULT_ORDERS_SHEET_NAME;
 const ORDERS_SHEET_RANGE = process.env.ORDERS_SHEET_RANGE || 'A1:M200000';
 const ORDERS_SHEET_QUERY = process.env.ORDERS_SHEET_QUERY || 'select L,B,D,G,H,K,M where B is not null';
-const ORDERS_SOURCE = String(process.env.ORDERS_SOURCE || 'sheet').trim().toLowerCase();
+const { orderSourceState } = require('./orderSourceState');
 const ORDERS_SHEET_CACHE_TTL_MS = parseBoundedInt(process.env.ORDERS_SHEET_CACHE_TTL_MS, 60 * 1000, 5000, 60 * 60 * 1000);
 const ORDERS_SHEET_TIMEOUT_MS = parseBoundedInt(process.env.ORDERS_SHEET_TIMEOUT_MS, 90000, 10000, 300000);
 const ORDERS_SHEET_RETRIES = parseBoundedInt(process.env.ORDERS_SHEET_RETRIES, 3, 1, 5);
@@ -37,6 +37,8 @@ function buildOrderQuery({ fromDate, toDate } = {}) {
     status: { $nin: ['5', 'cancelled', 'deleted'] },
     'rawData.is_deleted': { $ne: true }
   };
+  // Nguon POS: chi doc don do dong bo POS ghi (bo du lieu cu tu webhook ghi payload tho vao bang Order)
+  if (orderSourceState.source === 'pos') query['rawData.source'] = 'pancake_pos';
 
   if (fromDate || toDate) {
     query.createdAt = {};
@@ -97,7 +99,45 @@ function normalizeMarketingText(value = '') {
     .trim();
 }
 
+// The chinh -> nhom. "Oder + Sẵn" tinh la Order. Thu tu uu tien khi don co nhieu the chinh: Order > Sale 119 > Sale > Sẵn.
+const MAIN_ORDER_TAG_BUCKETS = new Map([
+  ['oder', 'od'],
+  ['order', 'od'],
+  ['od', 'od'],
+  ['oder san', 'od'],
+  ['order san', 'od'],
+  ['sale 119', 'sale119'],
+  ['sale119', 'sale119'],
+  ['sale 99', 'sale119'],
+  ['sale99', 'sale119'],
+  ['sale', 'sale'],
+  ['san', 'san']
+]);
+const ORDER_TAG_BUCKET_PRIORITY = ['od', 'sale119', 'sale', 'san'];
+
+function pickOrderTagBucket(buckets) {
+  return ORDER_TAG_BUCKET_PRIORITY.find(bucket => buckets.has(bucket)) || '';
+}
+
+// value: chuoi the (nhieu the cach nhau dau phay, vd cot J/M cua sheet) hoac mang ten the (POS).
 function classifyReturnOrderTagBucket(value = '') {
+  const tags = (Array.isArray(value) ? value : String(value || '').split(','))
+    .map(tag => normalizeMarketingText(tag))
+    .filter(Boolean);
+  if (!tags.length) return '';
+
+  const exact = pickOrderTagBucket(new Set(tags.map(tag => MAIN_ORDER_TAG_BUCKETS.get(tag)).filter(Boolean)));
+  if (exact) return exact;
+
+  // The phu nhu "Đơn nhiều sản phẩm" chua chu "san" -> khong duoc tinh la Sẵn
+  const fallback = tags
+    .filter(tag => !tag.includes('nhieu san pham'))
+    .map(classifyLegacyOrderTagText)
+    .filter(Boolean);
+  return pickOrderTagBucket(new Set(fallback));
+}
+
+function classifyLegacyOrderTagText(value = '') {
   const tokens = normalizeMarketingText(value).split(/\s+/).filter(Boolean);
   if (!tokens.length) return '';
 
@@ -161,11 +201,14 @@ function classifyReturnAdNameBucket(value = '') {
   return '';
 }
 
+// The don hang, cach nhau dau phay. Sheet: cot M (+ rawData.tags = [cot M]); POS: rawData.tags = [{ id, name }].
 function getOrderTagText(order = {}) {
   const raw = order.rawData || {};
   const sheet = raw.sheetColumns || {};
-  const tags = Array.isArray(raw.tags) ? raw.tags.join(' ') : raw.tags;
-  return [sheet.col13, tags].filter(Boolean).join(' ');
+  const tags = Array.isArray(raw.tags)
+    ? raw.tags.map(tag => (typeof tag === 'string' ? tag : tag?.name || ''))
+    : [raw.tags];
+  return [...new Set([sheet.col13, ...tags].map(tag => String(tag || '').trim()).filter(Boolean))].join(', ');
 }
 
 function getOrderDateKey(order = {}) {
@@ -220,8 +263,21 @@ function incrementReturnStats(stats, status, amount = 1) {
   }
 }
 
+// true -> doc don tu Google Sheet; false -> doc bang Order (MongoDB).
+// Nguon 'pos': chi chuyen sang MongoDB khi da tai xong lich su don POS.
 function useSheetOrders() {
-  return ORDERS_SOURCE === 'sheet';
+  if (orderSourceState.source === 'sheet') return true;
+  if (orderSourceState.source === 'pos') return !orderSourceState.posReady;
+  return false;
+}
+
+function getOrderSourceName() {
+  return useSheetOrders() ? 'google_sheet' : (orderSourceState.source === 'pos' ? 'pancake_pos' : 'database');
+}
+
+// Doi moi khi du lieu don thay doi -> dung lam khoa cache
+function getOrderDataVersion() {
+  return useSheetOrders() ? `sheet-${ordersSheetCache.fetchedAt || 0}` : `db-${orderSourceState.posVersion}`;
 }
 
 function toSheetText(value, fallback = '') {
@@ -447,7 +503,7 @@ function buildOrderTableStats(orders = []) {
 }
 
 function getOrderStatsCacheKey({ fromDate, toDate } = {}) {
-  return `${fromDate || ''}:${toDate || ''}:${ordersSheetCache.fetchedAt || 0}`;
+  return `${fromDate || ''}:${toDate || ''}:${getOrderDataVersion()}`;
 }
 
 function getOrderSheetPageCacheKey({ fromDate, toDate, search } = {}) {
@@ -555,6 +611,63 @@ function getOrderReturnProductUnitCount(order = {}) {
     if (sku) skus.add(sku);
   }
   return skus.size;
+}
+
+// The ly do hoan (POS) -> nhom hien thi. Cac the khac (Oder/Sale, doi soat, trang thai...) khong phai ly do.
+const RETURN_REASON_TAGS = new Map([
+  ['khach khong ung hang', 'Khách không ưng hàng'],
+  ['khong vua', 'Không vừa'],
+  ['chat xau dat', 'Chất xấu - Đắt'],
+  ['ko goi duoc khach', 'Không gọi được khách'],
+  ['khong goi duoc khach', 'Không gọi được khách'],
+  ['khong nghe may', 'Không gọi được khách'],
+  ['khong tra ship', 'Không trả ship'],
+  ['hang ve muon', 'Hàng về muộn'],
+  ['hang ve lau khach k cho duoc', 'Hàng về muộn'],
+  ['khong co li do', 'Không có lí do'],
+  ['do ship', 'Do ship'],
+  ['giao khong thanh', 'Giao không thành'],
+  ['do sp loi', 'Sản phẩm lỗi'],
+  ['do khach', 'Do khách'],
+  ['gui sai hang', 'Gửi sai hàng'],
+  ['ve sai hoac dong sai', 'Gửi sai hàng'],
+  ['dat sai hang', 'Đặt / chốt sai'],
+  ['chot sai', 'Đặt / chốt sai'],
+  ['dich benh', 'Dịch bệnh']
+]);
+const NO_RETURN_REASON_LABEL = 'Chưa ghi lý do';
+
+function getOrderReturnReasons(order = {}) {
+  const tags = String(getOrderTagText(order) || '').split(',');
+  return [...new Set(tags.map(tag => RETURN_REASON_TAGS.get(normalizeMarketingText(tag))).filter(Boolean))];
+}
+
+// Ly do hoan tren cac don da hoan / dang hoan, tong va theo nhom the (Sẵn/Sale/Sale119/Order).
+// 1 don co the co nhieu ly do -> tong % cac ly do co the > 100%.
+function buildReturnReasonStats(orders = []) {
+  const createGroup = () => ({ returnCount: 0, counts: {} });
+  const groups = { total: createGroup() };
+  RETURN_SUMMARY_BUCKETS.forEach(bucket => { groups[bucket.key] = createGroup(); });
+
+  for (const order of orders) {
+    const status = classifyReturnStatus(order);
+    if (status !== 'returned' && status !== 'returning') continue;
+    const reasons = getOrderReturnReasons(order);
+    const labels = reasons.length ? reasons : [NO_RETURN_REASON_LABEL];
+    const bucketKey = classifyReturnOrderTagBucket(getOrderTagText(order));
+    for (const group of [groups.total, groups[bucketKey]].filter(Boolean)) {
+      group.returnCount += 1;
+      labels.forEach(label => { group.counts[label] = (group.counts[label] || 0) + 1; });
+    }
+  }
+
+  const finalize = group => ({
+    returnCount: group.returnCount,
+    reasons: Object.entries(group.counts)
+      .map(([label, count]) => ({ label, count, share: group.returnCount > 0 ? count / group.returnCount : 0 }))
+      .sort((a, b) => b.count - a.count)
+  });
+  return Object.fromEntries(Object.entries(groups).map(([key, group]) => [key, finalize(group)]));
 }
 
 function buildReturnProductRateStats(orders = []) {
@@ -887,8 +1000,11 @@ module.exports = {
   classifyReturnSummaryBucket: classifyReturnOrderTagBucket,
   buildReturnSummaryOrderStats,
   buildReturnProductRateStats,
+  buildReturnReasonStats,
   RETURN_SUMMARY_BUCKETS,
   useSheetOrders,
+  getOrderSourceName,
+  getOrderDataVersion,
   buildOrderSkuStats,
   buildOrderTableStats,
   fetchOrderSheetRows,

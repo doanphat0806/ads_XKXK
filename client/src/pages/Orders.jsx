@@ -51,10 +51,9 @@ const getStatusClass = (rawStatus = '') => {
   return 'paused';
 };
 
-const getFirstItem = (raw = {}) => {
-  const items = [raw.items, raw.line_items, raw.products, raw.details].find(Array.isArray) || [];
-  return asObject(items[0]);
-};
+const getItems = (raw = {}) => (
+  ([raw.items, raw.line_items, raw.products, raw.details].find(Array.isArray) || []).map(asObject)
+);
 
 const getItemSku = (item = {}, sheet = {}) => {
   const variationInfo = asObject(item.variation_info);
@@ -89,25 +88,31 @@ const getItemSize = (item = {}, sheet = {}) => {
   );
 };
 
-const mapSheetOrder = (order, index) => {
+// 1 don -> cac dong hien thi. Don POS nhieu mau ma tach thanh 1 dong / san pham (nhu sheet truoc day);
+// don tu sheet von da la 1 dong / san pham.
+const mapOrderRows = (order, index) => {
   const raw = asObject(order.rawData);
   const sheet = asObject(raw.sheetColumns);
-  const item = getFirstItem(raw);
+  const items = getItems(raw);
   const statusRaw = toText(sheet.col8 || raw.status_name || raw.status || order.status, '');
   const tags = Array.isArray(raw.tags) ? raw.tags.join(', ') : '';
+  const splitItems = raw.source === 'pancake_pos' && items.length > 1;
+  const rowItems = splitItems ? items : [items[0] || {}];
+  // Don tach dong: SKU/SL/size lay theo tung san pham, khong dung cot gop cua ca don
+  const itemSheet = splitItems ? {} : sheet;
 
-  return {
-    key: `${raw.rowNumber || order.orderId || index}-${sheet.col4 || index}`,
+  return rowItems.map((item, itemIndex) => ({
+    key: `${raw.rowNumber || order.orderId || index}-${itemIndex}-${splitItems ? '' : sheet.col4 || index}`,
     rowNumber: raw.rowNumber || '',
     dateStr: toText(sheet.col2, formatCreatedAt(order.createdAt)),
     orderId: toText(order.orderId || sheet.col12),
-    sku: getItemSku(item, sheet),
-    qty: getItemQuantity(item, sheet),
+    sku: getItemSku(item, itemSheet),
+    qty: getItemQuantity(item, itemSheet),
     posStatus: statusRaw || '-',
-    size: getItemSize(item, sheet),
+    size: getItemSize(item, itemSheet),
     tagsStr: toText(sheet.col13 || tags, '-'),
     statusClass: getStatusClass(statusRaw)
-  };
+  }));
 };
 
 const getStatusSummary = (statusCounts = {}) => {
@@ -151,7 +156,7 @@ export default function Orders() {
       const search = searchTerm.trim();
 
       if (shouldSync) {
-        toast.info('Đang tải dữ liệu từ Google Sheet...');
+        toast.info('Đang đồng bộ đơn hàng...');
         const result = await api('POST', '/orders/sync', { fromDate, toDate, queue: true }, { timeoutMs: 60000 });
         let synced = result.synced ?? 0;
 
@@ -169,7 +174,7 @@ export default function Orders() {
           }
         }
 
-        toast.success(`Đã tải ${Number(synced || 0).toLocaleString('vi-VN')} dòng đơn hàng`);
+        toast.success(`Đã đồng bộ ${Number(synced || 0).toLocaleString('vi-VN')} đơn hàng`);
       }
 
       const params = new URLSearchParams();
@@ -181,7 +186,7 @@ export default function Orders() {
 
       const data = await api('GET', `/orders?${params.toString()}`, null, { timeoutMs: 180000 });
       const orders = Array.isArray(data) ? data : data.orders || [];
-      const rows = orders.map((order, index) => mapSheetOrder(order, index));
+      const rows = orders.flatMap((order, index) => mapOrderRows(order, index));
 
       setOrderRows(rows);
       setTotalRows(Array.isArray(data) ? rows.length : Number(data.total || 0));
@@ -211,7 +216,7 @@ export default function Orders() {
   const pageRows = useMemo(() => orderRows, [orderRows]);
   const rangeStart = totalRows === 0 ? 0 : ((currentPage - 1) * ordersPerPage) + 1;
   const rangeEnd = Math.min(totalRows, currentPage * ordersPerPage);
-  const sourceLabel = source === 'google_sheet' ? 'Google Sheet' : 'Cơ sở dữ liệu';
+  const sourceLabel = { google_sheet: 'Google Sheet', pancake_pos: 'Pancake POS' }[source] || 'Cơ sở dữ liệu';
 
   if (provider === 'shopee') {
     return (
@@ -231,7 +236,7 @@ export default function Orders() {
       <div className="card section-gap orders-filter-card">
         <div className="card-header">
           <div>
-            <div className="card-title">Bảng đặt hàng từ Google Sheet</div>
+            <div className="card-title">Bảng đặt hàng từ {sourceLabel}</div>
             <div className="orders-source-note">
               Nguồn: {sourceLabel}
               {lastSyncedAt ? ` | Cache: ${formatCreatedAt(lastSyncedAt)}` : ''}

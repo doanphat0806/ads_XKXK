@@ -6,6 +6,12 @@ const formatDate = (d) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+
+const isFullDay = (fromHour, toHour) => fromHour === 0 && toHour === 23;
+
+const formatHourRange = (fromHour, toHour) => `${fromHour}h–${toHour}h59`;
+
 const PRESETS = [
   { label: 'Trọn đời', value: 'lifetime' },
   { label: 'Hôm nay', value: 'today' },
@@ -142,10 +148,13 @@ const Calendar = ({ month, year, selectedFrom, selectedTo, onSelect, hoverDate, 
   );
 };
 
-export default function DateRangePicker({ fromDate, toDate, onChange, centered = false }) {
+// showHours: cho chon them khung gio (fromHour..toHour, 0-23); onChange(from, to, { fromHour, toHour }).
+export default function DateRangePicker({ fromDate, toDate, onChange, centered = false, showHours = false, fromHour = 0, toHour = 23 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [tempFrom, setTempFrom] = useState(fromDate);
   const [tempTo, setTempTo] = useState(toDate);
+  const [tempFromHour, setTempFromHour] = useState(fromHour);
+  const [tempToHour, setTempToHour] = useState(toHour);
   const [activePreset, setActivePreset] = useState(null);
   const [viewDate, setViewDate] = useState(new Date(fromDate));
   const [hoverDate, setHoverDate] = useState(null);
@@ -158,7 +167,9 @@ export default function DateRangePicker({ fromDate, toDate, onChange, centered =
     setTempFrom(fromDate);
     setTempTo(toDate);
     setViewDate(new Date(fromDate));
-  }, [fromDate, toDate, isOpen]);
+    setTempFromHour(fromHour);
+    setTempToHour(toHour);
+  }, [fromDate, toDate, fromHour, toHour, isOpen]);
 
   const updatePopoverPosition = useCallback(() => {
     if (!triggerRef.current) return;
@@ -222,7 +233,9 @@ export default function DateRangePicker({ fromDate, toDate, onChange, centered =
   };
 
   const handleUpdate = () => {
-    onChange(tempFrom, tempTo || tempFrom);
+    const lo = Math.min(tempFromHour, tempToHour);
+    const hi = Math.max(tempFromHour, tempToHour);
+    onChange(tempFrom, tempTo || tempFrom, { fromHour: lo, toHour: hi });
     setIsOpen(false);
   };
 
@@ -235,8 +248,11 @@ export default function DateRangePicker({ fromDate, toDate, onChange, centered =
   const mainDisplay = useMemo(() => {
     if (!fromDate) return '...';
     if (!toDate || fromDate === toDate) return fromDate.split('-').reverse().join('/');
-    return `${fromDate.split('-').reverse().join('/')} ~ ${toDate.split('-').reverse().join('/')}`;
-  }, [fromDate, toDate]);
+    const dates = !toDate || fromDate === toDate
+      ? fromDate.split('-').reverse().join('/')
+      : `${fromDate.split('-').reverse().join('/')} ~ ${toDate.split('-').reverse().join('/')}`;
+    return showHours && !isFullDay(fromHour, toHour) ? `${dates} · ${formatHourRange(fromHour, toHour)}` : dates;
+  }, [fromDate, toDate, showHours, fromHour, toHour]);
 
   const months = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6', 'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
   const years = useMemo(() => {
@@ -333,9 +349,38 @@ export default function DateRangePicker({ fromDate, toDate, onChange, centered =
 
             <div className="drp-footer">
               <div className="drp-footer-range">
-                <div className="drp-footer-date">{displayRange}</div>
+                <div className="drp-footer-date">
+                  {displayRange}
+                  {showHours && !isFullDay(Math.min(tempFromHour, tempToHour), Math.max(tempFromHour, tempToHour)) && (
+                    <> · {formatHourRange(Math.min(tempFromHour, tempToHour), Math.max(tempFromHour, tempToHour))}</>
+                  )}
+                </div>
                 <div className="drp-footer-tz">UTC+07:00</div>
               </div>
+              {showHours && (
+                <div className="drp-hours">
+                  <label>
+                    Từ
+                    <select value={tempFromHour} onChange={e => setTempFromHour(Number(e.target.value))}>
+                      {HOURS.map(h => <option key={h} value={h}>{h}h00</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    đến
+                    <select value={tempToHour} onChange={e => setTempToHour(Number(e.target.value))}>
+                      {HOURS.map(h => <option key={h} value={h}>{h}h59</option>)}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="drp-hours-reset"
+                    onClick={() => { setTempFromHour(0); setTempToHour(23); }}
+                    disabled={isFullDay(tempFromHour, tempToHour)}
+                  >
+                    Cả ngày
+                  </button>
+                </div>
+              )}
               <div className="drp-footer-actions">
                 <button className="btn-drp btn-drp-cancel" onClick={() => setIsOpen(false)}>Hủy</button>
                 <button className="btn-drp btn-drp-apply" onClick={handleUpdate}>Cập nhật</button>

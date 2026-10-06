@@ -5,6 +5,7 @@ const cors = require('cors');
 const path = require('path');
 const { registerFacebookLoginRoutes } = require('./routes/facebookLoginRoutes');
 const { createLegacyRuntime } = require('./services/legacyRuntimeService');
+const { startPosOrderSync, stopPosOrderSync } = require('./services/posOrderService');
 
 const app = express();
 const publicDir = path.join(__dirname, 'client', 'dist');
@@ -66,6 +67,7 @@ mongoose.connect(MONGO_URI).then(async () => {
 
     await legacyRuntime.bootstrapFacebookToken();
     await legacyRuntime.initializeQueues();
+    await startPosOrderSync();
     legacyRuntime.startSheetRefresh();
     legacyRuntime.startCronTasks();
     await legacyRuntime.resumeAutoAccounts();
@@ -79,6 +81,7 @@ mongoose.connect(MONGO_URI).then(async () => {
 
 async function gracefulShutdown(signal) {
   console.log(`Shutting down gracefully (${signal})...`);
+  stopPosOrderSync();
   await legacyRuntime.shutdown();
   await mongoose.connection.close();
   process.exit(0);

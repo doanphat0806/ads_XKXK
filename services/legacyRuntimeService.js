@@ -87,6 +87,7 @@ function createLegacyRuntime(app) {
     buildOrderTableStats,
     buildReturnSummaryOrderStats,
     buildReturnProductRateStats,
+    buildReturnReasonStats,
     classifyReturnStatus,
     classifyReturnAdNameBucket,
     RETURN_SUMMARY_BUCKETS,
@@ -94,9 +95,12 @@ function createLegacyRuntime(app) {
     getOrderSheetPage,
     getOrderSheetOrders,
     getOrderStatsCacheKey,
+    getOrderSourceName,
+    getOrderDataVersion,
     ordersSheetCache,
     orderStatsCache
   } = require('../services/orderService');
+  const { syncRecentPosOrders, upsertPosOrders } = require('../services/posOrderService');
   const { loadOrderSheetRowsFromDb } = require('../services/orderSheetPersistService');
   const {
     configureFacebookToken,
@@ -1375,7 +1379,9 @@ function createLegacyRuntime(app) {
   
     try {
       const today = todayStr();
-      const orders = await getOrderSheetOrders({ fromDate: today, toDate: today, limit: 200000 });
+      const orders = useSheetOrders()
+        ? await getOrderSheetOrders({ fromDate: today, toDate: today, limit: 200000 })
+        : await Order.find(buildOrderQuery({ fromDate: today, toDate: today })).select('rawData orderId status').lean();
       return buildOrderSkuStats(orders).counts || {};
     } catch (error) {
       await addLog(
@@ -3488,6 +3494,23 @@ function createLegacyRuntime(app) {
   
   async function processOrderSheetSyncJob(data = {}, onProgress = null) {
     const { fromDate, toDate } = data;
+    if (!useSheetOrders()) {
+      if (onProgress) await onProgress({ state: 'active', fromDate, toDate, percent: 10, message: 'Dang dong bo don tu Pancake POS' });
+      const { received } = await syncRecentPosOrders();
+      const result = {
+        state: 'completed',
+        source: getOrderSourceName(),
+        fromDate,
+        toDate,
+        totalRows: received,
+        synced: received,
+        percent: 100,
+        cachedAt: new Date().toISOString(),
+        message: 'Da dong bo don tu Pancake POS'
+      };
+      if (onProgress) await onProgress(result);
+      return result;
+    }
     if (onProgress) {
       await onProgress({
         state: 'active',
@@ -3794,6 +3817,7 @@ function createLegacyRuntime(app) {
       fbGet,
       fbPost,
       fetchAllFbEdge,
+      mapWithConcurrency,
       sleep,
       FB_CAMPAIGN_CREATE_REQUEST_OPTIONS,
       getAppConfig,
@@ -3809,6 +3833,7 @@ function createLegacyRuntime(app) {
       buildOrderTableStats,
       buildReturnSummaryOrderStats,
       buildReturnProductRateStats,
+      buildReturnReasonStats,
       classifyReturnStatus,
       classifyReturnAdNameBucket,
       RETURN_SUMMARY_BUCKETS,
@@ -3816,6 +3841,10 @@ function createLegacyRuntime(app) {
       getOrderSheetPage,
       getOrderSheetOrders,
       getOrderStatsCacheKey,
+      getOrderSourceName,
+      getOrderDataVersion,
+      syncRecentPosOrders,
+      upsertPosOrders,
       ordersSheetCache,
       orderStatsCache,
       configureFacebookToken,
@@ -4216,6 +4245,7 @@ function createLegacyRuntime(app) {
   function startSheetRefresh() {
     let sheetRefreshRunning = false;
     const sheetRefreshInitial = async () => {
+      if (!useSheetOrders()) return;
       try {
         if (ordersSheetCache.rateLimitedUntil > Date.now() && ordersSheetCache.rows?.length) {
           console.warn(`Sheet Cache: skip startup refresh due to rate limit until ${new Date(ordersSheetCache.rateLimitedUntil).toISOString()}; using cached ${ordersSheetCache.rows.length} rows`);
@@ -4235,7 +4265,7 @@ function createLegacyRuntime(app) {
     sheetRefreshInitial();
 
     sheetRefreshTimer = setInterval(async () => {
-      if (isShuttingDown || sheetRefreshRunning) return;
+      if (isShuttingDown || sheetRefreshRunning || !useSheetOrders()) return;
       sheetRefreshRunning = true;
       try {
         if (ordersSheetCache.rateLimitedUntil > Date.now() && ordersSheetCache.rows?.length) {

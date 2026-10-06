@@ -6959,3 +6959,36 @@
       }
     }
 
+
+    /* Chon khung gio trong bo chon ngay */
+    .drp-hours { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; font-weight: 600; color: #475569; }
+    .drp-hours label { display: inline-flex; align-items: center; gap: 6px; }
+    .drp-hours select { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 0 10px; height: 36px; font-size: 13px; font-weight: 600; color: #0f172a; outline: none; cursor: pointer; }
+    .drp-hours-reset { background: transparent; border: 0; color: #10b981; font-size: 12px; font-weight: 700; cursor: pointer; padding: 4px; }
+    .drp-hours-reset:disabled { color: #94a3b8; cursor: default; }
+
+    .hourly-table-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; padding: 8px 14px; border: 1px solid var(--o); border-radius: 10px; background: #fff8eb; font-size: 13px; color: var(--txt); }
+
+    /* Bieu do ly do hoan (Tong hoan) */
+    #page-return-summary .return-reason-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    #page-return-summary .return-reason-sub { margin-top: 4px; color: var(--muted2); font-size: 12px; line-height: 1.45; }
+    #page-return-summary .return-reason-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    #page-return-summary .return-reason-tabs { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--s2); }
+    #page-return-summary .return-reason-tab { border: 0; border-radius: 6px; padding: 5px 10px; background: transparent; color: var(--muted2); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+    #page-return-summary .return-reason-tab.active { background: var(--s1); color: var(--txt); box-shadow: 0 1px 3px rgba(20, 82, 126, 0.12); }
+    #page-return-summary .return-reason-body { padding: 4px 16px 16px; }
+    #page-return-summary .return-reason-bars { display: flex; flex-direction: column; gap: 6px; }
+    #page-return-summary .return-reason-row { display: grid; grid-template-columns: minmax(120px, 200px) minmax(0, 1fr) 120px; align-items: center; gap: 12px; padding: 4px 0; transition: opacity 0.15s ease; }
+    #page-return-summary .return-reason-row.dim { opacity: 0.55; }
+    #page-return-summary .return-reason-label { color: var(--txt); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #page-return-summary .return-reason-track { position: relative; height: 18px; }
+    #page-return-summary .return-reason-bar { height: 100%; min-width: 2px; background: var(--b); border-radius: 0 4px 4px 0; }
+    #page-return-summary .return-reason-value { display: flex; justify-content: flex-end; gap: 10px; font-family: var(--mono); font-size: 12px; }
+    #page-return-summary .return-reason-count { color: var(--txt); font-weight: 700; }
+    #page-return-summary .return-reason-share { color: var(--muted2); min-width: 48px; text-align: right; }
+    #page-return-summary .return-reason-tooltip { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 5; display: flex; flex-direction: column; gap: 2px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--s1); box-shadow: var(--shadow-sm); color: var(--txt); font-size: 12px; white-space: nowrap; pointer-events: none; }
+    #page-return-summary .return-reason-tooltip span { color: var(--muted2); }
+    @media (max-width: 640px) {
+      #page-return-summary .return-reason-row { grid-template-columns: minmax(0, 1fr) 96px; }
+      #page-return-summary .return-reason-track { grid-column: 1 / -1; grid-row: 2; }
+    }

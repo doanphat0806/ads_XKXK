@@ -1845,6 +1845,104 @@ app.get('/api/campaigns/today', async (req, res) => {
   }
 });
 
+// Chi tieu + don Meta (purchase) theo gio (0h-23h, mui gio tai khoan quang cao) lay truc tiep tu Meta Insights,
+// vi Campaign trong DB chi luu tong theo ngay. Nhieu ngay -> cong don theo tung khung gio.
+const HOURLY_SPEND_MAX_DAYS = 31;
+const HOURLY_BREAKDOWN = 'hourly_stats_aggregated_by_advertiser_time_zone';
+
+app.get('/api/campaigns/hourly-spend', async (req, res) => {
+  const startedAt = Date.now();
+  try {
+    const { provider } = req.query;
+    const fDate = normalizeCampaignDate(req.query.fromDate || todayStr());
+    const tDate = normalizeCampaignDate(req.query.toDate || req.query.fromDate || todayStr());
+    if (!fDate || !tDate) return res.status(400).json({ error: 'Ngay khong hop le' });
+    if (fDate > tDate) return res.status(400).json({ error: '"fromDate" phai truoc "toDate"' });
+    const rangeDays = Math.round((new Date(tDate) - new Date(fDate)) / 86400000) + 1;
+    if (rangeDays > HOURLY_SPEND_MAX_DAYS) {
+      return res.status(400).json({ error: `Chi tieu theo gio chi ho tro toi da ${HOURLY_SPEND_MAX_DAYS} ngay` });
+    }
+
+    const cacheKey = userScopedCacheKey(req, `hourly-spend:${provider || 'all'}:${fDate}:${tDate}`);
+    const cached = getReadCache(cacheKey);
+    if (cached) return res.json(cached);
+
+    const accountFilter = provider ? buildAccountProviderFilter(provider) : {};
+    const accounts = (await Account.find(withUserFilter(req, accountFilter))
+      .select('_id name adAccountId provider fbToken ownerUserId')
+      .lean()).filter(account => account.adAccountId);
+
+    const hours = Array.from({ length: 24 }, (_, hour) => ({ hour, spend: 0, orders: 0, clicks: 0, impressions: 0 }));
+    const byCampaign = {};
+    const ordersByCampaign = {};
+    // Chi so cong don duoc theo gio cho tung camp (dung de loc bang camp theo khung gio)
+    const metricsByCampaign = {};
+    const addCampaignHourMetric = (campaignId, metric, hour, value) => {
+      if (!value) return;
+      if (!metricsByCampaign[campaignId]) metricsByCampaign[campaignId] = {};
+      if (!metricsByCampaign[campaignId][metric]) metricsByCampaign[campaignId][metric] = new Array(24).fill(0);
+      metricsByCampaign[campaignId][metric][hour] += value;
+    };
+    const failedAccounts = [];
+
+    await mapWithConcurrency(accounts, async (account) => {
+      const accountId = String(account._id);
+      const isShopee = normalizeProvider(account.provider) === 'shopee';
+      if (getAccountRateLimitDelayMs(accountId) > 0) {
+        failedAccounts.push({ accountId, name: account.name, error: 'Dang bi gioi han rate limit' });
+        return;
+      }
+      try {
+        const { fbToken } = await getEffectiveSecrets(account);
+        if (!fbToken) throw new Error('Thieu Facebook Access Token');
+        const acctId = account.adAccountId.startsWith('act_') ? account.adAccountId : `act_${account.adAccountId}`;
+        const { items } = await fetchAllFbEdge(fbToken, `${acctId}/insights`, {
+          fields: 'campaign_id,spend,clicks,impressions,inline_link_clicks,actions,conversions',
+          time_range: JSON.stringify({ since: fDate, until: tDate }),
+          level: 'campaign',
+          breakdowns: HOURLY_BREAKDOWN,
+          limit: 500
+        });
+
+        for (const row of items) {
+          // "13:00:00 - 13:59:59" -> 13
+          const hour = parseInt(String(row?.[HOURLY_BREAKDOWN] || ''), 10);
+          if (!Number.isInteger(hour) || hour < 0 || hour > 23) continue;
+          const spend = Number(row.spend || 0);
+          const orders = isShopee ? 0 : getMetaOrdersFromInsight(row);
+          hours[hour].spend += spend;
+          hours[hour].orders += orders;
+          hours[hour].clicks += Number(row.clicks || 0);
+          hours[hour].impressions += Number(row.impressions || 0);
+
+          const campaignId = String(row.campaign_id || '');
+          if (!campaignId) continue;
+          if (spend) {
+            if (!byCampaign[campaignId]) byCampaign[campaignId] = new Array(24).fill(0);
+            byCampaign[campaignId][hour] += spend;
+          }
+          if (orders) {
+            if (!ordersByCampaign[campaignId]) ordersByCampaign[campaignId] = new Array(24).fill(0);
+            ordersByCampaign[campaignId][hour] += orders;
+          }
+          addCampaignHourMetric(campaignId, 'clicks', hour, Number(row.clicks || 0));
+          addCampaignHourMetric(campaignId, 'impressions', hour, Number(row.impressions || 0));
+          addCampaignHourMetric(campaignId, 'linkClicks', hour, getMetaLinkClicksFromInsight(row));
+        }
+      } catch (error) {
+        failedAccounts.push({ accountId, name: account.name, error: error.message });
+      }
+    }, 4);
+
+    const result = { fromDate: fDate, toDate: tDate, hours, byCampaign, ordersByCampaign, metricsByCampaign, failedAccounts };
+    console.log(`[campaigns:hourly-spend] provider=${provider || 'all'} ${fDate}..${tDate} accounts=${accounts.length} failed=${failedAccounts.length} ${Date.now() - startedAt}ms`);
+    res.json(failedAccounts.length ? result : setReadCache(cacheKey, result));
+  } catch (error) {
+    console.error(`[campaigns:hourly-spend] failed after ${Date.now() - startedAt}ms: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 async function fetchAccountInsightsInRange(account, fromDate, toDate) {
   const { fbToken } = await getEffectiveSecrets(account);
   if (!fbToken) throw new Error('Thieu Facebook Access Token');
@@ -2840,22 +2938,13 @@ app.post('/api/webhooks/pancake', async (req, res) => {
     // Pancake webhook structure usually has event type and data
     // Fallback to simple extraction if exact structure is unknown
     const orderData = payload.data || payload || {};
-    const orderId = orderData.id || orderData.order_id || `temp_${Date.now()}`;
-    const status = orderData.status || payload.event || 'unknown';
+    const isPosOrder = orderData && orderData.id !== undefined && (Array.isArray(orderData.items) || orderData.inserted_at);
+    if (!isPosOrder) {
+      return res.status(200).json({ success: true, ignored: true, message: 'Payload khong phai don POS' });
+    }
 
-    const newOrder = await Order.findOneAndUpdate(
-      { orderId: String(orderId) },
-      {
-        status: String(status),
-        customerName: orderData.customer_name || orderData.customer?.name || '',
-        totalPrice: Number(orderData.total_price || orderData.total || 0),
-        rawData: payload,
-        updatedAt: new Date()
-      },
-      { upsert: true, new: true }
-    );
-
-    res.status(200).json({ success: true, message: 'Webhook processed successfully', orderId: newOrder.orderId });
+    await upsertPosOrders([orderData]);
+    res.status(200).json({ success: true, message: 'Webhook processed successfully', orderId: String(orderData.id) });
   } catch (error) {
     console.error('Webhook processing error:', error);
     res.status(500).json({ error: error.message });
@@ -2912,7 +3001,8 @@ app.get('/api/orders', async (req, res) => {
       ]);
       res.json({
         ok: true,
-        source: 'database',
+        source: getOrderSourceName(),
+        cachedAt: require('../services/orderSourceState').orderSourceState.posLastSyncedAt || '',
         orders,
         total,
         page,
@@ -2934,11 +3024,39 @@ app.get('/api/orders', async (req, res) => {
   }
 });
 
+// Tong don theo khung gio: lay tu Pancake POS (sheet chi co ngay, khong co gio tao don)
+app.get('/api/orders/hourly-sku-counts', async (req, res) => {
+  try {
+    const fromDate = normalizeCampaignDate(req.query.fromDate || todayStr());
+    const toDate = normalizeCampaignDate(req.query.toDate || req.query.fromDate || todayStr());
+    if (!fromDate || !toDate || fromDate > toDate) return res.status(400).json({ error: 'Ngay khong hop le' });
+    if (Math.round((new Date(toDate) - new Date(fromDate)) / 86400000) + 1 > HOURLY_SPEND_MAX_DAYS) {
+      return res.status(400).json({ error: `Don theo gio chi ho tro toi da ${HOURLY_SPEND_MAX_DAYS} ngay` });
+    }
+    const clampHour = (value, fallback) => {
+      const hour = parseInt(value, 10);
+      return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : fallback;
+    };
+    const fromHour = clampHour(req.query.fromHour, 0);
+    const toHour = clampHour(req.query.toHour, 23);
+    const stats = await require('../services/posOrderService').getPosHourlySkuStats({
+      fromDate,
+      toDate,
+      fromHour: Math.min(fromHour, toHour),
+      toHour: Math.max(fromHour, toHour)
+    });
+    res.json({ ok: true, ...stats });
+  } catch (error) {
+    console.error(`[orders:hourly-sku-counts] ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/orders/sku-counts', async (req, res) => {
   try {
     const fromDate = req.query.fromDate || todayStr();
     const { toDate } = req.query;
-    const cacheKey = useSheetOrders() ? getOrderStatsCacheKey({ fromDate, toDate }) : '';
+    const cacheKey = getOrderStatsCacheKey({ fromDate, toDate });
 
     if (cacheKey && orderStatsCache.has(cacheKey)) {
       res.json({ ok: true, ...orderStatsCache.get(cacheKey), cached: true });
@@ -3479,7 +3597,7 @@ app.get('/api/return-summary', async (req, res) => {
       return res.status(400).json({ error: 'Khoang ngay khong hop le' });
     }
 
-    const cacheKey = userScopedCacheKey(req, `return-summary:${provider}:${fromDate || 'all'}:${toDate || 'all'}:${ordersSheetCache.fetchedAt || 0}`);
+    const cacheKey = userScopedCacheKey(req, `return-summary:${provider}:${fromDate || 'all'}:${toDate || 'all'}:${getOrderDataVersion()}`);
     const cached = refresh ? null : getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
@@ -3589,7 +3707,7 @@ app.get('/api/return-summary', async (req, res) => {
     res.json(setReadCache(cacheKey, {
       ok: true,
       source: {
-        orders: useSheetOrders() ? 'google_sheet' : 'database',
+        orders: getOrderSourceName(),
         campaigns: 'database'
       },
       fromDate,
@@ -3602,6 +3720,7 @@ app.get('/api/return-summary', async (req, res) => {
       productReturnRows: productReturnSummary.rows,
       productReturnTotal: productReturnRateSummary.total,
       productReturnCategories: productReturnRateSummary.categories,
+      returnReasons: buildReturnReasonStats(orderRows),
       orderTotal: Number(orderStats.total?.orderCount || 0),
       campaignRowCount: campaignRows.length
     }));
@@ -4549,6 +4668,11 @@ app.post('/api/orders/sync', async (req, res) => {
         statusUrl: `/api/orders/sync/${jobId}`,
         message: 'Dang tai don hang trong nen'
       });
+    }
+
+    if (!useSheetOrders()) {
+      const { received } = await syncRecentPosOrders();
+      return res.json({ success: true, synced: received, source: getOrderSourceName(), cachedAt: new Date().toISOString() });
     }
 
     const rows = await fetchOrderSheetRows({ refresh: true });
