@@ -92,7 +92,7 @@ app.get('/api/stats', async (req, res) => {
       totalOrders = 0;
       ordersError = '';
       try {
-      if (useSheetOrders()) {
+      if (useSheetOrders({ fromDate: fDate })) {
         const todayRows = await getOrderSheetOrders({ fromDate: fDate, toDate: tDate, limit: 5000 });
         // Chỉ đếm dòng có ID2 (orderId) không trống
         totalOrders = todayRows.filter(o => o.orderId && String(o.orderId).trim() !== '').length;
@@ -2959,7 +2959,7 @@ app.get('/api/orders', async (req, res) => {
     const limit = parseBoundedInt(req.query.limit, 100, 1, 1000);
     const wantsPaged = req.query.page !== undefined || req.query.limit !== undefined;
 
-    if (useSheetOrders()) {
+    if (useSheetOrders({ fromDate })) {
       if (wantsPaged) {
         const data = await getOrderSheetPage({ fromDate, toDate, search, page, limit });
         res.json({
@@ -3001,7 +3001,7 @@ app.get('/api/orders', async (req, res) => {
       ]);
       res.json({
         ok: true,
-        source: getOrderSourceName(),
+        source: getOrderSourceName({ fromDate }),
         cachedAt: require('../services/orderSourceState').orderSourceState.posLastSyncedAt || '',
         orders,
         total,
@@ -3063,7 +3063,7 @@ app.get('/api/orders/sku-counts', async (req, res) => {
       return;
     }
 
-    const allOrders = useSheetOrders()
+    const allOrders = useSheetOrders({ fromDate })
       ? await getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
       : await Order.find(buildOrderQuery({ fromDate, toDate })).select('rawData orderId status').lean();
 
@@ -3597,7 +3597,7 @@ app.get('/api/return-summary', async (req, res) => {
       return res.status(400).json({ error: 'Khoang ngay khong hop le' });
     }
 
-    const cacheKey = userScopedCacheKey(req, `return-summary:${provider}:${fromDate || 'all'}:${toDate || 'all'}:${getOrderDataVersion()}`);
+    const cacheKey = userScopedCacheKey(req, `return-summary:${provider}:${fromDate || 'all'}:${toDate || 'all'}:${getOrderDataVersion({ fromDate })}`);
     const cached = refresh ? null : getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
@@ -3615,7 +3615,7 @@ app.get('/api/return-summary', async (req, res) => {
     }
 
     const [orderRows, campaignRows] = await Promise.all([
-      useSheetOrders()
+      useSheetOrders({ fromDate })
         ? getOrderSheetOrders({ fromDate, toDate, limit: 200000, refresh })
         : Order.find(buildOrderQuery({ fromDate, toDate }))
           .select('orderId status rawData createdAt')
@@ -3707,7 +3707,7 @@ app.get('/api/return-summary', async (req, res) => {
     res.json(setReadCache(cacheKey, {
       ok: true,
       source: {
-        orders: getOrderSourceName(),
+        orders: getOrderSourceName({ fromDate }),
         campaigns: 'database'
       },
       fromDate,
@@ -3761,7 +3761,7 @@ app.post('/api/orders/sku-cpo', async (req, res) => {
     }
 
     const [orderRows, campaignRows] = await Promise.all([
-      useSheetOrders()
+      useSheetOrders({ fromDate })
         ? getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
         : Order.find(buildOrderQuery({ fromDate, toDate }))
           .select('orderId status rawData createdAt')
@@ -3824,7 +3824,7 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
     const cachedCampaignRows = getDealStopCampaignCache(dealStopCampaignCacheKey);
 
     const [orderRows, campaignRows, purchasePlacedQtyByCode] = await Promise.all([
-      useSheetOrders()
+      useSheetOrders({ fromDate })
         ? getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
         : Order.find(buildOrderQuery({ fromDate, toDate }))
           .select('orderId status rawData createdAt')

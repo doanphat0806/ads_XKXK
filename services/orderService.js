@@ -265,19 +265,22 @@ function incrementReturnStats(stats, status, amount = 1) {
 
 // true -> doc don tu Google Sheet; false -> doc bang Order (MongoDB).
 // Nguon 'pos': chi chuyen sang MongoDB khi da tai xong lich su don POS.
-function useSheetOrders() {
+// fromDate: khi dang tai lich su POS, khoang ngay da tai xong (fromDate >= posCoveredFrom) dung POS luon.
+function useSheetOrders({ fromDate = '' } = {}) {
   if (orderSourceState.source === 'sheet') return true;
-  if (orderSourceState.source === 'pos') return !orderSourceState.posReady;
-  return false;
+  if (orderSourceState.source !== 'pos') return false;
+  if (orderSourceState.posReady) return false;
+  const coveredFrom = orderSourceState.posCoveredFrom;
+  return !(fromDate && coveredFrom && String(fromDate) >= coveredFrom);
 }
 
-function getOrderSourceName() {
-  return useSheetOrders() ? 'google_sheet' : (orderSourceState.source === 'pos' ? 'pancake_pos' : 'database');
+function getOrderSourceName(range = {}) {
+  return useSheetOrders(range) ? 'google_sheet' : (orderSourceState.source === 'pos' ? 'pancake_pos' : 'database');
 }
 
 // Doi moi khi du lieu don thay doi -> dung lam khoa cache
-function getOrderDataVersion() {
-  return useSheetOrders() ? `sheet-${ordersSheetCache.fetchedAt || 0}` : `db-${orderSourceState.posVersion}`;
+function getOrderDataVersion(range = {}) {
+  return useSheetOrders(range) ? `sheet-${ordersSheetCache.fetchedAt || 0}` : `db-${orderSourceState.posVersion}`;
 }
 
 function toSheetText(value, fallback = '') {
@@ -503,7 +506,7 @@ function buildOrderTableStats(orders = []) {
 }
 
 function getOrderStatsCacheKey({ fromDate, toDate } = {}) {
-  return `${fromDate || ''}:${toDate || ''}:${getOrderDataVersion()}`;
+  return `${fromDate || ''}:${toDate || ''}:${getOrderDataVersion({ fromDate })}`;
 }
 
 function getOrderSheetPageCacheKey({ fromDate, toDate, search } = {}) {

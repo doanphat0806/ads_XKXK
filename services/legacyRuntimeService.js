@@ -1379,7 +1379,7 @@ function createLegacyRuntime(app) {
   
     try {
       const today = todayStr();
-      const orders = useSheetOrders()
+      const orders = useSheetOrders({ fromDate: today })
         ? await getOrderSheetOrders({ fromDate: today, toDate: today, limit: 200000 })
         : await Order.find(buildOrderQuery({ fromDate: today, toDate: today })).select('rawData orderId status').lean();
       return buildOrderSkuStats(orders).counts || {};

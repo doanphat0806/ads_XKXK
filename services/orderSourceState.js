@@ -9,6 +9,8 @@ const ORDERS_SOURCE = String(process.env.ORDERS_SOURCE || 'pos').trim().toLowerC
 const orderSourceState = {
   source: ORDERS_SOURCE,
   posReady: false,
+  // Dang tai lich su: ngay som nhat (YYYY-MM-DD) da co du don POS -> khoang ngay tu moc nay tro di dung POS
+  posCoveredFrom: '',
   // Tang moi lan dong bo POS co thay doi -> dung lam khoa cache
   posVersion: 0,
   posLastSyncedAt: null

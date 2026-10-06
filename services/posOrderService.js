@@ -4,7 +4,7 @@ const axios = require('axios');
 const Order = require('../models/Order');
 const PosOrderSyncState = require('../models/PosOrderSyncState');
 const { getAppConfig } = require('./configService');
-const { buildOrderSkuStats, buildOrderQuery } = require('./orderService');
+const { buildOrderSkuStats, buildOrderQuery, useSheetOrders } = require('./orderService');
 const { orderSourceState } = require('./orderSourceState');
 const { parseBoundedInt } = require('../utils/number');
 
@@ -226,10 +226,31 @@ async function upsertPosOrders(orders = []) {
   let changed = 0;
   for (let start = 0; start < docs.length; start += BULK_WRITE_SIZE) {
     const chunk = docs.slice(start, start + BULK_WRITE_SIZE);
-    const result = await Order.bulkWrite(chunk.map(doc => ({
-      updateOne: { filter: { orderId: doc.orderId }, update: { $set: doc }, upsert: true }
-    })), { ordered: false });
-    changed += Number(result.upsertedCount || 0) + Number(result.modifiedCount || 0);
+    // Tai lich su va dong bo dinh ky chay song song: chi ghi de khi ban moi co updated_at >= ban dang luu.
+    // Neu ban dang luu moi hon, filter khong khop -> upsert dung unique orderId (E11000) -> bo qua, giu ban moi.
+    const operations = chunk.map(doc => ({
+      updateOne: {
+        filter: {
+          orderId: doc.orderId,
+          $or: [
+            { 'rawData.updated_at': { $lte: doc.rawData.updated_at } },
+            { 'rawData.updated_at': { $exists: false } }
+          ]
+        },
+        update: { $set: doc },
+        upsert: true
+      }
+    }));
+    let result;
+    try {
+      result = await Order.bulkWrite(operations, { ordered: false });
+    } catch (error) {
+      const writeErrors = error.writeErrors || error.result?.getWriteErrors?.() || [];
+      const onlyStale = writeErrors.length > 0 && writeErrors.every(item => (item.code ?? item.err?.code) === 11000);
+      if (!onlyStale) throw error;
+      result = error.result || {};
+    }
+    changed += Number(result.upsertedCount ?? result.nUpserted ?? 0) + Number(result.modifiedCount ?? result.nModified ?? 0);
   }
   if (changed) orderSourceState.posVersion += 1;
   return { received: docs.length, changed };
@@ -247,7 +268,9 @@ async function saveSyncState(updates) {
   await PosOrderSyncState.updateOne({ key: SYNC_STATE_KEY }, { $set: { ...updates, updatedAt: new Date() } });
 }
 
-// Tai lich su don theo tung tuan (theo ngay tao don), luu tien do de khoi dong lai thi tai tiep.
+// Tai lich su don tu hom nay lui ve POS_BACKFILL_FROM, moi lan 1 tuan (theo ngay tao don).
+// backfillCursor = ngay som nhat da tai du; khoang ngay >= moc nay dung don POS ngay (useSheetOrders({ fromDate })),
+// nen Dashboard hom nay / luat auto chuyen sang POS sau tuan dau tien thay vi cho tai het lich su.
 async function runPosBackfill() {
   if (backfillRunning) return;
   backfillRunning = true;
@@ -257,15 +280,21 @@ async function runPosBackfill() {
     if (state.backfillDone) return;
     // Dong bo dinh ky bat dau tu luc tai lich su, de khong sot don cap nhat trong luc dang tai
     if (!state.lastSyncedAt) await saveSyncState({ lastSyncedAt: new Date(startedAt) });
+    // Tien do kieu cu (tai xuoi tu thang 2) -> tai lai theo chieu nguoc; upsert nen khong trung don
+    if (state.backfillDirection !== 'desc') {
+      await saveSyncState({ backfillDirection: 'desc', backfillCursor: addDays(todayVnDateKey(), 1) });
+      state = await getSyncState();
+    }
 
-    let cursor = state.backfillCursor || state.backfillFrom || POS_BACKFILL_FROM;
+    const backfillFrom = state.backfillFrom || POS_BACKFILL_FROM;
+    let cursor = state.backfillCursor;
     let total = 0;
-    console.log(`[pos-orders] backfill from ${cursor}...`);
-    while (cursor <= todayVnDateKey()) {
-      const windowEnd = addDays(cursor, POS_BACKFILL_WINDOW_DAYS);
+    console.log(`[pos-orders] backfill tu ${addDays(cursor, -1)} lui ve ${backfillFrom}...`);
+    while (cursor > backfillFrom) {
+      const windowStart = [addDays(cursor, -POS_BACKFILL_WINDOW_DAYS), backfillFrom].sort().pop();
       await fetchPosOrderPages({
-        startDateTime: vnDayStartUnix(cursor),
-        endDateTime: vnDayStartUnix(windowEnd) - 1,
+        startDateTime: vnDayStartUnix(windowStart),
+        endDateTime: vnDayStartUnix(cursor) - 1,
         pageSize: POS_BACKFILL_PAGE_SIZE,
         concurrency: POS_BACKFILL_CONCURRENCY,
         onPage: async items => {
@@ -273,9 +302,11 @@ async function runPosBackfill() {
           total += received;
         }
       });
-      cursor = windowEnd;
+      cursor = windowStart;
       await saveSyncState({ backfillCursor: cursor });
-      console.log(`[pos-orders] backfill toi ${cursor}: ${total} don`);
+      orderSourceState.posCoveredFrom = cursor;
+      orderSourceState.posVersion += 1;
+      console.log(`[pos-orders] backfill da co don tu ${cursor}: ${total} don`);
     }
 
     await saveSyncState({ backfillDone: true, backfillDoneAt: new Date() });
@@ -330,8 +361,11 @@ async function startPosOrderSync() {
 
   const state = await getSyncState();
   orderSourceState.posReady = Boolean(state.backfillDone);
+  orderSourceState.posCoveredFrom = !state.backfillDone && state.backfillDirection === 'desc' ? state.backfillCursor : '';
   orderSourceState.posLastSyncedAt = state.lastSyncedAt || null;
-  console.log(`[pos-orders] nguon don: ${orderSourceState.posReady ? 'Pancake POS (MongoDB)' : 'Google Sheet (dang tai lich su POS)'}`);
+  console.log(`[pos-orders] nguon don: ${orderSourceState.posReady
+    ? 'Pancake POS (MongoDB)'
+    : `dang tai lich su POS${orderSourceState.posCoveredFrom ? ` (POS tu ${orderSourceState.posCoveredFrom})` : ''}, ngay cu hon dung Google Sheet`}`);
 
   const tick = async () => {
     try {
@@ -374,7 +408,7 @@ async function getPosHourlySkuStats({ fromDate, toDate, fromHour = 0, toHour = 2
   };
 
   let rows;
-  if (orderSourceState.posReady) {
+  if (!useSheetOrders({ fromDate })) {
     const docs = await Order.find(buildOrderQuery({ fromDate, toDate })).select('orderId status rawData createdAt').lean();
     rows = docs.filter(doc => inHourRange(new Date(doc.createdAt)));
   } else {
