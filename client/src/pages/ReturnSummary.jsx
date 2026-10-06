@@ -161,91 +161,7 @@ export default function ReturnSummary() {
         </div>
       </div>
 
-      <ReturnReasonChart data={summary?.returnReasons} loading={loading} source={summary?.source?.orders} />
-
       <div className="card section-gap">
-        <div className="card-header">
-          <div className="card-title">Thống kê theo tháng</div>
-        </div>
-        <div className="tbl-wrap return-table-wrap return-monthly-wrap">
-          {loading && !summary ? (
-            <div className="empty"><span className="spin">...</span><p>Đang tải...</p></div>
-          ) : monthlyRows.length === 0 ? (
-            <div className="empty"><div className="ei">0</div><p>Chưa có dữ liệu theo tháng</p></div>
-          ) : (
-            <table className="tbl return-monthly-table">
-              <thead>
-                <tr>
-                  <th>Tháng</th>
-                  <th className="text-right">Tổng đơn</th>
-                  <th className="text-right">Đơn hoàn</th>
-                  <th className="text-right">Tỉ lệ hoàn</th>
-                  <th className="text-right">Tỉ lệ ship</th>
-                  <th className="text-right">Tổng tiền</th>
-                  <th className="text-right">CPO</th>
-                </tr>
-              </thead>
-              <tbody>
-                {monthlyRows.map(row => (
-                  <tr key={row.month}>
-                    <td className="mono-sm">{displayMonth(row.month)}</td>
-                    <td className="text-right mono-sm">{formatNumber(row.orderCount || 0)}</td>
-                    <td className="text-right mono-sm">
-                      {formatNumber(row.returnCount || 0)} / {formatNumber(row.returnDenominator || 0)}
-                    </td>
-                    <td className="text-right mono-sm">{formatPercent(row.returnRate || 0)}</td>
-                    <td className={getShipRateClassName(row.shipRate, row.orderCount)}>{formatPercent(row.shipRate || 0)}</td>
-                    <td className="text-right mono-sm">{formatVND(row.amount || 0)}</td>
-                    <td className={getCpoClassName(row.costPerOrder)}>{formatCpo(row.costPerOrder)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      <div className="card section-gap">
-        <div className="card-header">
-          <div className="card-title">Tổng theo nhóm</div>
-        </div>
-        <div className="tbl-wrap return-table-wrap">
-          {loading && !summary ? (
-            <div className="empty"><span className="spin">...</span><p>Đang tải...</p></div>
-          ) : categoryRows.length === 0 ? (
-            <div className="empty"><div className="ei">0</div><p>Chưa có dữ liệu</p></div>
-          ) : (
-            <table className="tbl return-summary-table">
-              <thead>
-                <tr>
-                  <th>Nhóm</th>
-                  <th className="text-right">Số đơn</th>
-                  <th className="text-right">Số tiền</th>
-                  <th className="text-right">Chi phí / đơn</th>
-                </tr>
-              </thead>
-              <tbody>
-                {categoryRows.map(row => (
-                  <tr key={row.key}>
-                    <td>{row.label}</td>
-                    <td className="text-right mono-sm">{formatNumber(row.orderCount || 0)}</td>
-                    <td className="text-right mono-sm">{formatVND(row.amount || 0)}</td>
-                    <td className={getCpoClassName(row.costPerOrder)}>{formatCpo(row.costPerOrder)}</td>
-                  </tr>
-                ))}
-                <tr className="return-total-row">
-                  <td>Tổng</td>
-                  <td className="text-right mono-sm">{formatNumber(total.orderCount || 0)}</td>
-                  <td className="text-right mono-sm">{formatVND(total.amount || 0)}</td>
-                  <td className={getCpoClassName(total.costPerOrder)}>{formatCpo(total.costPerOrder)}</td>
-                </tr>
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      <div className="card">
         <div className="card-header">
           <div className="card-title">Chi tiết theo ngày</div>
         </div>
@@ -295,6 +211,90 @@ export default function ReturnSummary() {
                     <td className={getCpoClassName(row.total?.costPerOrder)}>{formatCpo(row.total?.costPerOrder)}</td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      <div className="card section-gap">
+        <div className="card-header">
+          <div className="card-title">Thống kê theo tháng</div>
+        </div>
+        <div className="tbl-wrap return-table-wrap return-monthly-wrap">
+          {loading && !summary ? (
+            <div className="empty"><span className="spin">...</span><p>Đang tải...</p></div>
+          ) : monthlyRows.length === 0 ? (
+            <div className="empty"><div className="ei">0</div><p>Chưa có dữ liệu theo tháng</p></div>
+          ) : (
+            <table className="tbl return-monthly-table">
+              <thead>
+                <tr>
+                  <th>Tháng</th>
+                  <th className="text-right">Tổng đơn</th>
+                  <th className="text-right">Đơn hoàn</th>
+                  <th className="text-right">Tỉ lệ hoàn</th>
+                  <th className="text-right">Tỉ lệ ship</th>
+                  <th className="text-right">Tổng tiền</th>
+                  <th className="text-right">CPO</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthlyRows.map(row => (
+                  <tr key={row.month}>
+                    <td className="mono-sm">{displayMonth(row.month)}</td>
+                    <td className="text-right mono-sm">{formatNumber(row.orderCount || 0)}</td>
+                    <td className="text-right mono-sm">
+                      {formatNumber(row.returnCount || 0)} / {formatNumber(row.returnDenominator || 0)}
+                    </td>
+                    <td className="text-right mono-sm">{formatPercent(row.returnRate || 0)}</td>
+                    <td className={getShipRateClassName(row.shipRate, row.orderCount)}>{formatPercent(row.shipRate || 0)}</td>
+                    <td className="text-right mono-sm">{formatVND(row.amount || 0)}</td>
+                    <td className={getCpoClassName(row.costPerOrder)}>{formatCpo(row.costPerOrder)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      <ReturnReasonChart data={summary?.returnReasons} loading={loading} source={summary?.source?.orders} />
+
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Tổng theo nhóm</div>
+        </div>
+        <div className="tbl-wrap return-table-wrap">
+          {loading && !summary ? (
+            <div className="empty"><span className="spin">...</span><p>Đang tải...</p></div>
+          ) : categoryRows.length === 0 ? (
+            <div className="empty"><div className="ei">0</div><p>Chưa có dữ liệu</p></div>
+          ) : (
+            <table className="tbl return-summary-table">
+              <thead>
+                <tr>
+                  <th>Nhóm</th>
+                  <th className="text-right">Số đơn</th>
+                  <th className="text-right">Số tiền</th>
+                  <th className="text-right">Chi phí / đơn</th>
+                </tr>
+              </thead>
+              <tbody>
+                {categoryRows.map(row => (
+                  <tr key={row.key}>
+                    <td>{row.label}</td>
+                    <td className="text-right mono-sm">{formatNumber(row.orderCount || 0)}</td>
+                    <td className="text-right mono-sm">{formatVND(row.amount || 0)}</td>
+                    <td className={getCpoClassName(row.costPerOrder)}>{formatCpo(row.costPerOrder)}</td>
+                  </tr>
+                ))}
+                <tr className="return-total-row">
+                  <td>Tổng</td>
+                  <td className="text-right mono-sm">{formatNumber(total.orderCount || 0)}</td>
+                  <td className="text-right mono-sm">{formatVND(total.amount || 0)}</td>
+                  <td className={getCpoClassName(total.costPerOrder)}>{formatCpo(total.costPerOrder)}</td>
+                </tr>
               </tbody>
             </table>
           )}
