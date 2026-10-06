@@ -105,7 +105,8 @@ const mapOrderRows = (order, index) => {
     key: `${raw.rowNumber || order.orderId || index}-${itemIndex}-${splitItems ? '' : sheet.col4 || index}`,
     rowNumber: raw.rowNumber || '',
     dateStr: toText(sheet.col2, formatCreatedAt(order.createdAt)),
-    orderId: toText(order.orderId || sheet.col12),
+    // Don POS: orderId = "<shop>_<id>" -> hien ma don goc (col12)
+    orderId: toText(sheet.col12 || order.orderId),
     sku: getItemSku(item, itemSheet),
     qty: getItemQuantity(item, itemSheet),
     posStatus: statusRaw || '-',

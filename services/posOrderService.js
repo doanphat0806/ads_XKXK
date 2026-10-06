@@ -53,6 +53,7 @@ let detectedShop = { apiKey: '', shopId: '' };
 let syncTimer = null;
 let syncRunning = false;
 let backfillRunning = false;
+let legacyOrdersMigrated = false;
 
 async function getPosCredentials() {
   const config = await getAppConfig();
@@ -100,7 +101,7 @@ async function fetchPosOrderPages({ startDateTime, endDateTime, byUpdatedAt = fa
     if (byUpdatedAt) params.updateStatus = 'updated_at';
     const data = await getPosPage(`${POS_API_BASE}/shops/${shopId}/orders`, params);
     const items = Array.isArray(data?.data) ? data.data : [];
-    if (onPage) await onPage(items);
+    if (onPage) await onPage(items, shopId);
     else orders.push(...items);
     return Number(data?.total_pages || 0);
   };
@@ -159,7 +160,8 @@ function getPosTagNames(order = {}) {
 
 // Don POS (~4.6KB, 100+ truong) -> document Order gon, chi giu truong app dung.
 // rawData.items giu dang variation_info.product_display_id nhu cu; rawData.sheetColumns de trang Don hang/tim kiem dung nhu sheet.
-function normalizePosOrder(order = {}) {
+// orderId = "<shopId>_<id>": id don Pancake danh so rieng tung shop -> doi shop khong bi trung/ghi de don cu.
+function normalizePosOrder(order = {}, shopId = '') {
   const status = Number(order.status);
   const statusLabel = POS_STATUS_LABELS[status] || String(order.status_name || status);
   const createdAtMs = parsePosTime(order.inserted_at);
@@ -181,7 +183,9 @@ function normalizePosOrder(order = {}) {
   const skus = [...new Set(items.map(item => item.variation_info.product_display_id).filter(Boolean))];
   const sizes = [...new Set(items.map(item => item.size).filter(Boolean))];
   const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
-  const orderId = String(order.id ?? order.system_id ?? '');
+  const posOrderId = String(order.id ?? order.system_id ?? '');
+  const shop = String(order.shop_id || shopId || '');
+  const orderId = posOrderId && shop ? `${shop}_${posOrderId}` : posOrderId;
   const [y, m, d] = (vn?.dateKey || '').split('-');
 
   return {
@@ -192,6 +196,7 @@ function normalizePosOrder(order = {}) {
     createdAt: Number.isFinite(createdAtMs) ? new Date(createdAtMs) : new Date(),
     rawData: {
       source: 'pancake_pos',
+      shopId: shop,
       id: order.id,
       status,
       status_name: statusLabel,
@@ -209,7 +214,7 @@ function normalizePosOrder(order = {}) {
       total_price: Number(order.total_price || 0) || 0,
       cod: Number(order.cod || 0) || 0,
       sheetColumns: {
-        col12: orderId,
+        col12: posOrderId,
         col2: vn ? `${d}/${m}/${y}` : '',
         col4: skus.join(', '),
         col7: String(totalQuantity),
@@ -221,8 +226,10 @@ function normalizePosOrder(order = {}) {
   };
 }
 
-async function upsertPosOrders(orders = []) {
-  const docs = orders.map(normalizePosOrder).filter(doc => doc.orderId);
+async function upsertPosOrders(orders = [], shopId = '') {
+  // Webhook khong truyen shopId -> lay shop dang cau hinh (don co shop_id thi uu tien shop_id)
+  if (!shopId && orders.some(order => !order?.shop_id)) shopId = (await getPosCredentials()).shopId;
+  const docs = orders.map(order => normalizePosOrder(order, shopId)).filter(doc => doc.orderId);
   let changed = 0;
   for (let start = 0; start < docs.length; start += BULK_WRITE_SIZE) {
     const chunk = docs.slice(start, start + BULK_WRITE_SIZE);
@@ -268,6 +275,61 @@ async function saveSyncState(updates) {
   await PosOrderSyncState.updateOne({ key: SYNC_STATE_KEY }, { $set: { ...updates, updatedAt: new Date() } });
 }
 
+// Don POS luu truoc khi co shopId trong orderId ("123" -> "<shopId>_123"). Chay 1 lan, tu bo qua khi khong con don cu.
+async function migrateLegacyPosOrders(shopId) {
+  if (legacyOrdersMigrated) return;
+  const legacyFilter = { 'rawData.source': 'pancake_pos', 'rawData.shopId': { $exists: false } };
+  const legacyCount = await Order.countDocuments(legacyFilter);
+  if (legacyCount) {
+    try {
+      await Order.updateMany(legacyFilter, [{
+        $set: { orderId: { $concat: [shopId, '_', '$orderId'] }, 'rawData.shopId': shopId }
+      }]);
+    } catch (error) {
+      if (error.code !== 11000) throw error;
+      // Dong bo/webhook da ghi ban moi (co shopId) truoc khi chuyen -> xoa ban cu bi trung
+      const remaining = await Order.find(legacyFilter).select('_id orderId').lean();
+      for (const doc of remaining) {
+        try {
+          await Order.updateOne({ _id: doc._id }, { $set: { orderId: `${shopId}_${doc.orderId}`, 'rawData.shopId': shopId } });
+        } catch (innerError) {
+          if (innerError.code !== 11000) throw innerError;
+          await Order.deleteOne({ _id: doc._id });
+        }
+      }
+    }
+    console.log(`[pos-orders] chuyen ${legacyCount} don cu sang ma "<shop>_<id>" (shop ${shopId})`);
+  }
+  legacyOrdersMigrated = true;
+}
+
+// Gan tien do tai lich su voi shop dang cau hinh. Doi shop/tai khoan Pancake -> tai lai lich su cho shop moi;
+// don shop cu van giu trong DB nen trong luc tai van dung POS (khong quay lai Google Sheet).
+async function ensureSyncStateShop() {
+  const { shopId } = await getPosCredentials();
+  const state = await getSyncState();
+  if (!state.shopId) {
+    await migrateLegacyPosOrders(shopId);
+    await saveSyncState({ shopId });
+    return { ...state, shopId };
+  }
+  if (state.shopId === shopId) return state;
+
+  console.log(`[pos-orders] doi shop ${state.shopId} -> ${shopId}: tai lai lich su don cho shop moi`);
+  const reset = {
+    shopId,
+    backfillDirection: '',
+    backfillCursor: '',
+    backfillDone: false,
+    backfillDoneAt: null,
+    lastSyncedAt: null,
+    hasPreviousShopOrders: Boolean(state.hasPreviousShopOrders || state.backfillDone || state.backfillDirection === 'desc')
+  };
+  await saveSyncState(reset);
+  orderSourceState.posVersion += 1;
+  return { ...state, ...reset };
+}
+
 // Tai lich su don tu hom nay lui ve POS_BACKFILL_FROM, moi lan 1 tuan (theo ngay tao don).
 // backfillCursor = ngay som nhat da tai du; khoang ngay >= moc nay dung don POS ngay (useSheetOrders({ fromDate })),
 // nen Dashboard hom nay / luat auto chuyen sang POS sau tuan dau tien thay vi cho tai het lich su.
@@ -289,16 +351,22 @@ async function runPosBackfill() {
     const backfillFrom = state.backfillFrom || POS_BACKFILL_FROM;
     let cursor = state.backfillCursor;
     let total = 0;
+    const backfillShopId = state.shopId;
     console.log(`[pos-orders] backfill tu ${addDays(cursor, -1)} lui ve ${backfillFrom}...`);
     while (cursor > backfillFrom) {
+      // Doi shop giua chung -> dung, ensureSyncStateShop da reset tien do cho shop moi
+      if (backfillShopId && (await getPosCredentials()).shopId !== backfillShopId) {
+        console.log('[pos-orders] doi shop trong luc tai lich su -> dung, tai lai cho shop moi');
+        return;
+      }
       const windowStart = [addDays(cursor, -POS_BACKFILL_WINDOW_DAYS), backfillFrom].sort().pop();
       await fetchPosOrderPages({
         startDateTime: vnDayStartUnix(windowStart),
         endDateTime: vnDayStartUnix(cursor) - 1,
         pageSize: POS_BACKFILL_PAGE_SIZE,
         concurrency: POS_BACKFILL_CONCURRENCY,
-        onPage: async items => {
-          const { received } = await upsertPosOrders(items);
+        onPage: async (items, shopId) => {
+          const { received } = await upsertPosOrders(items, shopId);
           total += received;
         }
       });
@@ -334,8 +402,8 @@ async function syncRecentPosOrders() {
       startDateTime: Math.floor(since / 1000),
       endDateTime: Math.floor(now / 1000),
       byUpdatedAt: true,
-      onPage: async items => {
-        const result = await upsertPosOrders(items);
+      onPage: async (items, shopId) => {
+        const result = await upsertPosOrders(items, shopId);
         received += result.received;
         changed += result.changed;
       }
@@ -361,7 +429,8 @@ async function startPosOrderSync() {
   }
 
   const state = await getSyncState();
-  orderSourceState.posReady = Boolean(state.backfillDone);
+  // Da co don shop cu trong DB -> dung POS ngay ca khi dang tai lich su shop moi
+  orderSourceState.posReady = Boolean(state.backfillDone || state.hasPreviousShopOrders);
   orderSourceState.posCoveredFrom = !state.backfillDone && state.backfillDirection === 'desc' ? state.backfillCursor : '';
   orderSourceState.posLastSyncedAt = state.lastSyncedAt || null;
   console.log(`[pos-orders] nguon don: ${orderSourceState.posReady
@@ -370,7 +439,9 @@ async function startPosOrderSync() {
 
   const tick = async () => {
     try {
-      if (!orderSourceState.posReady) runPosBackfill();
+      const shopState = await ensureSyncStateShop();
+      if (shopState.hasPreviousShopOrders) orderSourceState.posReady = true;
+      if (!shopState.backfillDone) runPosBackfill();
       await syncRecentPosOrders();
     } catch (error) {
       console.error(`[pos-orders] dong bo loi: ${error.message}`);

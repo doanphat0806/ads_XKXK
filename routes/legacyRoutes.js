@@ -3583,6 +3583,34 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
     });
 }
 
+// Tong hoan tinh tren toan bo don + chi phi QC (~1 phut). Don POS doi gan nhu moi phut nen cache theo version
+// luon truot -> giu ket qua gan nhat: tra ngay ban cu, tinh lai trong nen (moi khoa chi 1 lan tinh cung luc).
+const RETURN_SUMMARY_FRESH_MS = 5 * 60 * 1000;
+const returnSummaryStore = new Map();
+
+function computeReturnSummaryCached(storeKey, version, compute, { refresh = false } = {}) {
+  const entry = returnSummaryStore.get(storeKey) || {};
+  returnSummaryStore.set(storeKey, entry);
+  const startCompute = () => {
+    if (!entry.pending) {
+      const startedAt = Date.now();
+      entry.pending = compute()
+        .then(value => {
+          Object.assign(entry, { value, version, computedAt: Date.now() });
+          console.log(`[return-summary] tinh xong trong ${Math.round((Date.now() - startedAt) / 1000)}s`);
+          return value;
+        })
+        .finally(() => { entry.pending = null; });
+    }
+    return entry.pending;
+  };
+
+  if (refresh || !entry.value) return startCompute();
+  const isFresh = entry.version === version && Date.now() - entry.computedAt < RETURN_SUMMARY_FRESH_MS;
+  if (!isFresh) startCompute().catch(error => console.error(`[return-summary] tinh nen loi: ${error.message}`));
+  return Promise.resolve({ ...entry.value, computedAt: new Date(entry.computedAt).toISOString(), stale: !isFresh });
+}
+
 app.get('/api/return-summary', async (req, res) => {
   try {
     if (normalizeProvider(req.currentUser?.provider) !== 'facebook') {
@@ -3599,137 +3627,145 @@ app.get('/api/return-summary', async (req, res) => {
       return res.status(400).json({ error: 'Khoang ngay khong hop le' });
     }
 
-    const cacheKey = userScopedCacheKey(req, `return-summary:${provider}:${fromDate || 'all'}:${toDate || 'all'}:${getOrderDataVersion({ fromDate })}`);
-    const cached = refresh ? null : getReadCache(cacheKey);
-    if (cached) return res.json(cached);
-
-    const accounts = await Account.find(withUserFilter(req, buildAccountProviderFilter(provider)))
-      .select('_id')
-      .lean();
-    const accountIds = accounts.map(account => account._id);
-    const campaignMatch = {
-      accountId: { $in: accountIds }
-    };
-    if (fromDate || toDate) {
-      campaignMatch.date = {};
-      if (fromDate) campaignMatch.date.$gte = fromDate;
-      if (toDate) campaignMatch.date.$lte = toDate;
-    }
-
-    const [orderRows, campaignRows] = await Promise.all([
-      useSheetOrders({ fromDate })
-        ? getOrderSheetOrders({ fromDate, toDate, limit: 200000, refresh })
-        : Order.find(buildOrderQuery({ fromDate, toDate }))
-          .select('orderId status rawData createdAt')
-          .limit(200000)
-          .lean(),
-      accountIds.length ? Campaign.aggregate([
-        {
-          $match: campaignMatch
-        },
-        {
-          $group: {
-            _id: { date: '$date', adName: '$adName' },
-            date: { $first: '$date' },
-            adName: { $first: '$adName' },
-            amount: { $sum: '$spend' }
-          }
-        },
-        { $project: { _id: 0, date: 1, adName: 1, amount: 1 } }
-      ]).allowDiskUse(true) : Promise.resolve([])
-    ]);
-
-    const orderStats = buildReturnSummaryOrderStats(orderRows, { fromDate, toDate });
-    const productReturnSummary = buildProductReturnSummary(orderRows);
-    const productReturnRateSummary = buildReturnProductRateStats(orderRows);
-    const categories = createReturnSummaryBucketMap();
-    const dailyMap = new Map();
-    const monthlyMap = new Map();
-
-    RETURN_SUMMARY_BUCKETS.forEach(bucket => {
-      categories[bucket.key].orderCount = Number(orderStats.categories?.[bucket.key]?.orderCount || 0);
-    });
-
-    Object.entries(orderStats.daily || {}).forEach(([dateKey, byBucket]) => {
-      const day = getReturnSummaryDailyRow(dailyMap, dateKey);
-      day.totalOrderCount = Number(byBucket?.total?.orderCount || 0);
-      day.totalShippedOrderCount = Number(byBucket?.total?.shippedOrderCount || 0);
-      RETURN_SUMMARY_BUCKETS.forEach(bucket => {
-        day.categories[bucket.key].orderCount = Number(byBucket?.[bucket.key]?.orderCount || 0);
-      });
-    });
-
-    Object.entries(orderStats.monthly || {}).forEach(([monthKey, stats]) => {
-      const month = getReturnSummaryMonthlyRow(monthlyMap, monthKey);
-      const totalStats = stats?.total || {};
-      month.orderCount = Number(totalStats.orderCount || 0);
-      month.shippedOrderCount = Number(totalStats.shippedOrderCount || 0);
-      month.returned = Number(totalStats.returned || 0);
-      month.returning = Number(totalStats.returning || 0);
-      month.received = Number(totalStats.received || 0);
-    });
-
-    campaignRows.forEach(row => {
-      const dateKey = String(row.date || '').slice(0, 10);
-      if (!dateKey) return;
-      const monthKey = dateKey.slice(0, 7);
-      const amount = Number(row.amount || 0);
-      getReturnSummaryDailyRow(dailyMap, dateKey).totalAmount += amount;
-      getReturnSummaryMonthlyRow(monthlyMap, monthKey).totalAmount += amount;
-
-      const bucketKey = classifyReturnAdNameBucket(row.adName);
-      if (!bucketKey || !categories[bucketKey]) return;
-      categories[bucketKey].amount += amount;
-      getReturnSummaryDailyRow(dailyMap, dateKey).categories[bucketKey].amount += amount;
-      getReturnSummaryMonthlyRow(monthlyMap, monthKey).amount += amount;
-    });
-
-    const categoryRows = RETURN_SUMMARY_BUCKETS.map(bucket => finalizeReturnSummaryBucket(categories[bucket.key]));
-    const total = finalizeReturnSummaryBucket({
-      key: 'total',
-      label: 'Tổng',
-      orderCount: Number(orderStats.total?.orderCount || 0),
-      amount: campaignRows.reduce((sum, item) => sum + Number(item.amount || 0), 0)
-    });
-    total.shippedOrderCount = Number(orderStats.total?.shippedOrderCount || 0);
-    total.shipRate = total.orderCount > 0 ? total.shippedOrderCount / total.orderCount : 0;
-
-    const fullDateKeys = makeReturnSummaryDateKeys(fromDate, toDate);
-    const dateKeys = fullDateKeys.length > 0 && fullDateKeys.length <= 120
-      ? [...fullDateKeys].reverse()
-      : [...dailyMap.keys()].sort((a, b) => b.localeCompare(a));
-    const dailyRows = dateKeys
-      .map(dateKey => finalizeReturnSummaryDailyRow(getReturnSummaryDailyRow(dailyMap, dateKey)))
-      .filter(row => fullDateKeys.length <= 120 || row.total.orderCount > 0 || row.total.amount > 0);
-    const monthlyRows = [...monthlyMap.keys()]
-      .sort((a, b) => b.localeCompare(a))
-      .map(monthKey => finalizeReturnSummaryMonthlyRow(getReturnSummaryMonthlyRow(monthlyMap, monthKey)))
-      .filter(row => row.orderCount > 0 || row.amount > 0);
-
-    res.json(setReadCache(cacheKey, {
-      ok: true,
-      source: {
-        orders: getOrderSourceName({ fromDate }),
-        campaigns: 'database'
-      },
-      fromDate,
-      toDate,
-      provider,
-      categories: categoryRows,
-      total,
-      monthlyRows,
-      dailyRows,
-      productReturnRows: productReturnSummary.rows,
-      productReturnTotal: productReturnRateSummary.total,
-      productReturnCategories: productReturnRateSummary.categories,
-      returnReasons: buildReturnReasonStats(orderRows),
-      orderTotal: Number(orderStats.total?.orderCount || 0),
-      campaignRowCount: campaignRows.length
-    }));
+    const storeKey = userScopedCacheKey(req, `return-summary:${provider}:${fromDate || 'all'}:${toDate || 'all'}`);
+    const accountFilter = withUserFilter(req, buildAccountProviderFilter(provider));
+    const summary = await computeReturnSummaryCached(
+      storeKey,
+      getOrderDataVersion({ fromDate }),
+      () => buildReturnSummaryPayload({ accountFilter, provider, fromDate, toDate, refresh }),
+      { refresh }
+    );
+    res.json(summary);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
+
+async function buildReturnSummaryPayload({ accountFilter, provider, fromDate, toDate, refresh }) {
+  const accounts = await Account.find(accountFilter)
+    .select('_id')
+    .lean();
+  const accountIds = accounts.map(account => account._id);
+  const campaignMatch = {
+    accountId: { $in: accountIds }
+  };
+  if (fromDate || toDate) {
+    campaignMatch.date = {};
+    if (fromDate) campaignMatch.date.$gte = fromDate;
+    if (toDate) campaignMatch.date.$lte = toDate;
+  }
+
+  const [orderRows, campaignRows] = await Promise.all([
+    useSheetOrders({ fromDate })
+      ? getOrderSheetOrders({ fromDate, toDate, limit: 200000, refresh })
+      : Order.find(buildOrderQuery({ fromDate, toDate }))
+        .select('orderId status rawData createdAt')
+        .limit(200000)
+        .lean(),
+    accountIds.length ? Campaign.aggregate([
+      {
+        $match: campaignMatch
+      },
+      {
+        $group: {
+          _id: { date: '$date', adName: '$adName' },
+          date: { $first: '$date' },
+          adName: { $first: '$adName' },
+          amount: { $sum: '$spend' }
+        }
+      },
+      { $project: { _id: 0, date: 1, adName: 1, amount: 1 } }
+    ]).allowDiskUse(true) : Promise.resolve([])
+  ]);
+
+  const orderStats = buildReturnSummaryOrderStats(orderRows, { fromDate, toDate });
+  const productReturnSummary = buildProductReturnSummary(orderRows);
+  const productReturnRateSummary = buildReturnProductRateStats(orderRows);
+  const categories = createReturnSummaryBucketMap();
+  const dailyMap = new Map();
+  const monthlyMap = new Map();
+
+  RETURN_SUMMARY_BUCKETS.forEach(bucket => {
+    categories[bucket.key].orderCount = Number(orderStats.categories?.[bucket.key]?.orderCount || 0);
+  });
+
+  Object.entries(orderStats.daily || {}).forEach(([dateKey, byBucket]) => {
+    const day = getReturnSummaryDailyRow(dailyMap, dateKey);
+    day.totalOrderCount = Number(byBucket?.total?.orderCount || 0);
+    day.totalShippedOrderCount = Number(byBucket?.total?.shippedOrderCount || 0);
+    RETURN_SUMMARY_BUCKETS.forEach(bucket => {
+      day.categories[bucket.key].orderCount = Number(byBucket?.[bucket.key]?.orderCount || 0);
+    });
+  });
+
+  Object.entries(orderStats.monthly || {}).forEach(([monthKey, stats]) => {
+    const month = getReturnSummaryMonthlyRow(monthlyMap, monthKey);
+    const totalStats = stats?.total || {};
+    month.orderCount = Number(totalStats.orderCount || 0);
+    month.shippedOrderCount = Number(totalStats.shippedOrderCount || 0);
+    month.returned = Number(totalStats.returned || 0);
+    month.returning = Number(totalStats.returning || 0);
+    month.received = Number(totalStats.received || 0);
+  });
+
+  campaignRows.forEach(row => {
+    const dateKey = String(row.date || '').slice(0, 10);
+    if (!dateKey) return;
+    const monthKey = dateKey.slice(0, 7);
+    const amount = Number(row.amount || 0);
+    getReturnSummaryDailyRow(dailyMap, dateKey).totalAmount += amount;
+    getReturnSummaryMonthlyRow(monthlyMap, monthKey).totalAmount += amount;
+
+    const bucketKey = classifyReturnAdNameBucket(row.adName);
+    if (!bucketKey || !categories[bucketKey]) return;
+    categories[bucketKey].amount += amount;
+    getReturnSummaryDailyRow(dailyMap, dateKey).categories[bucketKey].amount += amount;
+    getReturnSummaryMonthlyRow(monthlyMap, monthKey).amount += amount;
+  });
+
+  const categoryRows = RETURN_SUMMARY_BUCKETS.map(bucket => finalizeReturnSummaryBucket(categories[bucket.key]));
+  const total = finalizeReturnSummaryBucket({
+    key: 'total',
+    label: 'Tổng',
+    orderCount: Number(orderStats.total?.orderCount || 0),
+    amount: campaignRows.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  });
+  total.shippedOrderCount = Number(orderStats.total?.shippedOrderCount || 0);
+  total.shipRate = total.orderCount > 0 ? total.shippedOrderCount / total.orderCount : 0;
+
+  const fullDateKeys = makeReturnSummaryDateKeys(fromDate, toDate);
+  const dateKeys = fullDateKeys.length > 0 && fullDateKeys.length <= 120
+    ? [...fullDateKeys].reverse()
+    : [...dailyMap.keys()].sort((a, b) => b.localeCompare(a));
+  const dailyRows = dateKeys
+    .map(dateKey => finalizeReturnSummaryDailyRow(getReturnSummaryDailyRow(dailyMap, dateKey)))
+    .filter(row => fullDateKeys.length <= 120 || row.total.orderCount > 0 || row.total.amount > 0);
+  const monthlyRows = [...monthlyMap.keys()]
+    .sort((a, b) => b.localeCompare(a))
+    .map(monthKey => finalizeReturnSummaryMonthlyRow(getReturnSummaryMonthlyRow(monthlyMap, monthKey)))
+    .filter(row => row.orderCount > 0 || row.amount > 0);
+
+  return {
+    ok: true,
+    source: {
+      orders: getOrderSourceName({ fromDate }),
+      campaigns: 'database'
+    },
+    fromDate,
+    toDate,
+    provider,
+    categories: categoryRows,
+    total,
+    monthlyRows,
+    dailyRows,
+    productReturnRows: productReturnSummary.rows,
+    productReturnTotal: productReturnRateSummary.total,
+    productReturnCategories: productReturnRateSummary.categories,
+    returnReasons: buildReturnReasonStats(orderRows),
+    orderTotal: Number(orderStats.total?.orderCount || 0),
+    campaignRowCount: campaignRows.length
+  };
+}
 
 app.post('/api/orders/sku-cpo', async (req, res) => {
   try {
