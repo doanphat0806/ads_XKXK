@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 // Menu tha xuong: danh sach phuong an cot da luu (bam de ap dung, x de xoa) + nut mo cua so tuy chinh.
-export default function ColumnPresetMenu({ label, presets, activePreset, onSelect, onDelete, onCustomize }) {
+export default function ColumnPresetMenu({ label, presets, activePreset, onSelect, onDelete, onCustomize, onOpen }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
 
@@ -19,7 +19,11 @@ export default function ColumnPresetMenu({ label, presets, activePreset, onSelec
 
   return (
     <div className="colpreset" ref={rootRef}>
-      <button type="button" className={`btn btn-ghost btn-sm${open ? ' is-open' : ''}`} onClick={() => setOpen(value => !value)} aria-expanded={open}>
+      <button type="button" className={`btn btn-ghost btn-sm${open ? ' is-open' : ''}`} onClick={() => {
+          // Mo menu -> lay lai danh sach (nguoi khac dung chung tai khoan co the vua them / xoa)
+          if (!open) onOpen?.();
+          setOpen(value => !value);
+        }} aria-expanded={open}>
         {label}
       </button>
       {open && (

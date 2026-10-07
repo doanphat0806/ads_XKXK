@@ -51,6 +51,8 @@ const UserSchema = new mongoose.Schema({
   autoPauseShopeeMinSpendLimit: { type: Number },
   autoPauseShopeeHhAdsPercent: { type: Number },
   active: { type: Boolean, default: true },
+  // Phuong an cot Dashboard dung chung trong tai khoan: { presets: [{ name, order, hidden }] } (cot dang hien luu theo may)
+  dashboardColumns: { type: mongoose.Schema.Types.Mixed },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 }, { autoIndex: false });

@@ -71,10 +71,19 @@ const CAMPAIGN_RETURN_STATS_FROM_DATE = '2026-02-22';
 const CPO_WARNING_THRESHOLD = 100000;
 const ORDER_REFRESH_MS = 10000;
 const HOURLY_REFRESH_MS = 2 * 60 * 1000;
-const DASHBOARD_HIDDEN_COLUMNS_KEY = 'dashboard:hiddenColumns';
-const DASHBOARD_COLUMN_ORDER_KEY = 'dashboard:columnOrder';
-const DASHBOARD_COLUMN_PRESETS_KEY = 'dashboard:columnPresets';
-const DASHBOARD_ACTIVE_PRESET_KEY = 'dashboard:activeColumnPreset';
+// Cot dang hien + phuong an dang chon: luu rieng tung MAY (nhieu nguoi dung chung 1 tai khoan khong de nhau).
+// Danh sach phuong an: luu tren server theo tai khoan (dung chung), localStorage chi la ban tam de hien ngay.
+const COLUMN_VIEW_PREFIX = 'dashboard:columnsView:';
+const COLUMN_PRESETS_CACHE_PREFIX = 'dashboard:columnPresets:';
+// Ban theo user truoc do (luu ca cot dang hien len server) - chi doc de chuyen doi
+const PREV_USER_COLUMNS_PREFIX = 'dashboard:columns:';
+// Khoa cu (luu chung theo trinh duyet) - chi doc 1 lan de chuyen sang tai khoan dau tien dang nhap
+const LEGACY_COLUMN_KEYS = {
+  hidden: 'dashboard:hiddenColumns',
+  order: 'dashboard:columnOrder',
+  presets: 'dashboard:columnPresets',
+  activePreset: 'dashboard:activeColumnPreset'
+};
 const DASHBOARD_COLUMNS = [
   { id: 'duplicateCount', label: 'Trùng', group: 'settings' },
   { id: 'createdTime', label: 'Ngày tạo', group: 'settings' },
@@ -110,16 +119,6 @@ const withUnseenColumnsHidden = (hiddenIds = [], knownOrder = []) => {
   return new Set([...hiddenIds, ...DEFAULT_HIDDEN_COLUMN_IDS.filter(id => !known.has(id))]);
 };
 
-const readHiddenColumns = () => {
-  try {
-    const saved = JSON.parse(localStorage.getItem(DASHBOARD_HIDDEN_COLUMNS_KEY) || '[]');
-    const savedOrder = JSON.parse(localStorage.getItem(DASHBOARD_COLUMN_ORDER_KEY) || '[]');
-    return withUnseenColumnsHidden(Array.isArray(saved) ? saved : [], savedOrder);
-  } catch {
-    return new Set(DEFAULT_HIDDEN_COLUMN_IDS);
-  }
-};
-
 const DASHBOARD_COLUMN_GROUPS = [
   { id: 'settings', label: 'Cài đặt' },
   { id: 'conversion', label: 'Chuyển đổi' },
@@ -129,32 +128,87 @@ const DASHBOARD_COLUMN_GROUPS = [
 const DEFAULT_COLUMN_ORDER = DASHBOARD_COLUMNS.map(column => column.id);
 
 // Thu tu da luu; bo id khong con ton tai, cot moi them sau nay (chua co trong ban luu) noi vao cuoi
-const readColumnOrder = () => {
+const normalizeColumnOrder = (saved) => {
+  const known = Array.isArray(saved) ? saved.filter(id => DEFAULT_COLUMN_ORDER.includes(id)) : [];
+  return [...new Set([...known, ...DEFAULT_COLUMN_ORDER])];
+};
+
+const normalizeColumnPresets = (value) => (Array.isArray(value)
+  ? value.filter(preset => preset && typeof preset.name === 'string' && preset.name.trim())
+  : []);
+
+// Cot dang hien tren MAY nay: { order, hidden (Set), activePreset }
+const normalizeColumnView = (raw) => {
+  const view = raw && typeof raw === 'object' ? raw : {};
+  const savedOrder = Array.isArray(view.order) ? view.order : [];
+  return {
+    order: normalizeColumnOrder(savedOrder),
+    hidden: withUnseenColumnsHidden(Array.isArray(view.hidden) ? view.hidden : [], savedOrder),
+    activePreset: typeof view.activePreset === 'string' ? view.activePreset : ''
+  };
+};
+
+const toColumnViewPayload = (view) => ({ order: view.order, hidden: [...view.hidden], activePreset: view.activePreset });
+
+const readJsonStorage = (key) => {
   try {
-    const saved = JSON.parse(localStorage.getItem(DASHBOARD_COLUMN_ORDER_KEY) || '[]');
-    const known = Array.isArray(saved) ? saved.filter(id => DEFAULT_COLUMN_ORDER.includes(id)) : [];
-    return [...new Set([...known, ...DEFAULT_COLUMN_ORDER])];
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
   } catch {
-    return DEFAULT_COLUMN_ORDER;
+    return null;
   }
 };
 
-// Phuong an cot da luu: [{ name, order, hidden: [] }]
-const readColumnPresets = () => {
+const writeJsonStorage = (key, value) => {
   try {
-    const saved = JSON.parse(localStorage.getItem(DASHBOARD_COLUMN_PRESETS_KEY) || '[]');
-    return Array.isArray(saved) ? saved.filter(preset => preset && typeof preset.name === 'string') : [];
+    localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    return [];
+    // localStorage khong kha dung -> chi giu trong phien hien tai
   }
 };
 
-const readActivePreset = () => {
+const removeStorageKeys = (keys) => {
   try {
-    return localStorage.getItem(DASHBOARD_ACTIVE_PRESET_KEY) || '';
+    keys.forEach(key => localStorage.removeItem(key));
   } catch {
-    return '';
+    // bo qua
   }
+};
+
+// Cau hinh cu luu chung trong trinh duyet (truoc khi tach theo tai khoan); null neu khong co gi
+const readLegacyColumnSettings = () => {
+  const legacy = {
+    order: readJsonStorage(LEGACY_COLUMN_KEYS.order),
+    hidden: readJsonStorage(LEGACY_COLUMN_KEYS.hidden),
+    presets: readJsonStorage(LEGACY_COLUMN_KEYS.presets)
+  };
+  try {
+    legacy.activePreset = localStorage.getItem(LEGACY_COLUMN_KEYS.activePreset) || '';
+  } catch {
+    legacy.activePreset = '';
+  }
+  const hasAny = Array.isArray(legacy.order) || Array.isArray(legacy.hidden) || (Array.isArray(legacy.presets) && legacy.presets.length > 0);
+  return hasAny ? legacy : null;
+};
+
+// Cot dang hien cua may nay; lan dau tren may thi lay tu ban cu (neu co)
+const readColumnView = (userId) => {
+  if (!userId) return normalizeColumnView(null);
+  return normalizeColumnView(
+    readJsonStorage(`${COLUMN_VIEW_PREFIX}${userId}`)
+    || readJsonStorage(`${PREV_USER_COLUMNS_PREFIX}${userId}`)
+    || readLegacyColumnSettings()
+  );
+};
+
+// Phuong an o ban cu (chung trinh duyet / ban theo user truoc do) can dua len server
+const readPresetsToMigrate = (userId) => normalizeColumnPresets(
+  readJsonStorage(`${PREV_USER_COLUMNS_PREFIX}${userId}`)?.presets
+  || readLegacyColumnSettings()?.presets
+);
+
+const clearMigratedColumnSettings = (userId) => {
+  removeStorageKeys([...Object.values(LEGACY_COLUMN_KEYS), `${PREV_USER_COLUMNS_PREFIX}${userId}`]);
 };
 
 const DASHBOARD_METRIC_SORT_FIELDS = new Set([
@@ -370,7 +424,7 @@ const CampaignRow = React.memo(function CampaignRow({
 });
 
 export default function Dashboard() {
-  const { provider, stats: globalStats } = useAppContext();
+  const { provider, stats: globalStats, currentUser } = useAppContext();
   const showOrders = provider !== 'shopee';
   const isShopee = provider === 'shopee';
   const dashboardRef = useRef(null);
@@ -413,26 +467,67 @@ export default function Dashboard() {
   const [campaignSearch, setCampaignSearch] = useState('');
   const [disablingDuplicates, setDisablingDuplicates] = useState(false);
   const [exportingExcel, setExportingExcel] = useState(false);
-  const [hiddenColumns, setHiddenColumns] = useState(readHiddenColumns);
+  // Cot dang hien / phuong an dang chon: rieng tung may (localStorage theo user).
+  // Danh sach phuong an: chung cho ca tai khoan, luu tren server tung phuong an mot.
+  const userId = currentUser?.id ? String(currentUser.id) : '';
+  const [columnView, setColumnView] = useState(() => readColumnView(userId));
+  const [columnPresets, setColumnPresets] = useState(() => normalizeColumnPresets(
+    userId ? readJsonStorage(`${COLUMN_PRESETS_CACHE_PREFIX}${userId}`) : null
+  ));
+  const { order: columnOrder, hidden: hiddenColumns } = columnView;
+  // Phuong an dang chon bi nguoi khac xoa -> giu nguyen cot, chi bo nhan
+  const activePreset = columnPresets.some(preset => preset.name === columnView.activePreset) ? columnView.activePreset : '';
   const [columnModalOpen, setColumnModalOpen] = useState(false);
+
+  const commitColumnView = (next) => {
+    setColumnView(next);
+    if (userId) writeJsonStorage(`${COLUMN_VIEW_PREFIX}${userId}`, toColumnViewPayload(next));
+  };
+  const applyServerPresets = useCallback((presets) => {
+    const next = normalizeColumnPresets(presets);
+    setColumnPresets(next);
+    if (userId) writeJsonStorage(`${COLUMN_PRESETS_CACHE_PREFIX}${userId}`, next);
+  }, [userId]);
+  const refreshColumnPresets = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const result = await api('GET', '/dashboard-columns');
+      applyServerPresets(result?.presets);
+    } catch {
+      // Khong goi duoc server -> dung ban tam
+    }
+  }, [userId, applyServerPresets]);
+
+  useEffect(() => {
+    if (!userId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        // Luu lai cot dang hien theo khoa moi (lan dau tren may co the doc tu ban cu)
+        writeJsonStorage(`${COLUMN_VIEW_PREFIX}${userId}`, toColumnViewPayload(readColumnView(userId)));
+        const result = await api('GET', '/dashboard-columns');
+        let presets = normalizeColumnPresets(result?.presets);
+        const toMigrate = readPresetsToMigrate(userId).filter(preset => !presets.some(item => item.name === preset.name));
+        for (const preset of toMigrate) {
+          const saved = await api('PUT', '/dashboard-columns/presets', {
+            name: preset.name,
+            order: preset.order || [],
+            hidden: preset.hidden || []
+          });
+          presets = normalizeColumnPresets(saved?.presets);
+        }
+        clearMigratedColumnSettings(userId);
+        if (!cancelled) applyServerPresets(presets);
+      } catch {
+        // Khong goi duoc server -> dung ban tam, lan mo sau thu lai
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, applyServerPresets]);
+
   const availableColumns = useMemo(() => DASHBOARD_COLUMNS.filter(column => showOrders || !column.ordersOnly), [showOrders]);
-  const updateHiddenColumns = (next) => {
-    setHiddenColumns(next);
-    try {
-      localStorage.setItem(DASHBOARD_HIDDEN_COLUMNS_KEY, JSON.stringify([...next]));
-    } catch {
-      // localStorage khong kha dung -> chi giu trong phien hien tai
-    }
-  };
-  const [columnOrder, setColumnOrder] = useState(readColumnOrder);
-  const updateColumnOrder = (next) => {
-    setColumnOrder(next);
-    try {
-      localStorage.setItem(DASHBOARD_COLUMN_ORDER_KEY, JSON.stringify(next));
-    } catch {
-      // localStorage khong kha dung -> chi giu trong phien hien tai
-    }
-  };
   const orderedMenuColumns = useMemo(() => {
     const byId = new Map(availableColumns.map(column => [column.id, column]));
     return columnOrder.map(id => byId.get(id)).filter(Boolean);
@@ -441,49 +536,41 @@ export default function Dashboard() {
     () => orderedMenuColumns.filter(column => !hiddenColumns.has(column.id)).map(column => column.id),
     [orderedMenuColumns, hiddenColumns]
   );
-  const [columnPresets, setColumnPresets] = useState(readColumnPresets);
-  const [activePreset, setActivePreset] = useState(readActivePreset);
-  const updateColumnPresets = (next) => {
-    setColumnPresets(next);
-    try {
-      localStorage.setItem(DASHBOARD_COLUMN_PRESETS_KEY, JSON.stringify(next));
-    } catch {
-      // localStorage khong kha dung -> chi giu trong phien hien tai
-    }
-  };
-  const updateActivePreset = (name) => {
-    setActivePreset(name);
-    try {
-      localStorage.setItem(DASHBOARD_ACTIVE_PRESET_KEY, name);
-    } catch {
-      // localStorage khong kha dung -> chi giu trong phien hien tai
-    }
-  };
   const applyColumnSettings = ({ order, hidden }) => {
-    updateColumnOrder(order);
-    updateHiddenColumns(hidden);
-    updateActivePreset('');
+    commitColumnView({ order, hidden: new Set(hidden), activePreset: '' });
     setColumnModalOpen(false);
   };
-  // Luu (hoac ghi de neu trung ten) phuong an roi ap dung luon
-  const saveColumnPreset = (name, { order, hidden }) => {
+  // Luu (hoac ghi de neu trung ten) phuong an roi ap dung luon tren may nay
+  const saveColumnPreset = async (name, { order, hidden }) => {
     const preset = { name, order, hidden: [...hidden] };
-    const exists = columnPresets.some(item => item.name === name);
-    updateColumnPresets(exists ? columnPresets.map(item => (item.name === name ? preset : item)) : [...columnPresets, preset]);
-    updateColumnOrder(order);
-    updateHiddenColumns(new Set(hidden));
-    updateActivePreset(name);
+    commitColumnView({ order, hidden: new Set(hidden), activePreset: name });
+    setColumnPresets(current => [...current.filter(item => item.name !== name), preset]);
     setColumnModalOpen(false);
+    try {
+      const result = await api('PUT', '/dashboard-columns/presets', preset);
+      applyServerPresets(result?.presets);
+    } catch (error) {
+      toast.error(`Không lưu được phương án: ${error.message}`);
+      refreshColumnPresets();
+    }
   };
   const selectColumnPreset = (preset) => {
-    const known = (preset.order || []).filter(id => DEFAULT_COLUMN_ORDER.includes(id));
-    updateColumnOrder([...new Set([...known, ...DEFAULT_COLUMN_ORDER])]);
-    updateHiddenColumns(withUnseenColumnsHidden(preset.hidden || [], preset.order));
-    updateActivePreset(preset.name);
+    commitColumnView({
+      order: normalizeColumnOrder(preset.order),
+      hidden: withUnseenColumnsHidden(preset.hidden || [], preset.order),
+      activePreset: preset.name
+    });
   };
-  const deleteColumnPreset = (name) => {
-    updateColumnPresets(columnPresets.filter(item => item.name !== name));
-    if (activePreset === name) updateActivePreset('');
+  const deleteColumnPreset = async (name) => {
+    setColumnPresets(current => current.filter(item => item.name !== name));
+    if (columnView.activePreset === name) commitColumnView({ ...columnView, activePreset: '' });
+    try {
+      const result = await api('DELETE', `/dashboard-columns/presets/${encodeURIComponent(name)}`);
+      applyServerPresets(result?.presets);
+    } catch (error) {
+      toast.error(`Không xóa được phương án: ${error.message}`);
+      refreshColumnPresets();
+    }
   };
   // On dinh tham chieu: modal dang ky Esc / khoa cuon theo onClose, Dashboard render lai moi ~10s
   const closeColumnModal = useCallback(() => setColumnModalOpen(false), []);
@@ -1306,6 +1393,7 @@ export default function Dashboard() {
               onSelect={selectColumnPreset}
               onDelete={deleteColumnPreset}
               onCustomize={() => setColumnModalOpen(true)}
+              onOpen={refreshColumnPresets}
             />
             {columnModalOpen && (
               <ColumnSettingsModal

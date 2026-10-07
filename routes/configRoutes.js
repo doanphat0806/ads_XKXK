@@ -155,4 +155,80 @@ router.put('/scheduled-duplicate-pause-time', async (req, res) => {
   }
 });
 
+// ── Phuong an cot Dashboard (dung chung trong 1 tai khoan dang nhap) ──
+// Chi luu danh sach phuong an; cot dang hien / phuong an dang chon luu rieng tung may (localStorage)
+// de nhieu nguoi dung chung 1 tai khoan khong ghi de lua chon cua nhau.
+// Them / xoa tung phuong an (khong gui ca danh sach) -> 2 nguoi luu cung luc khong mat cua nhau.
+const COLUMN_ID_REGEX = /^[A-Za-z0-9_]{1,64}$/;
+const MAX_COLUMN_IDS = 300;
+const MAX_COLUMN_PRESETS = 50;
+
+function sanitizeColumnIds(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter(id => typeof id === 'string' && COLUMN_ID_REGEX.test(id)))].slice(0, MAX_COLUMN_IDS);
+}
+
+function sanitizeColumnPreset(value = {}) {
+  const name = typeof value?.name === 'string' ? value.name.trim().slice(0, 40) : '';
+  if (!name) return null;
+  return { name, order: sanitizeColumnIds(value.order), hidden: sanitizeColumnIds(value.hidden) };
+}
+
+async function getColumnPresets(userId) {
+  const user = await User.findById(userId).select('dashboardColumns.presets').lean();
+  const presets = user?.dashboardColumns?.presets;
+  return Array.isArray(presets) ? presets : [];
+}
+
+router.get('/dashboard-columns', async (req, res) => {
+  try {
+    res.json({ ok: true, presets: await getColumnPresets(req.currentUser._id) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Them hoac ghi de (trung ten) 1 phuong an
+router.put('/dashboard-columns/presets', async (req, res) => {
+  try {
+    const preset = sanitizeColumnPreset(req.body);
+    if (!preset) return res.status(400).json({ error: 'Thieu ten phuong an' });
+    // Update pipeline: bo ban cu cung ten roi them ban moi trong 1 lenh (khong doc-sua-ghi)
+    await User.updateOne({ _id: req.currentUser._id }, [{
+      $set: {
+        'dashboardColumns.presets': {
+          $slice: [{
+            $concatArrays: [
+              {
+                $filter: {
+                  input: { $ifNull: ['$dashboardColumns.presets', []] },
+                  cond: { $ne: ['$$this.name', preset.name] }
+                }
+              },
+              [{ $literal: preset }]
+            ]
+          }, -MAX_COLUMN_PRESETS]
+        },
+        updatedAt: '$$NOW'
+      }
+    }]);
+    res.json({ ok: true, presets: await getColumnPresets(req.currentUser._id) });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.delete('/dashboard-columns/presets/:name', async (req, res) => {
+  try {
+    const name = String(req.params.name || '').trim();
+    await User.updateOne(
+      { _id: req.currentUser._id },
+      { $pull: { 'dashboardColumns.presets': { name } }, $set: { updatedAt: new Date() } }
+    );
+    res.json({ ok: true, presets: await getColumnPresets(req.currentUser._id) });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 module.exports = router;

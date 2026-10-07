@@ -712,6 +712,14 @@ export default function DealStopOrders() {
     });
   }, [staffList, stateReady]);
 
+  // Doc gia tri moi nhat qua ref: loadSourceRows khong bi tao lai moi khi luu cau hinh / an ma /
+  // SL thuc dat (truoc day moi lan luu deu keo theo tai lai ~117k don tren server). Cac thay doi
+  // do da duoc merge ngay tai cho; du lieu nguon van lam moi theo tab, nut lam moi va moi 60s.
+  const mergeInputsRef = React.useRef({ activeTab, hiddenCodes, config, actualQtyByCode });
+  React.useEffect(() => {
+    mergeInputsRef.current = { activeTab, hiddenCodes, config, actualQtyByCode };
+  }, [activeTab, hiddenCodes, config, actualQtyByCode]);
+
   const loadSourceRows = React.useCallback(async () => {
     if (!stateReady) return;
     try {
@@ -721,14 +729,15 @@ export default function DealStopOrders() {
       dealStopSourceRowsCache = sourceRows;
 
       setRowsByTab(current => {
-        const mergedRows = mergeSourceRowsWithLocal(sourceRows, current[activeTab] || [], hiddenCodes, config, actualQtyByCode);
-        return { ...current, [activeTab]: mergedRows };
+        const { activeTab: tab, hiddenCodes: hidden, config: currentConfig, actualQtyByCode: actualQty } = mergeInputsRef.current;
+        const mergedRows = mergeSourceRowsWithLocal(sourceRows, current[tab] || [], hidden, currentConfig, actualQty);
+        return { ...current, [tab]: mergedRows };
       });
       setSourceLoaded(true);
     } catch (error) {
       toast.error(`Không lấy được dữ liệu Đơn Hàng: ${error.message}`);
     }
-  }, [activeTab, actualQtyByCode, config, hiddenCodes, stateReady]);
+  }, [stateReady]);
 
   // Neu da co cache tu lan truoc trong phien lam viec, merge ngay khi state (ghi
   // chu, orderSize...) vua tai xong - hien du lieu tuc thi, khong doi loadSourceRows()
@@ -743,9 +752,10 @@ export default function DealStopOrders() {
     });
   }, [stateReady, activeTab, hiddenCodes, config, actualQtyByCode]);
 
+  // Tai lai khi doi tab (va khi state vua san sang)
   React.useEffect(() => {
     loadSourceRows();
-  }, [loadSourceRows]);
+  }, [loadSourceRows, activeTab]);
 
   // Auto-refresh source rows every DEAL_STOP_AUTO_REFRESH_MS
   React.useEffect(() => {

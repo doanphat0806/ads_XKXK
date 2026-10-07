@@ -3798,6 +3798,52 @@ async function buildReturnSummaryPayload({ accountFilter, provider, fromDate, to
   };
 }
 
+// Dong deal tinh tu toan bo lich su don (~117k don, ~4s, chan event loop ~2s). Cache theo version don
+// nen moi lan POS co don moi (~2 phut) la het han. Hai lop chong lap:
+// - dealStopRowsInFlight: nhieu tab/nguoi cung luc chi tinh MOT lan cho cung khoa
+// - dealStopLatestRows: ban gan nhat theo khoang ngay (khong theo version) -> het han thi tra ban cu
+//   ngay va tinh lai ngam (stale-while-revalidate)
+const dealStopRowsInFlight = new Map();
+const dealStopLatestRows = new Map();
+
+function computeDealStopRowsOnce({ rowsCacheKey, campaignCacheKey, orderVersion, fromDate, toDate, accountIds, campaignMatch }) {
+  const pending = dealStopRowsInFlight.get(rowsCacheKey);
+  if (pending) return pending;
+
+  const job = (async () => {
+    const cachedCampaignRows = getDealStopCampaignCache(campaignCacheKey);
+    const [orderRows, campaignRows] = await Promise.all([
+      Order.find(buildOrderQuery({ fromDate, toDate }))
+        // Chi truong buildDealStopRows doc (khong lay ca rawData): lich su nhe ~4 lan
+        .select(`${ORDER_SKU_STATS_FIELDS} createdAt rawData.rowNumber rawData.tags rawData.sheetColumns.col13`)
+        .limit(200000)
+        .lean(),
+      cachedCampaignRows || (accountIds.length ? Campaign.aggregate([
+        {
+          $match: campaignMatch
+        },
+        {
+          $group: {
+            _id: '$adName',
+            adName: { $first: '$adName' },
+            amount: { $sum: '$spend' }
+          }
+        },
+        { $project: { _id: 0, adName: 1, amount: 1 } }
+      ]).allowDiskUse(true).then(rows => setDealStopCampaignCache(campaignCacheKey, rows)) : Promise.resolve(setDealStopCampaignCache(campaignCacheKey, [])))
+    ]);
+
+    const rows = setOrderDerivedCache(rowsCacheKey, buildDealStopRows(orderRows, campaignRows));
+    dealStopLatestRows.delete(campaignCacheKey);
+    dealStopLatestRows.set(campaignCacheKey, { orderVersion, rows });
+    if (dealStopLatestRows.size > 20) dealStopLatestRows.delete(dealStopLatestRows.keys().next().value);
+    return rows;
+  })().finally(() => dealStopRowsInFlight.delete(rowsCacheKey));
+
+  dealStopRowsInFlight.set(rowsCacheKey, job);
+  return job;
+}
+
 app.get('/api/orders/deal-stop-rows', async (req, res) => {
   try {
     const fromDate = String(req.query.fromDate || '').slice(0, 10);
@@ -3823,35 +3869,32 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
     }
 
     const dealStopCampaignCacheKey = `deal-stop-campaign:${fromDate}:${toDate}:${accountIds.map(String).sort().join(',')}`;
-    const cachedCampaignRows = getDealStopCampaignCache(dealStopCampaignCacheKey);
     // Dong deal tu don + chi phi QC: nho theo khoang ngay + version don; SL da dat (don dat hang) van tinh moi moi lan
-    const dealStopRowsCacheKey = `deal-stop-rows:${dealStopCampaignCacheKey}:${getOrderDataVersion({ fromDate })}`;
-    const cachedDealStopRows = getOrderDerivedCache(dealStopRowsCacheKey);
+    const orderVersion = getOrderDataVersion();
+    const dealStopRowsCacheKey = `deal-stop-rows:${dealStopCampaignCacheKey}:${orderVersion}`;
+    const purchasePlacedQtyPromise = buildPurchasePlacedQtyByCode();
 
-    const [orderRows, campaignRows, purchasePlacedQtyByCode] = await Promise.all([
-      cachedDealStopRows ? Promise.resolve(null) : Order.find(buildOrderQuery({ fromDate, toDate }))
-        // Chi truong buildDealStopRows doc (khong lay ca rawData): lich su nhe ~4 lan
-        .select(`${ORDER_SKU_STATS_FIELDS} createdAt rawData.rowNumber rawData.tags rawData.sheetColumns.col13`)
-        .limit(200000)
-        .lean(),
-      cachedDealStopRows ? Promise.resolve(null) : cachedCampaignRows || (accountIds.length ? Campaign.aggregate([
-        {
-          $match: campaignMatch
-        },
-        {
-          $group: {
-            _id: '$adName',
-            adName: { $first: '$adName' },
-            amount: { $sum: '$spend' }
-          }
-        },
-        { $project: { _id: 0, adName: 1, amount: 1 } }
-      ]).allowDiskUse(true).then(rows => setDealStopCampaignCache(dealStopCampaignCacheKey, rows)) : Promise.resolve(setDealStopCampaignCache(dealStopCampaignCacheKey, []))),
-      buildPurchasePlacedQtyByCode()
-    ]);
-
-    const dealStopRows = cachedDealStopRows ||
-      setOrderDerivedCache(dealStopRowsCacheKey, buildDealStopRows(orderRows, campaignRows));
+    let dealStopRows = getOrderDerivedCache(dealStopRowsCacheKey);
+    if (!dealStopRows) {
+      const computing = computeDealStopRowsOnce({
+        rowsCacheKey: dealStopRowsCacheKey,
+        campaignCacheKey: dealStopCampaignCacheKey,
+        orderVersion,
+        fromDate,
+        toDate,
+        accountIds,
+        campaignMatch
+      });
+      const stale = dealStopLatestRows.get(dealStopCampaignCacheKey);
+      if (stale) {
+        // Co ban cu -> tra ngay, tinh lai ngam (khong bat nguoi dung cho ~4s)
+        computing.catch(error => console.warn(`[deal-stop] tinh lai ngam loi: ${error.message}`));
+        dealStopRows = stale.rows;
+      } else {
+        dealStopRows = await computing;
+      }
+    }
+    const purchasePlacedQtyByCode = await purchasePlacedQtyPromise;
     const rows = dealStopRows.map(row => {
       const slKhachDat = Number(row.slKhachDat || 0);
       const slThucDat = Number(purchasePlacedQtyByCode[row.ma] || 0);
