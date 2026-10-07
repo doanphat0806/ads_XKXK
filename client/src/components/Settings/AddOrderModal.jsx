@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-toastify';
 import Modal from '../Common/Modal';
 import { getStaffByMa } from '../../types/order.types';
 import { recalculateRow } from '../../utils/calculations';

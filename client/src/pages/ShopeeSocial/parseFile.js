@@ -1,7 +1,8 @@
 import { parsedRowsToOrders } from './mapping';
+import { loadXlsx } from '../../utils/loadXlsx';
 
 export async function parseSpreadsheetFile(file) {
-  const XLSX = await import('xlsx');
+  const XLSX = await loadXlsx(file.name);
   const isCsv = /\.csv$/i.test(file.name);
   const data = isCsv ? await file.text() : await file.arrayBuffer();
   const workbook = XLSX.read(data, { type: isCsv ? 'string' : 'array', codepage: 65001 });

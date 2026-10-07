@@ -3578,13 +3578,12 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
 // Tong hoan tinh tren toan bo don + chi phi QC (~1 phut). Don POS doi gan nhu moi phut nen cache theo version
 // luon truot -> giu ket qua gan nhat: tra ngay ban cu, tinh lai trong nen (moi khoa chi 1 lan tinh cung luc).
 const RETURN_SUMMARY_FRESH_MS = 5 * 60 * 1000;
+// Khoa duoc mo trong 24h qua -> tu tinh lai moi 5 phut de nguoi mo trang luon co ket qua san
+const RETURN_SUMMARY_KEEP_WARM_MS = 24 * 60 * 60 * 1000;
 const returnSummaryStore = new Map();
 
-function computeReturnSummaryCached(storeKey, version, compute, { refresh = false } = {}) {
-  const entry = returnSummaryStore.get(storeKey) || {};
-  returnSummaryStore.set(storeKey, entry);
-  const startCompute = () => {
-    if (!entry.pending) {
+function startReturnSummaryCompute(entry, version, compute) {
+  if (!entry.pending) {
       const startedAt = Date.now();
       entry.pending = compute()
         .then(value => {
@@ -3593,15 +3592,46 @@ function computeReturnSummaryCached(storeKey, version, compute, { refresh = fals
           return value;
         })
         .finally(() => { entry.pending = null; });
-    }
-    return entry.pending;
-  };
+  }
+  return entry.pending;
+}
 
-  if (refresh || !entry.value) return startCompute();
+function computeReturnSummaryCached(storeKey, { getVersion, compute, refresh = false }) {
+  const entry = returnSummaryStore.get(storeKey) || {};
+  returnSummaryStore.set(storeKey, entry);
+  Object.assign(entry, { getVersion, compute, lastRequestedAt: Date.now() });
+  const version = getVersion();
+
+  if (refresh || !entry.value) return startReturnSummaryCompute(entry, version, compute);
   const isFresh = entry.version === version && Date.now() - entry.computedAt < RETURN_SUMMARY_FRESH_MS;
-  if (!isFresh) startCompute().catch(error => console.error(`[return-summary] tinh nen loi: ${error.message}`));
+  if (!isFresh) {
+    startReturnSummaryCompute(entry, version, compute)
+      .catch(error => console.error(`[return-summary] tinh nen loi: ${error.message}`));
+  }
   return Promise.resolve({ ...entry.value, computedAt: new Date(entry.computedAt).toISOString(), stale: !isFresh });
 }
+
+// Lan luot (khong song song) de khong don tai cho DB
+let returnSummaryWarmRunning = false;
+const returnSummaryWarmTimer = setInterval(async () => {
+  if (returnSummaryWarmRunning) return;
+  returnSummaryWarmRunning = true;
+  try {
+    for (const [storeKey, entry] of returnSummaryStore) {
+      if (Date.now() - (entry.lastRequestedAt || 0) > RETURN_SUMMARY_KEEP_WARM_MS) {
+        if (!entry.pending) returnSummaryStore.delete(storeKey);
+        continue;
+      }
+      const version = entry.getVersion();
+      if (entry.value && entry.version === version && Date.now() - entry.computedAt < RETURN_SUMMARY_FRESH_MS) continue;
+      await startReturnSummaryCompute(entry, version, entry.compute)
+        .catch(error => console.error(`[return-summary] tinh nen loi: ${error.message}`));
+    }
+  } finally {
+    returnSummaryWarmRunning = false;
+  }
+}, 60 * 1000);
+returnSummaryWarmTimer.unref?.();
 
 app.get('/api/return-summary', async (req, res) => {
   try {
@@ -3621,12 +3651,17 @@ app.get('/api/return-summary', async (req, res) => {
 
     const storeKey = userScopedCacheKey(req, `return-summary:${provider}:${fromDate || 'all'}:${toDate || 'all'}`);
     const accountFilter = withUserFilter(req, buildAccountProviderFilter(provider));
-    const summary = await computeReturnSummaryCached(
-      storeKey,
-      getOrderDataVersion({ fromDate }),
-      () => buildReturnSummaryPayload({ accountFilter, provider, fromDate, toDate, refresh }),
-      { refresh }
-    );
+    let forceRefresh = refresh;
+    const summary = await computeReturnSummaryCached(storeKey, {
+      getVersion: () => getOrderDataVersion({ fromDate }),
+      // Chi lan bam lam moi moi tai lai sheet; cac lan tinh nen sau dung du lieu san co
+      compute: () => {
+        const payload = buildReturnSummaryPayload({ accountFilter, provider, fromDate, toDate, refresh: forceRefresh });
+        forceRefresh = false;
+        return payload;
+      },
+      refresh
+    });
     res.json(summary);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -3647,14 +3682,21 @@ async function buildReturnSummaryPayload({ accountFilter, provider, fromDate, to
     if (toDate) campaignMatch.date.$lte = toDate;
   }
 
+  const startedAt = Date.now();
+  const timings = {};
+  const timed = (label, promise) => promise.then(result => {
+    timings[label] = Date.now() - startedAt;
+    return result;
+  });
   const [orderRows, campaignRows] = await Promise.all([
-    useSheetOrders({ fromDate })
+    timed('orders', useSheetOrders({ fromDate })
       ? getOrderSheetOrders({ fromDate, toDate, limit: 200000, refresh })
+      // Bo cac truong POS khong dung cho Tong hoan (items van can cho ti le hoan theo SP)
       : Order.find(buildOrderQuery({ fromDate, toDate }))
-        .select('orderId status rawData createdAt')
+        .select('-customerName -totalPrice -rawData.ad_id -rawData.ads_source -rawData.page_id -rawData.post_id -rawData.marketer -rawData.total_price -rawData.cod -rawData.inserted_at -rawData.updated_at -rawData.pos_status_name')
         .limit(200000)
-        .lean(),
-    accountIds.length ? Campaign.aggregate([
+        .lean()),
+    timed('campaigns', accountIds.length ? Campaign.aggregate([
       {
         $match: campaignMatch
       },
@@ -3667,9 +3709,10 @@ async function buildReturnSummaryPayload({ accountFilter, provider, fromDate, to
         }
       },
       { $project: { _id: 0, date: 1, adName: 1, amount: 1 } }
-    ]).allowDiskUse(true) : Promise.resolve([])
+    ]).allowDiskUse(true) : Promise.resolve([]))
   ]);
 
+  const computeStartedAt = Date.now();
   const orderStats = buildReturnSummaryOrderStats(orderRows, { fromDate, toDate });
   const productReturnSummary = buildProductReturnSummary(orderRows);
   const productReturnRateSummary = buildReturnProductRateStats(orderRows);
@@ -3737,6 +3780,9 @@ async function buildReturnSummaryPayload({ accountFilter, provider, fromDate, to
     .map(monthKey => finalizeReturnSummaryMonthlyRow(getReturnSummaryMonthlyRow(monthlyMap, monthKey)))
     .filter(row => row.orderCount > 0 || row.amount > 0);
 
+  const returnReasons = buildReturnReasonStats(orderRows);
+  console.log(`[return-summary] tai don ${timings.orders}ms (${orderRows.length} don), chi phi QC ${timings.campaigns}ms (${campaignRows.length} dong), tinh toan ${Date.now() - computeStartedAt}ms`);
+
   return {
     ok: true,
     source: {
@@ -3753,7 +3799,7 @@ async function buildReturnSummaryPayload({ accountFilter, provider, fromDate, to
     productReturnRows: productReturnSummary.rows,
     productReturnTotal: productReturnRateSummary.total,
     productReturnCategories: productReturnRateSummary.categories,
-    returnReasons: buildReturnReasonStats(orderRows),
+    returnReasons,
     orderTotal: Number(orderStats.total?.orderCount || 0),
     campaignRowCount: campaignRows.length
   };
@@ -3785,15 +3831,18 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
 
     const dealStopCampaignCacheKey = `deal-stop-campaign:${fromDate}:${toDate}:${accountIds.map(String).sort().join(',')}`;
     const cachedCampaignRows = getDealStopCampaignCache(dealStopCampaignCacheKey);
+    // Dong deal tu don + chi phi QC: nho theo khoang ngay + version don; SL da dat (don dat hang) van tinh moi moi lan
+    const dealStopRowsCacheKey = `deal-stop-rows:${dealStopCampaignCacheKey}:${getOrderDataVersion({ fromDate })}`;
+    const cachedDealStopRows = getOrderDerivedCache(dealStopRowsCacheKey);
 
     const [orderRows, campaignRows, purchasePlacedQtyByCode] = await Promise.all([
-      useSheetOrders({ fromDate })
+      cachedDealStopRows ? Promise.resolve(null) : useSheetOrders({ fromDate })
         ? getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
         : Order.find(buildOrderQuery({ fromDate, toDate }))
           .select('orderId status rawData createdAt')
           .limit(200000)
           .lean(),
-      cachedCampaignRows || (accountIds.length ? Campaign.aggregate([
+      cachedDealStopRows ? Promise.resolve(null) : cachedCampaignRows || (accountIds.length ? Campaign.aggregate([
         {
           $match: campaignMatch
         },
@@ -3809,7 +3858,9 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
       buildPurchasePlacedQtyByCode()
     ]);
 
-    const rows = buildDealStopRows(orderRows, campaignRows).map(row => {
+    const dealStopRows = cachedDealStopRows ||
+      setOrderDerivedCache(dealStopRowsCacheKey, buildDealStopRows(orderRows, campaignRows));
+    const rows = dealStopRows.map(row => {
       const slKhachDat = Number(row.slKhachDat || 0);
       const slThucDat = Number(purchasePlacedQtyByCode[row.ma] || 0);
       const tiLeHoan = Number(row.tiLeHoan || 0);

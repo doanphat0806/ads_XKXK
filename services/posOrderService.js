@@ -4,7 +4,8 @@ const axios = require('axios');
 const Order = require('../models/Order');
 const PosOrderSyncState = require('../models/PosOrderSyncState');
 const { getAppConfig } = require('./configService');
-const { buildOrderSkuStats, buildOrderQuery, useSheetOrders } = require('./orderService');
+const { buildOrderSkuStats, buildOrderQuery, useSheetOrders, getOrderDataVersion } = require('./orderService');
+const { getOrderDerivedCache, setOrderDerivedCache } = require('../utils/cacheManager');
 const { orderSourceState } = require('./orderSourceState');
 const { parseBoundedInt } = require('../utils/number');
 
@@ -19,8 +20,13 @@ const POS_BACKFILL_WINDOW_DAYS = 7;
 const POS_BACKFILL_PAGE_SIZE = 500;
 const POS_BACKFILL_CONCURRENCY = 3;
 const POS_SYNC_INTERVAL_MS = parseBoundedInt(process.env.POS_SYNC_INTERVAL_MS, 60 * 1000, 15 * 1000, 30 * 60 * 1000);
-// Lay lui them mot chut moi lan dong bo de khong sot don cap nhat sat moc thoi gian
-const POS_SYNC_OVERLAP_MS = 5 * 60 * 1000;
+// Lay lui them moi lan dong bo de khong sot don cap nhat sat moc thoi gian.
+// Bo loc updated_at cua POS doi khi tra don tre (>5 phut) -> don doi trang thai bi bo sot neu cua so qua hep.
+// Ghi lai don khong doi khong tinh la thay doi (modifiedCount = 0) nen cua so rong khong lam cache truot.
+const POS_SYNC_OVERLAP_MS = parseBoundedInt(process.env.POS_SYNC_OVERLAP_MS, 30 * 60 * 1000, 60 * 1000, 6 * 3600 * 1000);
+// Cu moi POS_DEEP_SYNC_EVERY lan dong bo thi quet lai POS_DEEP_SYNC_LOOKBACK_MS de vot don con sot
+const POS_DEEP_SYNC_EVERY = parseBoundedInt(process.env.POS_DEEP_SYNC_EVERY, 15, 1, 1440);
+const POS_DEEP_SYNC_LOOKBACK_MS = parseBoundedInt(process.env.POS_DEEP_SYNC_LOOKBACK_MS, 6 * 3600 * 1000, 60 * 1000, 48 * 3600 * 1000);
 const BULK_WRITE_SIZE = 500;
 const SYNC_STATE_KEY = 'pancake';
 const POS_EXCLUDED_STATUSES = new Set([6, 7]); // 6 = da huy, 7 = da xoa
@@ -54,6 +60,7 @@ let syncTimer = null;
 let syncRunning = false;
 let backfillRunning = false;
 let deletedCleanupRunning = false;
+let syncCount = 0;
 let legacyOrdersMigrated = false;
 
 async function getPosCredentials() {
@@ -411,7 +418,10 @@ async function syncRecentPosOrders() {
   try {
     const state = await getSyncState();
     const now = Date.now();
-    const since = state.lastSyncedAt ? new Date(state.lastSyncedAt).getTime() - POS_SYNC_OVERLAP_MS : now - 24 * 3600 * 1000;
+    const deep = syncCount % POS_DEEP_SYNC_EVERY === 0;
+    syncCount += 1;
+    const overlap = deep ? POS_DEEP_SYNC_LOOKBACK_MS : POS_SYNC_OVERLAP_MS;
+    const since = state.lastSyncedAt ? new Date(state.lastSyncedAt).getTime() - overlap : now - 24 * 3600 * 1000;
     let received = 0;
     let changed = 0;
     const range = { startDateTime: Math.floor(since / 1000), endDateTime: Math.floor(now / 1000), byUpdatedAt: true };
@@ -535,8 +545,12 @@ async function getPosHourlySkuStats({ fromDate, toDate, fromHour = 0, toHour = 2
 
   let rows;
   if (!useSheetOrders({ fromDate })) {
-    const docs = await Order.find(buildOrderQuery({ fromDate, toDate })).select('orderId status rawData createdAt').lean();
-    rows = docs.filter(doc => inHourRange(new Date(doc.createdAt)));
+    const cacheKey = `hourly-sku:${fromDate}:${toDate}:${fromHour}:${toHour}:${getOrderDataVersion({ fromDate })}`;
+    const cached = getOrderDerivedCache(cacheKey);
+    if (cached) return cached;
+    const docs = await Order.find(buildOrderQuery({ fromDate, toDate })).select('orderId status rawData.status rawData.status_name rawData.items createdAt').lean();
+    const { counts, totalOrders } = buildOrderSkuStats(docs.filter(doc => inHourRange(new Date(doc.createdAt))));
+    return setOrderDerivedCache(cacheKey, { counts, totalOrders, fromDate, toDate, fromHour, toHour });
   } else {
     const orders = await fetchPosOrdersLive(fromDate, toDate);
     rows = [];

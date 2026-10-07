@@ -111,13 +111,6 @@
       margin-bottom: 10px;
     }
 
-    .auth-copy {
-      color: var(--muted2);
-      font-size: 13px;
-      line-height: 1.6;
-      margin-bottom: 22px;
-    }
-
     .app-shell {
       flex: 1;
       width: 100%;
@@ -301,7 +294,6 @@
     }
 
     .sidebar .sidebar-logo .text,
-    .sidebar .nav-section,
     .sidebar .nav-item span:not(.icon),
     .sidebar .nav-group-chevron,
     .sidebar .nav-subitems,
@@ -331,11 +323,9 @@
 
     @media (hover: hover) and (pointer: fine) {
       .sidebar:hover .sidebar-logo .text,
-      .sidebar:hover .nav-section,
       .sidebar:hover .nav-item span:not(.icon),
       .sidebar:hover .nav-group-chevron,
       .sidebar:focus-within .sidebar-logo .text,
-      .sidebar:focus-within .nav-section,
       .sidebar:focus-within .nav-item span:not(.icon),
       .sidebar:focus-within .nav-group-chevron {
         opacity: 1;
@@ -380,7 +370,6 @@
     }
 
     .sidebar.is-touch-expanded .sidebar-logo .text,
-    .sidebar.is-touch-expanded .nav-section,
     .sidebar.is-touch-expanded .nav-item span:not(.icon),
     .sidebar.is-touch-expanded .nav-group-chevron {
       opacity: 1;
@@ -422,31 +411,12 @@
       .sidebar .nav-item,
       .sidebar .nav-item::before,
       .sidebar .sidebar-logo .text,
-      .sidebar .nav-section,
       .sidebar .nav-item span:not(.icon),
       .sidebar .nav-group-chevron,
       .sidebar .nav-subitems,
       .sidebar .sidebar-footer {
         transition: none;
       }
-    }
-
-    .sidebar-logo .ver {
-      font-family: var(--mono);
-      font-size: 10px;
-      color: var(--muted2);
-      background: var(--s3);
-      padding: 2px 6px;
-      border-radius: 4px;
-    }
-
-    .nav-section {
-      padding: 12px 10px 4px;
-      font-size: 10px;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      color: var(--muted);
-      font-weight: 600;
     }
     
     .nav-item {
@@ -2319,92 +2289,13 @@
       font-size: 12px;
     }
 
-    .name-cell {
-      max-width: 200px;
-    }
-
-    .camp-name {
-      font-weight: 600;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
     .camp-sub {
       font-family: var(--mono);
       font-size: 10px;
       color: var(--muted);
     }
 
-    .acc-tag {
-      display: inline-flex;
-      align-items: center;
-      background: var(--s3);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 1px 7px;
-      font-size: 10px;
-      color: var(--muted2);
-      font-family: var(--mono);
-    }
-
     /* Ã¢â€â‚¬Ã¢â€â‚¬ Log Ã¢â€â‚¬Ã¢â€â‚¬ */
-    .log-scroll {
-      max-height: 280px;
-      overflow-y: auto;
-      padding: 10px 16px;
-      font-family: var(--mono);
-      font-size: 11.5px;
-      line-height: 1.9;
-    }
-
-    .log-scroll::-webkit-scrollbar {
-      width: 3px;
-    }
-
-    .log-scroll::-webkit-scrollbar-thumb {
-      background: var(--border);
-      border-radius: 2px;
-    }
-
-    .log-row {
-      display: flex;
-      gap: 12px;
-    }
-
-    .log-time {
-      color: var(--muted);
-      white-space: nowrap;
-      min-width: 90px;
-    }
-
-    .log-acct {
-      color: var(--b);
-      white-space: nowrap;
-      max-width: 100px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .log-msg.info {
-      color: var(--b);
-    }
-
-    .log-msg.success {
-      color: var(--g);
-    }
-
-    .log-msg.warn {
-      color: var(--o);
-    }
-
-    .log-msg.error {
-      color: var(--r);
-    }
-
-    .log-msg.ai {
-      color: var(--p);
-    }
 
     /* Ã¢â€â‚¬Ã¢â€â‚¬ Tabs Ã¢â€â‚¬Ã¢â€â‚¬ */
     .tabs {
@@ -2432,15 +2323,6 @@
     .tab.active {
       color: var(--g);
       border-bottom-color: var(--g);
-    }
-
-    .tab-pane {
-      display: none;
-      padding: 20px;
-    }
-
-    .tab-pane.active {
-      display: block;
     }
 
     /* Ã¢â€â‚¬Ã¢â€â‚¬ Notification Ã¢â€â‚¬Ã¢â€â‚¬ */
@@ -3019,11 +2901,6 @@
       font-weight: 800;
     }
 
-    .nav-section {
-      color: #8aa5ba;
-      letter-spacing: 1.2px;
-    }
-
     .nav-item {
       color: #56728b;
       border: 1px solid transparent;
@@ -3240,9 +3117,7 @@
       border-color: rgba(255, 99, 184, 0.42);
     }
 
-    .quick-account-btn,
-    .acc-tag,
-    .sidebar-logo .ver {
+    .quick-account-btn {
       background: #eef8ff;
       border-color: #d5eafa;
       color: #557089;
@@ -3376,11 +3251,6 @@
 
     .pbar {
       background: #d8e8f6;
-    }
-
-    .log-scroll,
-    .tab-pane {
-      background: #ffffff;
     }
 
     .tab {
@@ -3611,10 +3481,6 @@
       width: 100%;
       flex-shrink: 0;
       min-width: 0;
-    }
-
-    .drp-calendar-header {
-      display: none; /* We use selects instead */
     }
 
     .drp-day-name {
@@ -3941,56 +3807,6 @@
       cursor: not-allowed;
     }
 
-    #page-dashboard .campaign-status-switch {
-      position: relative;
-      display: inline-flex;
-      width: 44px;
-      height: 24px;
-      padding: 0;
-      border: 1px solid #18c9c8;
-      border-radius: 999px;
-      background: rgba(24, 201, 200, 0.12);
-      cursor: pointer;
-      vertical-align: middle;
-      transition: background-color 0.22s ease, border-color 0.22s ease, opacity 0.15s ease;
-    }
-
-    #page-dashboard .campaign-status-switch-thumb {
-      position: absolute;
-      top: 3px;
-      left: 3px;
-      width: 16px;
-      height: 16px;
-      border-radius: 999px;
-      background: #8fb2ca;
-      transition: transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.22s ease, box-shadow 0.22s ease;
-      will-change: transform;
-    }
-
-    #page-dashboard .campaign-status-switch:active .campaign-status-switch-thumb {
-      transform: scale(0.88);
-    }
-
-    #page-dashboard .campaign-status-switch.active {
-      background: rgba(24, 201, 200, 0.18);
-      border-color: #18c9c8;
-    }
-
-    #page-dashboard .campaign-status-switch.active .campaign-status-switch-thumb {
-      background: #18c9c8;
-      transform: translateX(20px);
-      box-shadow: 0 0 8px rgba(24, 201, 200, 0.55);
-    }
-
-    #page-dashboard .campaign-status-switch.active:active .campaign-status-switch-thumb {
-      transform: translateX(20px) scale(0.88);
-    }
-
-    #page-dashboard .campaign-status-switch:disabled {
-      opacity: 0.55;
-      cursor: wait;
-    }
-
     #dashCampTable thead th {
       position: static;
       background: #f3f8fc;
@@ -4292,13 +4108,6 @@
     #page-return-summary .return-toolbar-card {
       padding: 0;
       overflow: hidden;
-    }
-
-    #page-return-summary .return-source {
-      margin-top: 6px;
-      color: var(--muted2);
-      font-size: 12px;
-      line-height: 1.45;
     }
 
     #page-return-summary .return-product-rate-panel {
@@ -4996,35 +4805,6 @@
       word-break: break-word;
     }
 
-    #page-purchase-orders .purchase-status-select.status-done {
-      background: #baf26e;
-      border-color: #83cb24;
-    }
-
-    #page-purchase-orders .purchase-status-select.status-missing {
-      background: #1775b8;
-      border-color: #0f5f99;
-      color: #fff;
-    }
-
-    #page-purchase-orders .purchase-status-select.status-wrong {
-      background: #c20d0d;
-      border-color: #9b0909;
-      color: #fff;
-    }
-
-    #page-purchase-orders .purchase-status-select.status-extra {
-      background: #15c8b5;
-      border-color: #0d9d8e;
-      color: #00201c;
-    }
-
-    #page-purchase-orders .purchase-status-select.status-lost {
-      background: #3b4254;
-      border-color: #242b39;
-      color: #fff;
-    }
-
     #page-purchase-orders .purchase-inline-input {
       height: 30px;
       padding: 0 8px;
@@ -5488,112 +5268,14 @@
       color: #0f172a;
     }
 
-    #page-deal-stop-orders .deal-new-data-banner {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 16px;
-      margin-bottom: 10px;
-      border-radius: 14px;
-      background: linear-gradient(135deg, #0e7490 0%, #1d4ed8 100%);
-      color: #fff;
-      font-size: 13px;
-      font-weight: 600;
-      box-shadow: 0 8px 24px rgba(14, 116, 144, 0.28);
-      animation: deal-banner-slide-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-
     @keyframes deal-banner-slide-in {
       from { opacity: 0; transform: translateY(-10px); }
       to   { opacity: 1; transform: translateY(0); }
     }
 
-    #page-deal-stop-orders .deal-new-data-banner-icon {
-      font-size: 18px;
-      flex: 0 0 auto;
-      animation: deal-banner-spin 1.2s linear infinite;
-    }
-
     @keyframes deal-banner-spin {
       from { transform: rotate(0deg); }
       to   { transform: rotate(360deg); }
-    }
-
-    #page-deal-stop-orders .deal-new-data-banner-text {
-      flex: 1 1 auto;
-    }
-
-    #page-deal-stop-orders .deal-new-data-banner-btn {
-      flex: 0 0 auto;
-      height: 32px;
-      padding: 0 14px;
-      border: 0;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.22);
-      color: #fff;
-      font-family: var(--display);
-      font-size: 12px;
-      font-weight: 700;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background 120ms ease, transform 120ms ease;
-    }
-
-    #page-deal-stop-orders .deal-new-data-banner-btn:hover:not(:disabled) {
-      background: rgba(255, 255, 255, 0.35);
-      transform: translateY(-1px);
-    }
-
-    #page-deal-stop-orders .deal-new-data-banner-btn:disabled {
-      opacity: 0.65;
-      cursor: not-allowed;
-    }
-
-    #page-deal-stop-orders .deal-new-data-banner-close {
-      flex: 0 0 auto;
-      width: 28px;
-      height: 28px;
-      border: 0;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.15);
-      color: #fff;
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 120ms ease;
-    }
-
-    #page-deal-stop-orders .deal-new-data-banner-close:hover {
-      background: rgba(255, 255, 255, 0.28);
-    }
-
-    #page-deal-stop-orders .deal-page-header {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 24px;
-      margin-bottom: 16px;
-      border-radius: 24px;
-      background: linear-gradient(135deg, #0e7490 0%, #1d4ed8 100%);
-      color: #fff;
-      box-shadow: 0 18px 46px rgba(8, 47, 73, 0.24);
-    }
-
-    #page-deal-stop-orders .deal-page-title {
-      font-size: 28px;
-      font-weight: 800;
-      letter-spacing: -0.03em;
-    }
-
-    #page-deal-stop-orders .deal-page-subtitle,
-    #page-deal-stop-orders .deal-page-date {
-      margin-top: 4px;
-      font-size: 13px;
-      color: rgba(255, 255, 255, 0.82);
     }
 
     #page-deal-stop-orders .deal-stats-grid {
@@ -6338,7 +6020,6 @@
     }
 
     @media (max-width: 900px) {
-      #page-deal-stop-orders .deal-page-header,
       #page-deal-stop-orders .deal-toolbar-card {
         grid-template-columns: 1fr;
         display: grid;
@@ -6392,41 +6073,6 @@
 
     #page-shopee-social .shopee-social-input:focus {
       border-color: var(--shopee-o);
-    }
-
-    #page-shopee-social .shopee-social-dropzone {
-      margin: 14px 18px 0;
-      border: 2px dashed var(--border2);
-      border-radius: 14px;
-      padding: 16px 16px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 6px;
-      text-align: center;
-      color: var(--muted2);
-      cursor: pointer;
-      transition: border-color 0.15s, background 0.15s;
-    }
-
-    #page-shopee-social .shopee-social-dropzone:hover,
-    #page-shopee-social .shopee-social-dropzone.is-dragover {
-      border-color: var(--shopee-o);
-      background: rgba(238, 77, 45, 0.05);
-      color: var(--shopee-o);
-    }
-
-    #page-shopee-social .shopee-social-dropzone-text {
-      font-size: 13px;
-      color: var(--txt);
-    }
-
-    #page-shopee-social .shopee-social-dropzone-text strong {
-      color: var(--shopee-o);
-    }
-
-    #page-shopee-social .shopee-social-dropzone-hint {
-      font-size: 11px;
     }
 
     #page-shopee-social .shopee-social-upload-footer {

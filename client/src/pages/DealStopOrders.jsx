@@ -1,9 +1,6 @@
 import React from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-toastify';
 import ConfirmDialog from '../components/Common/ConfirmDialog';
-import AddOrderModal from '../components/Settings/AddOrderModal';
-import ChuaCoSettings from '../components/Settings/ChuaCoSettings';
-import StaffSettings from '../components/Settings/StaffSettings';
 import OrderTable from '../components/Table/OrderTable';
 import ColumnToggle from '../components/Toolbar/ColumnToggle';
 import ExportButton from '../components/Toolbar/ExportButton';
@@ -35,6 +32,19 @@ import {
   loadStaffList
 } from '../utils/configStorage';
 import { exportOrdersToExcel } from '../utils/excelExport';
+import { loadXlsx } from '../utils/loadXlsx';
+
+// Modal chi dung khi bam nut -> tai rieng, khong nam trong chunk trang
+const AddOrderModal = React.lazy(() => import('../components/Settings/AddOrderModal'));
+const ChuaCoSettings = React.lazy(() => import('../components/Settings/ChuaCoSettings'));
+const StaffSettings = React.lazy(() => import('../components/Settings/StaffSettings'));
+
+// true tu lan mo dau tien tro di: modal lazy chi mount khi can, sau do giu mount nhu cu (giu hieu ung dong)
+function useOpenedOnce(open) {
+  const [opened, setOpened] = React.useState(open);
+  if (open && !opened) setOpened(true);
+  return opened || open;
+}
 
 const DEAL_STOP_STATE_API = '/deal-stop/state';
 const DEAL_STOP_DATA_VERSION = 4;
@@ -169,7 +179,7 @@ function parseActualQtyRows(rows = []) {
 }
 
 async function readActualQtyImportFile(file) {
-  const XLSX = await import('xlsx');
+  const XLSX = await loadXlsx(file.name);
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -470,6 +480,9 @@ export default function DealStopOrders() {
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [staffOpen, setStaffOpen] = React.useState(false);
   const [addOrderOpen, setAddOrderOpen] = React.useState(false);
+  const settingsMounted = useOpenedOnce(settingsOpen);
+  const staffMounted = useOpenedOnce(staffOpen);
+  const addOrderMounted = useOpenedOnce(addOrderOpen);
   const [deleteTargetRow, setDeleteTargetRow] = React.useState(null);
   const [exporting, setExporting] = React.useState(false);
   const [exportDone, setExportDone] = React.useState(false);
@@ -785,7 +798,7 @@ export default function DealStopOrders() {
       latestStateRef.current = mergedState;
       await loadSourceRows();
       const updatedBy = remoteState.updatedBy ? ` từ ${remoteState.updatedBy}` : '';
-      toast(`🔄 Đã đồng bộ dữ liệu mới${updatedBy}`, { duration: 3000 });
+      toast(`🔄 Đã đồng bộ dữ liệu mới${updatedBy}`, { autoClose: 3000 });
     } catch {
       // Silently ignore auto-reload errors
     } finally {
@@ -1218,28 +1231,36 @@ export default function DealStopOrders() {
         />
       )}
 
-      <ChuaCoSettings
-        open={settingsOpen}
-        config={config}
-        onClose={() => setSettingsOpen(false)}
-        onSave={handleSaveConfig}
-      />
+      <React.Suspense fallback={null}>
+        {settingsMounted && (
+          <ChuaCoSettings
+            open={settingsOpen}
+            config={config}
+            onClose={() => setSettingsOpen(false)}
+            onSave={handleSaveConfig}
+          />
+        )}
 
-      <StaffSettings
-        open={staffOpen}
-        staffList={staffList}
-        onClose={() => setStaffOpen(false)}
-        onSave={handleSaveStaff}
-      />
+        {staffMounted && (
+          <StaffSettings
+            open={staffOpen}
+            staffList={staffList}
+            onClose={() => setStaffOpen(false)}
+            onSave={handleSaveStaff}
+          />
+        )}
 
-      <AddOrderModal
-        open={addOrderOpen}
-        staffList={staffList}
-        config={config}
-        orderLookupByCode={orderLookupByCode}
-        onClose={() => setAddOrderOpen(false)}
-        onAdd={handleAddOrder}
-      />
+        {addOrderMounted && (
+          <AddOrderModal
+            open={addOrderOpen}
+            staffList={staffList}
+            config={config}
+            orderLookupByCode={orderLookupByCode}
+            onClose={() => setAddOrderOpen(false)}
+            onAdd={handleAddOrder}
+          />
+        )}
+      </React.Suspense>
 
       <ConfirmDialog
         open={Boolean(deleteTargetRow)}

@@ -3,6 +3,7 @@ import { useAppContext } from '../contexts/AppContext';
 import { formatVND, formatNumber, todayString, dateTimeString, api, cachedApi, readResponseCache } from '../lib/api';
 import DateRangePicker from '../components/DateRangePicker';
 import { toast } from 'react-toastify';
+import { loadXlsx } from '../utils/loadXlsx';
 
 const toText = (value, fallback = '-') => {
   if (value === null || value === undefined || value === '') return fallback;
@@ -943,7 +944,7 @@ export default function Dashboard() {
     if (exportingExcel || processedCampaigns.length === 0) return;
     setExportingExcel(true);
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const rows = processedCampaigns.map(campaign => {
         const row = {
           'Ten Campaign': toText(campaign.name),

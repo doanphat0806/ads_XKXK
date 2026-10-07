@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const compression = require('compression');
 const path = require('path');
 const { registerFacebookLoginRoutes } = require('./routes/facebookLoginRoutes');
 const { createLegacyRuntime } = require('./services/legacyRuntimeService');
@@ -12,9 +13,19 @@ const publicDir = path.join(__dirname, 'client', 'dist');
 app.set('trust proxy', 1);
 
 app.use(cors());
+// Nen gzip JSON/JS/CSS (danh sach don, Tong hoan... giam ~70-80% dung luong)
+app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use(express.static(publicDir));
+// File trong /assets co hash trong ten (Vite) -> trinh duyet nho lau dai; index.html luon hoi lai de lay ban build moi
+app.use('/assets', express.static(path.join(publicDir, 'assets'), { maxAge: '365d', immutable: true }));
+// Chunk cu khong con sau khi build lai -> 404 thay vi tra index.html (trinh duyet bao loi MIME kho hieu)
+app.use('/assets', (req, res) => res.status(404).end());
+app.use(express.static(publicDir, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+  }
+}));
 
 registerFacebookLoginRoutes(app);
 const legacyRuntime = createLegacyRuntime(app);
@@ -27,6 +38,7 @@ app.use('/api', (req, res) => {
 });
 
 app.get('*', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 

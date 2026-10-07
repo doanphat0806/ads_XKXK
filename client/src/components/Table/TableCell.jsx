@@ -1,5 +1,5 @@
 import React from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-toastify';
 import ColorCell from './ColorCell';
 import { formatCurrency, formatInt, formatPercent } from '../../utils/formatters';
 

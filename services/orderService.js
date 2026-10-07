@@ -279,8 +279,25 @@ function getOrderSourceName(range = {}) {
 }
 
 // Doi moi khi du lieu don thay doi -> dung lam khoa cache
+// posVersion tang gan nhu moi phut (moi lan dong bo POS co don doi) -> cache theo version luon truot.
+// Chi cong bo version moi toi da moi ORDER_DATA_VERSION_MIN_MS: so lieu tre toi da 2 phut, cache co tac dung.
+const ORDER_DATA_VERSION_MIN_MS = parseBoundedInt(process.env.ORDER_DATA_VERSION_MIN_MS, 2 * 60 * 1000, 0, 30 * 60 * 1000);
+const publishedPosVersion = { version: -1, at: 0 };
+
+function getPublishedPosVersion() {
+  const now = Date.now();
+  if (
+    publishedPosVersion.version !== orderSourceState.posVersion &&
+    (publishedPosVersion.version < 0 || now - publishedPosVersion.at >= ORDER_DATA_VERSION_MIN_MS)
+  ) {
+    publishedPosVersion.version = orderSourceState.posVersion;
+    publishedPosVersion.at = now;
+  }
+  return publishedPosVersion.version;
+}
+
 function getOrderDataVersion(range = {}) {
-  return useSheetOrders(range) ? `sheet-${ordersSheetCache.fetchedAt || 0}` : `db-${orderSourceState.posVersion}`;
+  return useSheetOrders(range) ? `sheet-${ordersSheetCache.fetchedAt || 0}` : `db-${getPublishedPosVersion()}`;
 }
 
 function toSheetText(value, fallback = '') {

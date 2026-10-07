@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-toastify';
 import Modal from '../Common/Modal';
 import { STAFF_COLOR_OPTIONS, normalizeStaffPrefix } from '../../types/order.types';
 

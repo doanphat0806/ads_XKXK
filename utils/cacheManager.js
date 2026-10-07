@@ -60,6 +60,29 @@ function clearPurchaseOrderReadCache() {
   purchaseOrderReadCache.clear();
 }
 
+// Ket qua tinh tu don hang; khoa da gom version du lieu don (getOrderDataVersion) nen TTL dai hon read cache
+const ORDER_DERIVED_CACHE_TTL_MS = 5 * 60 * 1000;
+const orderDerivedCache = new Map();
+
+function getOrderDerivedCache(key) {
+  const cached = orderDerivedCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.createdAt > ORDER_DERIVED_CACHE_TTL_MS) {
+    orderDerivedCache.delete(key);
+    return null;
+  }
+  return cached.data;
+}
+
+function setOrderDerivedCache(key, data) {
+  orderDerivedCache.set(key, { data, createdAt: Date.now() });
+  if (orderDerivedCache.size > 50) {
+    const oldestKey = orderDerivedCache.keys().next().value;
+    orderDerivedCache.delete(oldestKey);
+  }
+  return data;
+}
+
 const DEAL_STOP_CAMPAIGN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const dealStopCampaignCache = new Map();
 
@@ -96,6 +119,8 @@ module.exports = {
   getPurchaseOrderReadCache,
   setPurchaseOrderReadCache,
   clearPurchaseOrderReadCache,
+  getOrderDerivedCache,
+  setOrderDerivedCache,
   getDealStopCampaignCache,
   setDealStopCampaignCache,
   clearDealStopCampaignCache

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-toastify';
 import Modal from '../Common/Modal';
 import PreviewTable from './PreviewTable';
 import TierEditor from './TierEditor';

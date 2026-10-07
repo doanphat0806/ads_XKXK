@@ -1,5 +1,6 @@
 import { ORDER_COLUMN_CONFIG } from '../types/order.types';
 import { formatDate } from './formatters';
+import { loadXlsx } from './loadXlsx';
 
 function getVisibleExportColumns(columns, visibility) {
   return columns.filter(column => visibility[column.id] !== false && column.type !== 'action');
@@ -15,7 +16,7 @@ export async function exportOrdersToExcel({
   visibility,
   filenameDate = new Date()
 }) {
-  const XLSX = await import('xlsx');
+  const XLSX = await loadXlsx();
   const columns = getVisibleExportColumns(ORDER_COLUMN_CONFIG, visibility);
   const aoa = [];
 
