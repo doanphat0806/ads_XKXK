@@ -7,11 +7,14 @@ const path = require('path');
 const { registerFacebookLoginRoutes } = require('./routes/facebookLoginRoutes');
 const { createLegacyRuntime } = require('./services/legacyRuntimeService');
 const { startPosOrderSync, stopPosOrderSync } = require('./services/posOrderService');
+const { startPerfMonitor, requestTimingMiddleware } = require('./utils/perfMonitor');
 
 const app = express();
 const publicDir = path.join(__dirname, 'client', 'dist');
 app.set('trust proxy', 1);
 
+startPerfMonitor();
+app.use(requestTimingMiddleware);
 app.use(cors());
 // Nen gzip JSON/JS/CSS (danh sach don, Tong hoan... giam ~70-80% dung luong)
 app.use(compression());

@@ -1,6 +1,7 @@
 // Legacy route registrar extracted from server.js.
 // This keeps the current behavior while server.js is split into route modules.
 const registerPageRoutes = require('./pageRoutes');
+const { trackJob } = require('../utils/perfMonitor');
 
 function registerLegacyRoutes(app, deps = {}) {
   const routeDeps = Object.create(deps);
@@ -3046,6 +3047,9 @@ app.get('/api/orders/hourly-sku-counts', async (req, res) => {
   }
 });
 
+// Nhieu nguoi mo Dashboard cung luc -> dung chung 1 lan tinh (khoang lich su ~2s query + ~0.4s tinh)
+const orderSkuStatsInFlight = new Map();
+
 app.get('/api/orders/sku-counts', async (req, res) => {
   try {
     const fromDate = req.query.fromDate || todayStr();
@@ -3057,18 +3061,25 @@ app.get('/api/orders/sku-counts', async (req, res) => {
       return;
     }
 
-    const allOrders = useSheetOrders({ fromDate })
-      ? await getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
-      : await Order.find(buildOrderQuery({ fromDate, toDate })).select('rawData orderId status').lean();
-
-    const stats = buildOrderSkuStats(allOrders);
-    if (cacheKey) {
-      orderStatsCache.set(cacheKey, stats);
-      if (orderStatsCache.size > 50) {
-        const oldestKey = orderStatsCache.keys().next().value;
-        orderStatsCache.delete(oldestKey);
-      }
+    let pending = orderSkuStatsInFlight.get(cacheKey);
+    if (!pending) {
+      pending = (async () => {
+        const allOrders = useSheetOrders({ fromDate })
+          ? await getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
+          : await Order.find(buildOrderQuery({ fromDate, toDate })).select(ORDER_SKU_STATS_FIELDS).lean();
+        const stats = buildOrderSkuStats(allOrders);
+        if (cacheKey) {
+          orderStatsCache.set(cacheKey, stats);
+          if (orderStatsCache.size > 50) {
+            const oldestKey = orderStatsCache.keys().next().value;
+            orderStatsCache.delete(oldestKey);
+          }
+        }
+        return stats;
+      })().finally(() => orderSkuStatsInFlight.delete(cacheKey));
+      orderSkuStatsInFlight.set(cacheKey, pending);
     }
+    const stats = await pending;
 
     res.json({ ok: true, ...stats });
   } catch (error) {
@@ -3613,7 +3624,7 @@ function computeReturnSummaryCached(storeKey, { getVersion, compute, refresh = f
 
 // Lan luot (khong song song) de khong don tai cho DB
 let returnSummaryWarmRunning = false;
-const returnSummaryWarmTimer = setInterval(async () => {
+const returnSummaryWarmTimer = setInterval(() => trackJob('return-summary-warm', async () => {
   if (returnSummaryWarmRunning) return;
   returnSummaryWarmRunning = true;
   try {
@@ -3630,7 +3641,7 @@ const returnSummaryWarmTimer = setInterval(async () => {
   } finally {
     returnSummaryWarmRunning = false;
   }
-}, 60 * 1000);
+}), 60 * 1000);
 returnSummaryWarmTimer.unref?.();
 
 app.get('/api/return-summary', async (req, res) => {
@@ -3839,7 +3850,8 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
       cachedDealStopRows ? Promise.resolve(null) : useSheetOrders({ fromDate })
         ? getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
         : Order.find(buildOrderQuery({ fromDate, toDate }))
-          .select('orderId status rawData createdAt')
+          // Chi truong buildDealStopRows doc (khong lay ca rawData): lich su nhe ~4 lan
+          .select(`${ORDER_SKU_STATS_FIELDS} createdAt rawData.rowNumber rawData.tags rawData.sheetColumns.col13`)
           .limit(200000)
           .lean(),
       cachedDealStopRows ? Promise.resolve(null) : cachedCampaignRows || (accountIds.length ? Campaign.aggregate([

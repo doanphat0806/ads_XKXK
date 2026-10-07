@@ -69,6 +69,7 @@ const CPO_WARNING_THRESHOLD = 100000;
 const ORDER_REFRESH_MS = 10000;
 const HOURLY_REFRESH_MS = 2 * 60 * 1000;
 const DASHBOARD_HIDDEN_COLUMNS_KEY = 'dashboard:hiddenColumns';
+const DASHBOARD_COLUMN_ORDER_KEY = 'dashboard:columnOrder';
 const DASHBOARD_COLUMNS = [
   { id: 'duplicateCount', label: 'Trùng' },
   { id: 'createdTime', label: 'Ngày tạo' },
@@ -101,6 +102,19 @@ const readHiddenColumns = () => {
     return new Set(Array.isArray(saved) ? saved : []);
   } catch {
     return new Set();
+  }
+};
+
+const DEFAULT_COLUMN_ORDER = DASHBOARD_COLUMNS.map(column => column.id);
+
+// Thu tu da luu; bo id khong con ton tai, cot moi them sau nay (chua co trong ban luu) noi vao cuoi
+const readColumnOrder = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DASHBOARD_COLUMN_ORDER_KEY) || '[]');
+    const known = Array.isArray(saved) ? saved.filter(id => DEFAULT_COLUMN_ORDER.includes(id)) : [];
+    return [...new Set([...known, ...DEFAULT_COLUMN_ORDER])];
+  } catch {
+    return DEFAULT_COLUMN_ORDER;
   }
 };
 
@@ -146,7 +160,6 @@ const CampaignRow = React.memo(function CampaignRow({
   editingBudget,
   isSavingBudget,
   isShopee,
-  showOrders,
   onStartRename,
   onSaveRename,
   onCancelRename,
@@ -156,10 +169,127 @@ const CampaignRow = React.memo(function CampaignRow({
   onCancelEditBudget,
   setEditingCampaignName,
   setEditingBudget,
-  hiddenColumns
+  visibleColumnIds
 }) {
   const budget = campaign.dailyBudget || campaign.lifetimeBudget || 0;
-  const show = (id) => !hiddenColumns.has(id);
+
+  const cells = {
+    duplicateCount: () => (
+      <td key="duplicateCount" className="text-center" style={{ fontWeight: 'bold', color: campaign.sameDayDuplicateCount > 1 ? 'var(--r)' : 'var(--txt)' }}>
+        {campaign.sameDayDuplicateCount || 1}
+      </td>
+    ),
+    createdTime: () => (
+      <td key="createdTime" style={{ color: 'var(--muted)', fontSize: '12px' }}>{formatDateTime(campaign.createdTime || campaign.created_time)}</td>
+    ),
+    toggle: () => (
+      <td key="toggle" className="text-center">
+        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', opacity: isToggling ? 0.7 : 1 }}>
+          <label className="tgl" title={isActive ? 'Tat camp' : 'Bat camp'} style={{ cursor: isToggling ? 'wait' : 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={isActive}
+              disabled={isToggling}
+              onChange={() => onToggleStatus(campaign)}
+            />
+            <div className="tgl-track"></div>
+            <div className="tgl-thumb"></div>
+          </label>
+        </div>
+      </td>
+    ),
+    account: () => (
+      <td key="account" style={{ fontWeight: 500 }}>{campaign.accountId?.name || '-'}</td>
+    ),
+    status: () => (
+      <td key="status" className="text-center"><span className={`badge ${isActive ? 'active' : 'paused'}`}>{isActive ? 'ACTIVE' : 'PAUSE'}</span></td>
+    ),
+    orderCount: () => (
+      <td key="orderCount" className="text-center" style={{ fontWeight: 'bold', color: 'var(--txt)' }}>{campaign.orderCount || '-'}</td>
+    ),
+    metaOrders: () => (
+      <td key="metaOrders" className="text-center" style={{ fontWeight: 'bold', color: campaign.metaOrders > 0 ? 'var(--txt)' : 'var(--muted2)' }}>{campaign.metaOrders > 0 ? campaign.metaOrders : '-'}</td>
+    ),
+    messages: () => (
+      <td key="messages" className="text-right">
+        {isShopee ? (
+          <>
+            <div style={{ fontWeight: 'bold', color: campaign.costPerClick > 500 || campaign.costPerClick === 0 ? 'var(--r)' : 'var(--txt)' }}>{formatVND(campaign.costPerClick)}</div>
+            <div style={{ fontSize: '11px', color: 'var(--txt)' }}>{formatNumber(campaign.clicks || 0)} click</div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontWeight: 'bold', color: campaign.costPerMessage > 15000 || campaign.costPerMessage === 0 ? 'var(--r)' : 'var(--txt)' }}>{formatVND(campaign.costPerMessage)}</div>
+            <div style={{ fontSize: '11px', color: 'var(--txt)' }}>{campaign.messages} TN</div>
+          </>
+        )}
+      </td>
+    ),
+    costPerOrder: () => (
+      <td key="costPerOrder" className="text-right" style={{ color: campaign.costPerOrder > CPO_WARNING_THRESHOLD ? 'var(--r)' : 'var(--txt)', fontWeight: campaign.costPerOrder > CPO_WARNING_THRESHOLD ? 'bold' : undefined }}>{campaign.costPerOrder > 0 ? formatVND(campaign.costPerOrder) : '-'}</td>
+    ),
+    spend: () => (
+      <td key="spend" className="text-right mono-sm">{formatVND(campaign.spend)}</td>
+    ),
+    budget: () => (
+      <td key="budget" className="text-right mono-sm">
+        {isEditingBudget ? (
+          <input
+            value={editingBudget}
+            autoFocus
+            inputMode="numeric"
+            disabled={isSavingBudget}
+            onChange={e => setEditingBudget(e.target.value.replace(/[^\d]/g, ''))}
+            onBlur={() => onSaveBudget(campaign)}
+            onKeyDown={e => { if (e.key === 'Enter') onSaveBudget(campaign); if (e.key === 'Escape') onCancelEditBudget(); }}
+            style={{ width: '110px', height: '28px', textAlign: 'right', border: '1px solid var(--border2)', borderRadius: '4px', padding: '0 8px', color: 'var(--txt)', background: 'var(--s1)' }}
+          />
+        ) : (
+          <button type="button" onClick={() => onStartEditBudget(campaign)} title="Click de sua ngan sach" style={{ border: 0, padding: 0, background: 'transparent', color: 'var(--txt)', cursor: 'text', font: 'inherit' }}>
+            {isSavingBudget ? '...' : formatVND(budget)}
+          </button>
+        )}
+      </td>
+    ),
+    returnRate: () => (
+      <td key="returnRate" className="text-right" style={{ color: campaign.returnStats?.denominator > 0 ? 'var(--b)' : 'var(--muted2)' }}>
+        {campaign.returnStats?.denominator > 0 ? <><div style={{ fontWeight: 'bold' }}>{formatPercent(campaign.returnRate)}</div><div style={{ fontSize: '11px', color: 'var(--muted2)' }}>{formatNumber((campaign.returnStats.returned || 0) + (campaign.returnStats.returning || 0))} / {formatNumber(campaign.returnStats.denominator)}</div></> : ''}
+      </td>
+    ),
+    impressions: () => (
+      <td key="impressions" className="text-right mono-sm">{formatNumber(campaign.impressions || 0)}</td>
+    ),
+    reach: () => (
+      <td key="reach" className="text-right mono-sm" title={campaign.reachUnavailable ? 'Meta không có tiếp cận theo giờ' : undefined}>{campaign.reachUnavailable ? '-' : formatNumber(campaign.reach || 0)}</td>
+    ),
+    engagements: () => (
+      <td key="engagements" className="text-right mono-sm">{formatNumber(campaign.engagements || 0)}</td>
+    ),
+    costPerClick: () => (
+      <td key="costPerClick" className="text-right mono-sm">{campaign.costPerClick > 0 ? formatVND(campaign.costPerClick) : '-'}</td>
+    ),
+    costPerMille: () => (
+      <td key="costPerMille" className="text-right mono-sm">{campaign.costPerMille > 0 ? formatVND(campaign.costPerMille) : '-'}</td>
+    ),
+    ctr: () => (
+      <td key="ctr" className="text-right mono-sm">{campaign.ctr > 0 ? formatPercent(campaign.ctr) : '-'}</td>
+    ),
+    linkClicks: () => (
+      <td key="linkClicks" className="text-right mono-sm">{formatNumber(campaign.linkClicks || 0)}</td>
+    ),
+    costPerLinkClick: () => (
+      <td key="costPerLinkClick" className="text-right mono-sm">{campaign.costPerLinkClick > 0 ? formatVND(campaign.costPerLinkClick) : '-'}</td>
+    ),
+    frequency: () => (
+      <td key="frequency" className="text-right mono-sm">{campaign.frequency > 0 ? campaign.frequency.toFixed(2).replace('.', ',') : '-'}</td>
+    ),
+    costPerReach: () => (
+      <td key="costPerReach" className="text-right mono-sm">{campaign.costPerReach > 0 ? formatVND(campaign.costPerReach) : '-'}</td>
+    ),
+    bidAmount: () => (
+      <td key="bidAmount" className="text-right mono-sm">{Number(campaign.bidAmount || 0) > 0 ? formatVND(campaign.bidAmount) : '-'}</td>
+    )
+  };
 
   return (
     <tr>
@@ -181,77 +311,7 @@ const CampaignRow = React.memo(function CampaignRow({
         )}
         <div style={{ fontSize: '10px', color: 'var(--muted2)' }}>{campaign.campaignId}</div>
       </td>
-      {show('duplicateCount') && <td className="text-center" style={{ fontWeight: 'bold', color: campaign.sameDayDuplicateCount > 1 ? 'var(--r)' : 'var(--txt)' }}>
-        {campaign.sameDayDuplicateCount || 1}
-      </td>}
-      {show('createdTime') && <td style={{ color: 'var(--muted)', fontSize: '12px' }}>{formatDateTime(campaign.createdTime || campaign.created_time)}</td>}
-      {show('toggle') && <td className="text-center">
-        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', opacity: isToggling ? 0.7 : 1 }}>
-          <label className="tgl" title={isActive ? 'Tat camp' : 'Bat camp'} style={{ cursor: isToggling ? 'wait' : 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={isActive}
-              disabled={isToggling}
-              onChange={() => onToggleStatus(campaign)}
-            />
-            <div className="tgl-track"></div>
-            <div className="tgl-thumb"></div>
-          </label>
-        </div>
-      </td>}
-      {show('account') && <td style={{ fontWeight: 500 }}>{campaign.accountId?.name || '-'}</td>}
-      {show('status') && <td className="text-center"><span className={`badge ${isActive ? 'active' : 'paused'}`}>{isActive ? 'ACTIVE' : 'PAUSE'}</span></td>}
-      {showOrders && show('orderCount') && <td className="text-center" style={{ fontWeight: 'bold', color: 'var(--txt)' }}>{campaign.orderCount || '-'}</td>}
-      {showOrders && show('metaOrders') && <td className="text-center" style={{ fontWeight: 'bold', color: campaign.metaOrders > 0 ? 'var(--txt)' : 'var(--muted2)' }}>{campaign.metaOrders > 0 ? campaign.metaOrders : '-'}</td>}
-      {show('messages') && <td className="text-right">
-        {isShopee ? (
-          <>
-            <div style={{ fontWeight: 'bold', color: campaign.costPerClick > 500 || campaign.costPerClick === 0 ? 'var(--r)' : 'var(--txt)' }}>{formatVND(campaign.costPerClick)}</div>
-            <div style={{ fontSize: '11px', color: 'var(--txt)' }}>{formatNumber(campaign.clicks || 0)} click</div>
-          </>
-        ) : (
-          <>
-            <div style={{ fontWeight: 'bold', color: campaign.costPerMessage > 15000 || campaign.costPerMessage === 0 ? 'var(--r)' : 'var(--txt)' }}>{formatVND(campaign.costPerMessage)}</div>
-            <div style={{ fontSize: '11px', color: 'var(--txt)' }}>{campaign.messages} TN</div>
-          </>
-        )}
-      </td>}
-      {showOrders && show('costPerOrder') && <td className="text-right" style={{ color: campaign.costPerOrder > CPO_WARNING_THRESHOLD ? 'var(--r)' : 'var(--txt)', fontWeight: campaign.costPerOrder > CPO_WARNING_THRESHOLD ? 'bold' : undefined }}>{campaign.costPerOrder > 0 ? formatVND(campaign.costPerOrder) : '-'}</td>}
-      {show('spend') && <td className="text-right mono-sm">{formatVND(campaign.spend)}</td>}
-      {show('budget') && <td className="text-right mono-sm">
-        {isEditingBudget ? (
-          <input
-            value={editingBudget}
-            autoFocus
-            inputMode="numeric"
-            disabled={isSavingBudget}
-            onChange={e => setEditingBudget(e.target.value.replace(/[^\d]/g, ''))}
-            onBlur={() => onSaveBudget(campaign)}
-            onKeyDown={e => { if (e.key === 'Enter') onSaveBudget(campaign); if (e.key === 'Escape') onCancelEditBudget(); }}
-            style={{ width: '110px', height: '28px', textAlign: 'right', border: '1px solid var(--border2)', borderRadius: '4px', padding: '0 8px', color: 'var(--txt)', background: 'var(--s1)' }}
-          />
-        ) : (
-          <button type="button" onClick={() => onStartEditBudget(campaign)} title="Click de sua ngan sach" style={{ border: 0, padding: 0, background: 'transparent', color: 'var(--txt)', cursor: 'text', font: 'inherit' }}>
-            {isSavingBudget ? '...' : formatVND(budget)}
-          </button>
-        )}
-      </td>}
-      {showOrders && show('returnRate') && (
-        <td className="text-right" style={{ color: campaign.returnStats?.denominator > 0 ? 'var(--b)' : 'var(--muted2)' }}>
-          {campaign.returnStats?.denominator > 0 ? <><div style={{ fontWeight: 'bold' }}>{formatPercent(campaign.returnRate)}</div><div style={{ fontSize: '11px', color: 'var(--muted2)' }}>{formatNumber((campaign.returnStats.returned || 0) + (campaign.returnStats.returning || 0))} / {formatNumber(campaign.returnStats.denominator)}</div></> : ''}
-        </td>
-      )}
-      {show('impressions') && <td className="text-right mono-sm">{formatNumber(campaign.impressions || 0)}</td>}
-      {show('reach') && <td className="text-right mono-sm" title={campaign.reachUnavailable ? 'Meta không có tiếp cận theo giờ' : undefined}>{campaign.reachUnavailable ? '-' : formatNumber(campaign.reach || 0)}</td>}
-      {show('engagements') && <td className="text-right mono-sm">{formatNumber(campaign.engagements || 0)}</td>}
-      {show('costPerClick') && <td className="text-right mono-sm">{campaign.costPerClick > 0 ? formatVND(campaign.costPerClick) : '-'}</td>}
-      {show('costPerMille') && <td className="text-right mono-sm">{campaign.costPerMille > 0 ? formatVND(campaign.costPerMille) : '-'}</td>}
-      {show('ctr') && <td className="text-right mono-sm">{campaign.ctr > 0 ? formatPercent(campaign.ctr) : '-'}</td>}
-      {show('linkClicks') && <td className="text-right mono-sm">{formatNumber(campaign.linkClicks || 0)}</td>}
-      {show('costPerLinkClick') && <td className="text-right mono-sm">{campaign.costPerLinkClick > 0 ? formatVND(campaign.costPerLinkClick) : '-'}</td>}
-      {show('frequency') && <td className="text-right mono-sm">{campaign.frequency > 0 ? campaign.frequency.toFixed(2).replace('.', ',') : '-'}</td>}
-      {show('costPerReach') && <td className="text-right mono-sm">{campaign.costPerReach > 0 ? formatVND(campaign.costPerReach) : '-'}</td>}
-      {show('bidAmount') && <td className="text-right mono-sm">{Number(campaign.bidAmount || 0) > 0 ? formatVND(campaign.bidAmount) : '-'}</td>}
+      {visibleColumnIds.map(id => cells[id]?.())}
     </tr>
   );
 });
@@ -305,11 +365,6 @@ export default function Dashboard() {
   const columnMenuRef = useRef(null);
   const availableColumns = useMemo(() => DASHBOARD_COLUMNS.filter(column => showOrders || !column.ordersOnly), [showOrders]);
   const hiddenColumnCount = availableColumns.filter(column => hiddenColumns.has(column.id)).length;
-  const isColumnVisible = (id) => {
-    const column = DASHBOARD_COLUMNS.find(item => item.id === id);
-    if (column?.ordersOnly && !showOrders) return false;
-    return !hiddenColumns.has(id);
-  };
   const updateHiddenColumns = (next) => {
     setHiddenColumns(next);
     try {
@@ -322,6 +377,41 @@ export default function Dashboard() {
     const next = new Set(hiddenColumns);
     if (next.has(id)) next.delete(id); else next.add(id);
     updateHiddenColumns(next);
+  };
+  const [columnOrder, setColumnOrder] = useState(readColumnOrder);
+  const [draggingColumnId, setDraggingColumnId] = useState('');
+  const [dragOverColumnId, setDragOverColumnId] = useState('');
+  const updateColumnOrder = (next) => {
+    setColumnOrder(next);
+    try {
+      localStorage.setItem(DASHBOARD_COLUMN_ORDER_KEY, JSON.stringify(next));
+    } catch {
+      // localStorage khong kha dung -> chi giu trong phien hien tai
+    }
+  };
+  // Dua cot fromId vao vi tri cua toId (keo xuong thi nam sau toId, keo len thi nam truoc)
+  const moveColumn = (fromId, toId) => {
+    if (!fromId || !toId || fromId === toId) return;
+    const next = columnOrder.filter(id => id !== fromId);
+    const fromIndex = columnOrder.indexOf(fromId);
+    const toIndex = next.indexOf(toId);
+    next.splice(fromIndex <= toIndex ? toIndex + 1 : toIndex, 0, fromId);
+    updateColumnOrder(next);
+  };
+  const orderedMenuColumns = useMemo(() => {
+    const byId = new Map(availableColumns.map(column => [column.id, column]));
+    return columnOrder.map(id => byId.get(id)).filter(Boolean);
+  }, [availableColumns, columnOrder]);
+  const visibleColumnIds = useMemo(
+    () => orderedMenuColumns.filter(column => !hiddenColumns.has(column.id)).map(column => column.id),
+    [orderedMenuColumns, hiddenColumns]
+  );
+  const isDefaultColumnOrder = columnOrder.every((id, index) => id === DEFAULT_COLUMN_ORDER[index]);
+  // Len/xuong 1 bac trong cac cot dang co tren menu (bo qua cot an theo provider, vd cot don voi Shopee)
+  const shiftColumn = (id, step) => {
+    const ids = orderedMenuColumns.map(column => column.id);
+    const target = ids[ids.indexOf(id) + step];
+    if (target) moveColumn(id, target);
   };
 
   useEffect(() => {
@@ -1000,6 +1090,43 @@ export default function Dashboard() {
     }
   };
 
+  // Header theo id cot; sortField co thi bam vao de sap xep
+  const COLUMN_HEADERS = {
+    duplicateCount: { label: 'Trung', className: 'text-center', sortField: 'duplicateCount' },
+    createdTime: { label: 'Ngay tao' },
+    toggle: { label: 'Tắt/Bật', className: 'text-center' },
+    account: { label: 'Ten TKQC' },
+    status: { label: 'Trạng Thái', className: 'text-center' },
+    orderCount: { label: 'Tổng Đơn', className: 'text-center', sortField: 'orderCount' },
+    metaOrders: { label: 'Đơn Meta', className: 'text-center', sortField: 'metaOrders' },
+    messages: { label: isShopee ? 'Luot click (Gia/click)' : 'Giá/TN', className: 'text-right', sortField: 'messages', title: isShopee ? undefined : 'Chi phí / lượt bắt đầu trò chuyện' },
+    costPerOrder: { label: 'CPO', className: 'text-right', sortField: 'costPerOrder' },
+    spend: { label: 'Chi Tiêu', className: 'text-right', sortField: 'spend' },
+    budget: { label: 'Ngân Sách', className: 'text-right' },
+    returnRate: { label: 'Tỉ lệ Hoàn', className: 'text-right', sortField: 'returnRate' },
+    impressions: { label: 'Hiển thị', className: 'text-right', sortField: 'impressions' },
+    reach: { label: 'Tiếp cận', className: 'text-right', sortField: 'reach' },
+    engagements: { label: 'Tương tác', className: 'text-right', sortField: 'engagements' },
+    costPerClick: { label: 'CPC', className: 'text-right', sortField: 'costPerClick' },
+    costPerMille: { label: 'CPM', className: 'text-right', sortField: 'costPerMille' },
+    ctr: { label: 'CTR', className: 'text-right', sortField: 'ctr' },
+    linkClicks: { label: 'Click liên kết', className: 'text-right', sortField: 'linkClicks' },
+    costPerLinkClick: { label: 'CPC liên kết', className: 'text-right', sortField: 'costPerLinkClick' },
+    frequency: { label: 'Tần suất', className: 'text-right', sortField: 'frequency' },
+    costPerReach: { label: 'CPP', className: 'text-right', sortField: 'costPerReach' },
+    bidAmount: { label: 'Giá bid', className: 'text-right', sortField: 'bidAmount' }
+  };
+  const renderColumnHeader = (id) => {
+    const header = COLUMN_HEADERS[id];
+    if (!header) return null;
+    if (!header.sortField) return <th key={id} className={header.className}>{header.label}</th>;
+    return (
+      <th key={id} className={header.className} style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort(header.sortField)} title={header.title}>
+        {header.label}<SortIcon field={header.sortField} sortField={sortField} sortDir={sortDir} />
+      </th>
+    );
+  };
+
   return (
     <div id="page-dashboard" ref={dashboardRef}>
       <div className="dashboard-sticky-summary" ref={stickySummaryRef}>
@@ -1096,13 +1223,42 @@ export default function Dashboard() {
               {columnMenuOpen && (
                 <div className="dashboard-column-menu-panel">
                   <div className="dashboard-column-menu-actions">
+                    <span className="dashboard-column-menu-hint">Kéo ⠿ để đổi thứ tự</span>
+                    {!isDefaultColumnOrder && <button type="button" onClick={() => updateColumnOrder(DEFAULT_COLUMN_ORDER)}>Thứ tự mặc định</button>}
                     <button type="button" onClick={() => updateHiddenColumns(new Set())}>Hiện tất cả</button>
                   </div>
-                  {availableColumns.map(column => (
-                    <label key={column.id} className="dashboard-column-menu-item">
-                      <input type="checkbox" checked={!hiddenColumns.has(column.id)} onChange={() => toggleColumn(column.id)} />
-                      <span>{column.label}</span>
-                    </label>
+                  {orderedMenuColumns.map((column, index) => (
+                    <div
+                      key={column.id}
+                      className={`dashboard-column-menu-item${draggingColumnId === column.id ? ' is-dragging' : ''}${dragOverColumnId === column.id && draggingColumnId !== column.id ? ' is-drag-over' : ''}`}
+                      draggable
+                      onDragStart={event => {
+                        setDraggingColumnId(column.id);
+                        event.dataTransfer.effectAllowed = 'move';
+                        event.dataTransfer.setData('text/plain', column.id);
+                      }}
+                      onDragOver={event => {
+                        event.preventDefault();
+                        if (dragOverColumnId !== column.id) setDragOverColumnId(column.id);
+                      }}
+                      onDrop={event => {
+                        event.preventDefault();
+                        moveColumn(draggingColumnId || event.dataTransfer.getData('text/plain'), column.id);
+                        setDraggingColumnId('');
+                        setDragOverColumnId('');
+                      }}
+                      onDragEnd={() => { setDraggingColumnId(''); setDragOverColumnId(''); }}
+                    >
+                      <span className="dashboard-column-menu-grip" aria-hidden="true">⠿</span>
+                      <label className="dashboard-column-menu-label">
+                        <input type="checkbox" checked={!hiddenColumns.has(column.id)} onChange={() => toggleColumn(column.id)} />
+                        <span>{column.label}</span>
+                      </label>
+                      <span className="dashboard-column-menu-move">
+                        <button type="button" disabled={index === 0} onClick={() => shiftColumn(column.id, -1)} title="Lên" aria-label={`Đưa ${column.label} lên`}>↑</button>
+                        <button type="button" disabled={index === orderedMenuColumns.length - 1} onClick={() => shiftColumn(column.id, 1)} title="Xuống" aria-label={`Đưa ${column.label} xuống`}>↓</button>
+                      </span>
+                    </div>
                   ))}
                 </div>
               )}
@@ -1139,31 +1295,7 @@ export default function Dashboard() {
               <thead>
                 <tr>
                   <th>Ten Campaign</th>
-                  {isColumnVisible('duplicateCount') && <th className="text-center" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('duplicateCount')}>Trung<SortIcon field="duplicateCount" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('createdTime') && <th>Ngay tao</th>}
-                  {isColumnVisible('toggle') && <th className="text-center">Tắt/Bật</th>}
-                  {isColumnVisible('account') && <th>Ten TKQC</th>}
-                  {isColumnVisible('status') && <th className="text-center">Trạng Thái</th>}
-                  {isColumnVisible('orderCount') && <th className="text-center" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('orderCount')}>Tổng Đơn<SortIcon field="orderCount" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('metaOrders') && <th className="text-center" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('metaOrders')}>Đơn Meta<SortIcon field="metaOrders" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('messages') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('messages')} title={isShopee ? undefined : 'Chi phí / lượt bắt đầu trò chuyện'}>
-                    {isShopee ? 'Luot click (Gia/click)' : 'Giá/TN'}<SortIcon field="messages" sortField={sortField} sortDir={sortDir} />
-                  </th>}
-                  {isColumnVisible('costPerOrder') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('costPerOrder')}>CPO<SortIcon field="costPerOrder" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('spend') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('spend')}>Chi Tiêu<SortIcon field="spend" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('budget') && <th className="text-right">Ngân Sách</th>}
-                  {isColumnVisible('returnRate') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('returnRate')}>Tỉ lệ Hoàn<SortIcon field="returnRate" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('impressions') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('impressions')}>Hiển thị<SortIcon field="impressions" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('reach') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('reach')}>Tiếp cận<SortIcon field="reach" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('engagements') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('engagements')}>Tương tác<SortIcon field="engagements" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('costPerClick') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('costPerClick')}>CPC<SortIcon field="costPerClick" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('costPerMille') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('costPerMille')}>CPM<SortIcon field="costPerMille" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('ctr') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('ctr')}>CTR<SortIcon field="ctr" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('linkClicks') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('linkClicks')}>Click liên kết<SortIcon field="linkClicks" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('costPerLinkClick') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('costPerLinkClick')}>CPC liên kết<SortIcon field="costPerLinkClick" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('frequency') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('frequency')}>Tần suất<SortIcon field="frequency" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('costPerReach') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('costPerReach')}>CPP<SortIcon field="costPerReach" sortField={sortField} sortDir={sortDir} /></th>}
-                  {isColumnVisible('bidAmount') && <th className="text-right" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('bidAmount')}>Giá bid<SortIcon field="bidAmount" sortField={sortField} sortDir={sortDir} /></th>}
+                  {visibleColumnIds.map(renderColumnHeader)}
                 </tr>
               </thead>
               <tbody>
@@ -1188,7 +1320,6 @@ export default function Dashboard() {
                       editingBudget={editingBudget}
                       isSavingBudget={isSavingBudget}
                       isShopee={isShopee}
-                      showOrders={showOrders}
                       onStartRename={startRenameCampaign}
                       onSaveRename={saveRenameCampaign}
                       onCancelRename={cancelRenameCampaign}
@@ -1198,7 +1329,7 @@ export default function Dashboard() {
                       onCancelEditBudget={cancelEditBudget}
                       setEditingCampaignName={setEditingCampaignName}
                       setEditingBudget={setEditingBudget}
-                      hiddenColumns={hiddenColumns}
+                      visibleColumnIds={visibleColumnIds}
                     />
                   );
                 })}

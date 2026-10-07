@@ -8,6 +8,7 @@ const { buildOrderSkuStats, buildOrderQuery, useSheetOrders, getOrderDataVersion
 const { getOrderDerivedCache, setOrderDerivedCache } = require('../utils/cacheManager');
 const { orderSourceState } = require('./orderSourceState');
 const { parseBoundedInt } = require('../utils/number');
+const { trackJob } = require('../utils/perfMonitor');
 
 // Don hang tu Pancake POS -> bang Order (MongoDB). Thay cho Google Sheet: co gio tao don, ad_id, doanh thu.
 const POS_API_BASE = 'https://pos.pages.fm/api/v1';
@@ -506,7 +507,7 @@ async function startPosOrderSync() {
       if (shopState.hasPreviousShopOrders) orderSourceState.posReady = true;
       if (!shopState.backfillDone) runPosBackfill();
       if (!shopState.deletedCleanupDone) runPosDeletedCleanup();
-      await syncRecentPosOrders();
+      await trackJob('pos-sync', syncRecentPosOrders);
     } catch (error) {
       console.error(`[pos-orders] dong bo loi: ${error.message}`);
     }

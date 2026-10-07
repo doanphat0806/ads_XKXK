@@ -522,6 +522,9 @@ function buildOrderTableStats(orders = []) {
   };
 }
 
+// Chi cac truong buildOrderSkuStats doc: ~1/4 dung luong so voi ca rawData (lich su ~117k don: 103MB -> 26MB)
+const ORDER_SKU_STATS_FIELDS = 'orderId status rawData.status rawData.status_name rawData.items rawData.line_items rawData.products rawData.details';
+
 function getOrderStatsCacheKey({ fromDate, toDate } = {}) {
   return `${fromDate || ''}:${toDate || ''}:${getOrderDataVersion({ fromDate })}`;
 }
@@ -1043,6 +1046,7 @@ module.exports = {
   getOrderSheetPage,
   getOrderSheetOrders,
   getOrderStatsCacheKey,
+  ORDER_SKU_STATS_FIELDS,
   ordersSheetCache,
   orderStatsCache
 };

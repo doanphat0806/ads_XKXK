@@ -97,6 +97,7 @@ function createLegacyRuntime(app) {
     getOrderSheetPage,
     getOrderSheetOrders,
     getOrderStatsCacheKey,
+    ORDER_SKU_STATS_FIELDS,
     getOrderSourceName,
     getOrderDataVersion,
     ordersSheetCache,
@@ -104,6 +105,7 @@ function createLegacyRuntime(app) {
   } = require('../services/orderService');
   const { syncRecentPosOrders, upsertPosOrders } = require('../services/posOrderService');
   const { loadOrderSheetRowsFromDb } = require('../services/orderSheetPersistService');
+  const { trackJob } = require('../utils/perfMonitor');
   const {
     configureFacebookToken,
     checkAndRefreshFacebookToken,
@@ -1387,7 +1389,7 @@ function createLegacyRuntime(app) {
       const today = todayStr();
       const orders = useSheetOrders({ fromDate: today })
         ? await getOrderSheetOrders({ fromDate: today, toDate: today, limit: 200000 })
-        : await Order.find(buildOrderQuery({ fromDate: today, toDate: today })).select('rawData orderId status').lean();
+        : await Order.find(buildOrderQuery({ fromDate: today, toDate: today })).select(ORDER_SKU_STATS_FIELDS).lean();
       return buildOrderSkuStats(orders).counts || {};
     } catch (error) {
       await addLog(
@@ -3756,11 +3758,11 @@ function createLegacyRuntime(app) {
       const options = getTodayCampaignSyncOptions(provider);
       console.log(`Today campaign spend sync ${options.provider} scheduled every ${Math.round(options.intervalMs / 1000)}s with concurrency=${options.concurrency}`);
       setTimeout(
-        () => syncTodayCampaignSpendAccounts(options.provider, 'startup'),
+        () => trackJob(`campaign-spend:${options.provider}`, () => syncTodayCampaignSpendAccounts(options.provider, 'startup')),
         Math.min(options.intervalMs, 5 * 60 * 1000)
       );
       todayCampaignSpendSyncTimers[options.provider] = setInterval(() => {
-        syncTodayCampaignSpendAccounts(options.provider, 'timer');
+        trackJob(`campaign-spend:${options.provider}`, () => syncTodayCampaignSpendAccounts(options.provider, 'timer'));
       }, options.intervalMs);
     }
   }
@@ -3849,6 +3851,7 @@ function createLegacyRuntime(app) {
       getOrderSheetPage,
       getOrderSheetOrders,
       getOrderStatsCacheKey,
+      ORDER_SKU_STATS_FIELDS,
       getOrderSourceName,
       getOrderDataVersion,
       syncRecentPosOrders,
@@ -4274,7 +4277,7 @@ function createLegacyRuntime(app) {
     };
     sheetRefreshInitial();
 
-    sheetRefreshTimer = setInterval(async () => {
+    sheetRefreshTimer = setInterval(() => trackJob('order-sheet-refresh', async () => {
       if (isShuttingDown || sheetRefreshRunning || !useSheetOrders()) return;
       sheetRefreshRunning = true;
       try {
@@ -4296,7 +4299,7 @@ function createLegacyRuntime(app) {
       } finally {
         sheetRefreshRunning = false;
       }
-    }, ORDER_SHEET_REFRESH_INTERVAL_MS);
+    }), ORDER_SHEET_REFRESH_INTERVAL_MS);
   }
 
   function startPurchaseOrderSheetRefresh() {
@@ -4315,8 +4318,9 @@ function createLegacyRuntime(app) {
       }
     };
 
-    runPurchaseOrderSheetSync();
-    purchaseOrderSheetRefreshTimer = setInterval(runPurchaseOrderSheetSync, PURCHASE_ORDER_SHEET_REFRESH_INTERVAL_MS);
+    const trackedPurchaseOrderSheetSync = () => trackJob('purchase-order-sheet', runPurchaseOrderSheetSync);
+    trackedPurchaseOrderSheetSync();
+    purchaseOrderSheetRefreshTimer = setInterval(trackedPurchaseOrderSheetSync, PURCHASE_ORDER_SHEET_REFRESH_INTERVAL_MS);
   }
 
   async function shutdownRuntime() {

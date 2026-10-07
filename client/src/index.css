@@ -3843,7 +3843,7 @@
       top: calc(100% + 6px);
       right: 0;
       z-index: 50;
-      min-width: 200px;
+      min-width: 250px;
       max-height: 360px;
       overflow-y: auto;
       padding: 6px;
@@ -3883,6 +3883,81 @@
 
     #page-dashboard .dashboard-column-menu-item:hover {
       background: #eef6fb;
+    }
+
+    #page-dashboard .dashboard-column-menu-actions {
+      align-items: center;
+      gap: 10px;
+    }
+
+    #page-dashboard .dashboard-column-menu-hint {
+      margin-right: auto;
+      font-size: 11px;
+      color: var(--muted2);
+    }
+
+    #page-dashboard .dashboard-column-menu-item {
+      gap: 6px;
+      cursor: grab;
+      border-top: 2px solid transparent;
+    }
+
+    #page-dashboard .dashboard-column-menu-item.is-dragging {
+      opacity: 0.45;
+    }
+
+    #page-dashboard .dashboard-column-menu-item.is-drag-over {
+      border-top-color: var(--b);
+      background: #eef6fb;
+    }
+
+    #page-dashboard .dashboard-column-menu-grip {
+      color: var(--muted2);
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    #page-dashboard .dashboard-column-menu-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      cursor: pointer;
+    }
+
+    #page-dashboard .dashboard-column-menu-move {
+      display: inline-flex;
+      gap: 2px;
+      opacity: 0;
+      transition: opacity 0.12s;
+    }
+
+    #page-dashboard .dashboard-column-menu-item:hover .dashboard-column-menu-move,
+    #page-dashboard .dashboard-column-menu-move:focus-within {
+      opacity: 1;
+    }
+
+    #page-dashboard .dashboard-column-menu-move button {
+      width: 22px;
+      height: 22px;
+      border: 1px solid #dfe9f2;
+      border-radius: 5px;
+      background: #ffffff;
+      color: var(--txt);
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    #page-dashboard .dashboard-column-menu-move button:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+
+    @media (hover: none) {
+      #page-dashboard .dashboard-column-menu-move {
+        opacity: 1;
+      }
     }
 
     #dashCampTable {
