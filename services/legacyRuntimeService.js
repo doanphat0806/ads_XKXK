@@ -14,6 +14,11 @@ const { registerShopeeSocialAccountsRoutes } = require('../routes/shopeeSocialAc
 const { registerShopeeSocialCommissionReceiptsRoutes } = require('../routes/shopeeSocialCommissionReceiptsRoutes');
 const { authenticateApiRequest } = require('../middleware/auth');
 const { parseBoundedInt } = require('../utils/number');
+const {
+  META_EXTRA_INSIGHT_FIELDS,
+  getMetaExtraMetricsFromInsight,
+  mergeMetaExtraMetrics
+} = require('../utils/metaExtraMetrics');
 const { parseCsvRows, normalizeCsvHeader, getCsvColumnIndex, getCsvCell, parseCsvNumber, parseCsvInteger, parseCsvCampaignDate } = require('../utils/csvImport');
 const { normalizeProvider, requireAdminUser } = require('../utils/authUtils');
 const {
@@ -60,7 +65,6 @@ function createLegacyRuntime(app) {
   const User = require('../models/User');
   const FacebookToken = require('../models/FacebookToken');
   const Order = require('../models/Order');
-  const OrderSheetRow = require('../models/OrderSheetRow');
   const InventoryItem = require('../models/InventoryItem');
   const FacebookPost = require('../models/FacebookPost');
   const DataPurchaseOrder = require('../models/DataPurchaseOrder');
@@ -82,7 +86,6 @@ function createLegacyRuntime(app) {
     getOrderItemSku,
     getOrderItemQuantity,
     getOrderTagText,
-    useSheetOrders,
     normalizeSkuKey,
     normalizeStatusKey,
     buildOrderSkuStats,
@@ -93,18 +96,13 @@ function createLegacyRuntime(app) {
     classifyReturnStatus,
     classifyReturnAdNameBucket,
     RETURN_SUMMARY_BUCKETS,
-    fetchOrderSheetRows,
-    getOrderSheetPage,
-    getOrderSheetOrders,
     getOrderStatsCacheKey,
     ORDER_SKU_STATS_FIELDS,
     getOrderSourceName,
     getOrderDataVersion,
-    ordersSheetCache,
     orderStatsCache
   } = require('../services/orderService');
   const { syncRecentPosOrders, upsertPosOrders } = require('../services/posOrderService');
-  const { loadOrderSheetRowsFromDb } = require('../services/orderSheetPersistService');
   const { trackJob } = require('../utils/perfMonitor');
   const {
     configureFacebookToken,
@@ -169,7 +167,6 @@ function createLegacyRuntime(app) {
     TODAY_CAMPAIGN_SYNC_CONCURRENCY,
     SHOPEE_TODAY_CAMPAIGN_SYNC_INTERVAL_MS,
     SHOPEE_TODAY_CAMPAIGN_SYNC_CONCURRENCY,
-    ORDER_SHEET_REFRESH_INTERVAL_MS,
     PURCHASE_ORDER_SHEET_REFRESH_INTERVAL_MS,
     REDIS_URL,
     REDIS_QUEUE_ENABLED,
@@ -655,12 +652,10 @@ function createLegacyRuntime(app) {
   
   async function buildInventoryPendingOrderCounts() {
     // DB: loc san don "Cho hang" (POS status 11) thay vi tai toan bo don; vong for ben duoi van loc lai nhu cu
-    const orders = useSheetOrders()
-      ? await getOrderSheetOrders({ limit: 200000 })
-      : await Order.find({
-        ...buildOrderQuery({}),
-        $or: [{ 'rawData.status': 11 }, { status: /ch[ờo] h[àa]ng/i }]
-      }).select('status rawData.status rawData.status_name rawData.items').limit(200000).lean();
+    const orders = await Order.find({
+      ...buildOrderQuery({}),
+      $or: [{ 'rawData.status': 11 }, { status: /ch[ờo] h[àa]ng/i }]
+    }).select('status rawData.status rawData.status_name rawData.items').limit(200000).lean();
   
     const byCode = new Map();
     const byCodeSize = new Map();
@@ -1387,9 +1382,7 @@ function createLegacyRuntime(app) {
   
     try {
       const today = todayStr();
-      const orders = useSheetOrders({ fromDate: today })
-        ? await getOrderSheetOrders({ fromDate: today, toDate: today, limit: 200000 })
-        : await Order.find(buildOrderQuery({ fromDate: today, toDate: today })).select(ORDER_SKU_STATS_FIELDS).lean();
+      const orders = await Order.find(buildOrderQuery({ fromDate: today, toDate: today })).select(ORDER_SKU_STATS_FIELDS).lean();
       return buildOrderSkuStats(orders).counts || {};
     } catch (error) {
       await addLog(
@@ -1949,7 +1942,8 @@ function createLegacyRuntime(app) {
       messages: Number.isFinite(messages) ? messages : 0,
       metaOrders: Number.isFinite(metaOrders) ? metaOrders : 0,
       costPerMessage: Number.isFinite(costPerMessage) ? costPerMessage : 0,
-      costPerMessageWeight: Number.isFinite(messages) && messages > 0 ? messages : 0
+      costPerMessageWeight: Number.isFinite(messages) && messages > 0 ? messages : 0,
+      metaExtra: getMetaExtraMetricsFromInsight(insight)
     };
   }
   
@@ -1970,6 +1964,7 @@ function createLegacyRuntime(app) {
     target.linkClicks = Number(target.linkClicks || 0) + Number(source.linkClicks || 0);
     target.messages = Number(target.messages || 0) + Number(source.messages || 0);
     target.metaOrders = Number(target.metaOrders || 0) + Number(source.metaOrders || 0);
+    target.metaExtra = mergeMetaExtraMetrics(target.metaExtra || {}, source.metaExtra);
     const currentWeight = Number(target.costPerMessageWeight || 0);
     const sourceWeight = Number(source.costPerMessageWeight || 0);
     if (sourceWeight > 0) {
@@ -2001,7 +1996,10 @@ function createLegacyRuntime(app) {
       : `act_${account.adAccountId}`;
 
     const { items } = await fetchAllFbEdge(fbToken, `${acctId}/insights`, {
-      fields: 'campaign_id,campaign_name,spend,impressions,reach,clicks,inline_link_clicks,inline_post_engagement,actions,conversions,cost_per_action_type',
+      fields: [
+        'campaign_id,campaign_name,spend,impressions,reach,clicks,inline_link_clicks,inline_post_engagement,actions,conversions,cost_per_action_type',
+        ...META_EXTRA_INSIGHT_FIELDS
+      ].join(','),
       time_range: JSON.stringify({ since: fromDate, until: toDate }),
       level: 'campaign',
       limit: 500,
@@ -2128,7 +2126,8 @@ function createLegacyRuntime(app) {
               linkClicks: dailyRow.metrics.linkClicks,
               messages: dailyRow.metrics.messages,
               costPerMessage: dailyRow.metrics.costPerMessage,
-              metaOrders: dailyRow.metrics.metaOrders
+              metaOrders: dailyRow.metrics.metaOrders,
+              metaExtra: dailyRow.metrics.metaExtra
             };
             if (dailyRow.adName) campaignUpdate.adName = dailyRow.adName;
             await upsertDailyCampaign(account._id, dailyRow.campaignId, dailyDate, campaignUpdate);
@@ -2158,7 +2157,8 @@ function createLegacyRuntime(app) {
             engagements: metricRow.engagements,
             linkClicks: metricRow.linkClicks,
             metaOrders: metricRow.metaOrders,
-            costPerMessage: metricRow.costPerMessage
+            costPerMessage: metricRow.costPerMessage,
+            metaExtra: metricRow.metaExtra || {}
           };
         });
       } catch (error) {
@@ -2208,7 +2208,8 @@ function createLegacyRuntime(app) {
           engagements: Number(metaRow.engagements || 0),
           linkClicks: Number(metaRow.linkClicks || 0),
           metaOrders: Number(metaRow.metaOrders || 0),
-          costPerMessage: Number(metaRow.costPerMessage || 0)
+          costPerMessage: Number(metaRow.costPerMessage || 0),
+          metaExtra: metaRow.metaExtra || existing.metaExtra
         });
         continue;
       }
@@ -2875,7 +2876,8 @@ function createLegacyRuntime(app) {
         const reach = getMetaReachFromInsight(insight);
         const engagements = getMetaEngagementsFromInsight(insight);
         const linkClicks = getMetaLinkClicksFromInsight(insight);
-        metricInsights.push({ ...insight, spend, impressions, reach, clicks, engagements, linkClicks });
+        const metaExtra = getMetaExtraMetricsFromInsight(insight);
+        metricInsights.push({ ...insight, spend, impressions, reach, clicks, engagements, linkClicks, metaExtra });
         campaignIds.add(String(insight.campaign_id));
       }
   
@@ -2897,6 +2899,7 @@ function createLegacyRuntime(app) {
           clicks: insight.clicks,
           engagements: insight.engagements,
           linkClicks: insight.linkClicks,
+          metaExtra: insight.metaExtra,
           messages: 0,
           costPerMessage: 0
         };
@@ -2947,7 +2950,8 @@ function createLegacyRuntime(app) {
       const reach = getMetaReachFromInsight(insight);
       const engagements = getMetaEngagementsFromInsight(insight);
       const linkClicks = getMetaLinkClicksFromInsight(insight);
-      metricInsights.push({ ...insight, spend, impressions, reach, clicks, engagements, linkClicks, messages, costPerMessage, metaOrders });
+      const metaExtra = getMetaExtraMetricsFromInsight(insight);
+      metricInsights.push({ ...insight, spend, impressions, reach, clicks, engagements, linkClicks, messages, costPerMessage, metaOrders, metaExtra });
       seenCampaignIds.add(String(insight.campaign_id));
     }
   
@@ -2964,7 +2968,7 @@ function createLegacyRuntime(app) {
     for (const insight of metricInsights) {
       const campaignId = String(insight.campaign_id);
       const actions = insight.actions || [];
-      const { spend, impressions, reach, clicks, engagements, linkClicks, messages, costPerMessage } = insight;
+      const { spend, impressions, reach, clicks, engagements, linkClicks, messages, costPerMessage, metaExtra } = insight;
       insightTotalSpend += spend;
       insightTotalMessages += messages;
       const meta = campaignMetaById.get(campaignId) || {};
@@ -2985,6 +2989,7 @@ function createLegacyRuntime(app) {
         messages,
         costPerMessage,
         metaOrders: insight.metaOrders || 0,
+        metaExtra,
         isScheduled: Boolean(existingCampaign.isScheduled),
         scheduledStartTime: existingCampaign.scheduledStartTime || '',
         scheduledStartTimeUtc: existingCampaign.scheduledStartTimeUtc,
@@ -3013,6 +3018,7 @@ function createLegacyRuntime(app) {
         reach,
         engagements,
         linkClicks,
+        metaExtra,
         isScheduled: Boolean(existingCampaign.isScheduled),
         scheduledStartTimeUtc: existingCampaign.scheduledStartTimeUtc,
         insights: {
@@ -3068,6 +3074,7 @@ function createLegacyRuntime(app) {
         reach: Number(storedCampaign.reach || 0),
         engagements: Number(storedCampaign.engagements || 0),
         linkClicks: Number(storedCampaign.linkClicks || 0),
+        metaExtra: storedCampaign.metaExtra,
         isScheduled: Boolean(storedCampaign.isScheduled),
         scheduledStartTimeUtc: storedCampaign.scheduledStartTimeUtc,
         insights: {
@@ -3352,7 +3359,6 @@ function createLegacyRuntime(app) {
   const todayCampaignSpendSyncRunning = {};
   let backgroundOrderSyncRunning = false;
   let isShuttingDown = false;
-  let sheetRefreshTimer = null;
   let purchaseOrderSheetRefreshTimer = null;
   let campaignDuplicateQueue = null;
   let campaignDuplicateWorker = null;
@@ -3501,53 +3507,21 @@ function createLegacyRuntime(app) {
   }
   
   async function processOrderSheetSyncJob(data = {}, onProgress = null) {
+    // Ten job giu nguyen (queue Redis cu) nhung don hang gio dong bo tu Pancake POS
     const { fromDate, toDate } = data;
-    if (!useSheetOrders()) {
-      if (onProgress) await onProgress({ state: 'active', fromDate, toDate, percent: 10, message: 'Dang dong bo don tu Pancake POS' });
-      const { received } = await syncRecentPosOrders();
-      const result = {
-        state: 'completed',
-        source: getOrderSourceName(),
-        fromDate,
-        toDate,
-        totalRows: received,
-        synced: received,
-        percent: 100,
-        cachedAt: new Date().toISOString(),
-        message: 'Da dong bo don tu Pancake POS'
-      };
-      if (onProgress) await onProgress(result);
-      return result;
-    }
-    if (onProgress) {
-      await onProgress({
-        state: 'active',
-        fromDate,
-        toDate,
-        percent: 10,
-        message: 'Dang tai Google Sheet'
-      });
-    }
-  
-    const rows = await fetchOrderSheetRows({ refresh: true });
-    const filteredRows = rows.filter(row => {
-      if (fromDate && row.dateKey < fromDate) return false;
-      if (toDate && row.dateKey > toDate) return false;
-      return true;
-    });
-  
+    if (onProgress) await onProgress({ state: 'active', fromDate, toDate, percent: 10, message: 'Dang dong bo don tu Pancake POS' });
+    const { received } = await syncRecentPosOrders();
     const result = {
       state: 'completed',
-      source: 'google_sheet',
+      source: getOrderSourceName(),
       fromDate,
       toDate,
-      totalRows: rows.length,
-      synced: filteredRows.length,
+      totalRows: received,
+      synced: received,
       percent: 100,
       cachedAt: new Date().toISOString(),
-      message: 'Da tai xong Google Sheet'
+      message: 'Da dong bo don tu Pancake POS'
     };
-  
     if (onProgress) await onProgress(result);
     return result;
   }
@@ -3836,7 +3810,6 @@ function createLegacyRuntime(app) {
       getOrderItemSku,
       getOrderItemQuantity,
       getOrderTagText,
-      useSheetOrders,
       normalizeSkuKey,
       normalizeStatusKey,
       buildOrderSkuStats,
@@ -3847,16 +3820,12 @@ function createLegacyRuntime(app) {
       classifyReturnStatus,
       classifyReturnAdNameBucket,
       RETURN_SUMMARY_BUCKETS,
-      fetchOrderSheetRows,
-      getOrderSheetPage,
-      getOrderSheetOrders,
       getOrderStatsCacheKey,
       ORDER_SKU_STATS_FIELDS,
       getOrderSourceName,
       getOrderDataVersion,
       syncRecentPosOrders,
       upsertPosOrders,
-      ordersSheetCache,
       orderStatsCache,
       configureFacebookToken,
       checkAndRefreshFacebookToken,
@@ -4164,9 +4133,7 @@ function createLegacyRuntime(app) {
       ShopeeAffCommissionReceipt.createIndexes(),
       Config.createIndexes(),
       ensureUserIndexes(),
-      FacebookToken.createIndexes(),
-      // Thieu index rowNumber -> moi lan luu ban sao Sheet (~130k dong upsert theo rowNumber) quet toan bang, khong chay xong
-      OrderSheetRow.createIndexes()
+      FacebookToken.createIndexes()
     ]);
     console.log('Application indexes ready');
   }
@@ -4255,53 +4222,6 @@ function createLegacyRuntime(app) {
     }
   }
 
-  function startSheetRefresh() {
-    let sheetRefreshRunning = false;
-    const sheetRefreshInitial = async () => {
-      if (!useSheetOrders()) return;
-      try {
-        if (ordersSheetCache.rateLimitedUntil > Date.now() && ordersSheetCache.rows?.length) {
-          console.warn(`Sheet Cache: skip startup refresh due to rate limit until ${new Date(ordersSheetCache.rateLimitedUntil).toISOString()}; using cached ${ordersSheetCache.rows.length} rows`);
-          return;
-        }
-        console.log('Sheet Cache: initializing order cache from Google Sheet...');
-        if (orderSheetSyncQueue) {
-          await orderSheetSyncQueue.add('sync-sheet', {}, { jobId: 'startup-order-sheet-sync' });
-        } else {
-          await fetchOrderSheetRows({ refresh: true });
-        }
-        console.log(`Sheet Cache: loaded ${ordersSheetCache.rows?.length || 0} order rows.`);
-      } catch (err) {
-        console.error('Sheet Cache: initial load failed:', err.message);
-      }
-    };
-    sheetRefreshInitial();
-
-    sheetRefreshTimer = setInterval(() => trackJob('order-sheet-refresh', async () => {
-      if (isShuttingDown || sheetRefreshRunning || !useSheetOrders()) return;
-      sheetRefreshRunning = true;
-      try {
-        if (ordersSheetCache.rateLimitedUntil > Date.now() && ordersSheetCache.rows?.length) {
-          console.warn(`Sheet Cache: skip refresh due to rate limit until ${new Date(ordersSheetCache.rateLimitedUntil).toISOString()}; using cached ${ordersSheetCache.rows.length} rows`);
-          return;
-        }
-        console.log('Sheet Cache: refreshing orders from Google Sheet...');
-        if (orderSheetSyncQueue) {
-          await orderSheetSyncQueue.add('sync-sheet', {}, {
-            jobId: `order-sheet-sync-${Math.floor(Date.now() / (60 * 1000))}`
-          });
-        } else {
-          await fetchOrderSheetRows({ refresh: true });
-        }
-        console.log(`Sheet Cache: refreshed ${ordersSheetCache.rows?.length || 0} rows.`);
-      } catch (err) {
-        console.error('Sheet Cache: refresh failed:', err.message);
-      } finally {
-        sheetRefreshRunning = false;
-      }
-    }), ORDER_SHEET_REFRESH_INTERVAL_MS);
-  }
-
   function startPurchaseOrderSheetRefresh() {
     let purchaseOrderSheetRefreshRunning = false;
     const runPurchaseOrderSheetSync = async () => {
@@ -4337,9 +4257,6 @@ function createLegacyRuntime(app) {
     for (const timer of Object.values(todayCampaignSpendSyncTimers)) {
       clearInterval(timer);
     }
-    if (sheetRefreshTimer) {
-      clearInterval(sheetRefreshTimer);
-    }
     if (purchaseOrderSheetRefreshTimer) {
       clearInterval(purchaseOrderSheetRefreshTimer);
     }
@@ -4371,29 +4288,13 @@ function createLegacyRuntime(app) {
     await waitForRuns;
   }
 
-  async function seedOrderSheetCache() {
-    if (ordersSheetCache.rows?.length) return;
-    try {
-      const dbRows = await loadOrderSheetRowsFromDb();
-      if (dbRows.length) {
-        ordersSheetCache.rows = dbRows;
-        ordersSheetCache.fetchedAt = Date.now();
-        console.log(`Sheet Cache: seeded ${dbRows.length} rows from MongoDB.`);
-      }
-    } catch (err) {
-      console.error('Sheet Cache: seed from MongoDB failed:', err.message);
-    }
-  }
-
   return {
     runStartupMaintenance,
     bootstrapFacebookToken: bootstrapFacebookTokenRuntime,
     startCronTasks,
     initializeQueues,
     resumeAutoAccounts,
-    startSheetRefresh,
     startPurchaseOrderSheetRefresh,
-    seedOrderSheetCache,
     shutdown: shutdownRuntime
   };
 

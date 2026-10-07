@@ -15,7 +15,7 @@ const formatShare = value => `${(Number(value || 0) * 100).toFixed(1).replace('.
 
 // Bieu do thanh ngang: ly do hoan (the POS) tren cac don da hoan / dang hoan.
 // % tinh tren so don hoan CO ghi ly do; don chua ghi ly do hien o dong mo ta.
-export default function ReturnReasonChart({ data, loading = false, source = '' }) {
+export default function ReturnReasonChart({ data, loading = false }) {
   const [groupKey, setGroupKey] = useState('total');
   const [hovered, setHovered] = useState(null);
   const [showTable, setShowTable] = useState(false);
@@ -35,15 +35,13 @@ export default function ReturnReasonChart({ data, loading = false, source = '' }
     return { returnCount: group.returnCount, noReason, withReason, rows, max };
   }, [data, groupKey]);
 
-  const isSheetSource = source === 'google_sheet';
-
   return (
     <div className="card section-gap return-reason-card">
       <div className="card-header return-reason-header">
         <div>
           <div className="card-title">Lý do hoàn của khách</div>
           <div className="return-reason-sub">
-            {view.returnCount > 0 && !isSheetSource ? (
+            {view.returnCount > 0 ? (
               <>
                 {formatNumber(view.withReason)} / {formatNumber(view.returnCount)} đơn hoàn có ghi lý do
                 {view.noReason > 0 && <> · {formatNumber(view.noReason)} đơn chưa ghi ({formatShare(view.noReason / view.returnCount)})</>}
@@ -76,8 +74,6 @@ export default function ReturnReasonChart({ data, loading = false, source = '' }
       <div className="return-reason-body">
         {loading && !data ? (
           <div className="empty"><span className="spin">...</span><p>Đang tải...</p></div>
-        ) : isSheetSource ? (
-          <div className="empty"><p>Lý do hoàn lấy từ thẻ đơn trên Pancake POS. Đang dùng Google Sheet (chưa tải xong lịch sử đơn POS hoặc chưa cấu hình API key POS) nên chưa có dữ liệu.</p></div>
         ) : view.rows.length === 0 ? (
           <div className="empty"><div className="ei">0</div><p>Chưa có đơn hoàn ghi lý do</p></div>
         ) : showTable ? (

@@ -259,7 +259,7 @@ export default function ReturnSummary() {
         </div>
       </div>
 
-      <ReturnReasonChart data={summary?.returnReasons} loading={loading} source={summary?.source?.orders} />
+      <ReturnReasonChart data={summary?.returnReasons} loading={loading} />
 
       <div className="card">
         <div className="card-header">

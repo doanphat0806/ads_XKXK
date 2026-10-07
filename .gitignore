@@ -7,3 +7,4 @@ tools/redis/
 tools/redis.zip
 scratch/
 check_order.js
+backups/

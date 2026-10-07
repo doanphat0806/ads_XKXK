@@ -20,6 +20,8 @@ const CampaignSchema = new mongoose.Schema({
   messages: { type: Number, default: 0 },
   costPerMessage: { type: Number, default: 0 },
   metaOrders: { type: Number, default: 0 },
+  // Chi so phu cua Meta (xem utils/metaExtraMetrics.js)
+  metaExtra: { type: mongoose.Schema.Types.Mixed },
   isScheduled: { type: Boolean, default: false },
   scheduledStartTime: { type: String, default: '' },
   scheduledStartTimeUtc: { type: Date },

@@ -4,7 +4,7 @@ const axios = require('axios');
 const Order = require('../models/Order');
 const PosOrderSyncState = require('../models/PosOrderSyncState');
 const { getAppConfig } = require('./configService');
-const { buildOrderSkuStats, buildOrderQuery, useSheetOrders, getOrderDataVersion } = require('./orderService');
+const { buildOrderSkuStats, buildOrderQuery, isPosRangeReady, getOrderDataVersion } = require('./orderService');
 const { getOrderDerivedCache, setOrderDerivedCache } = require('../utils/cacheManager');
 const { orderSourceState } = require('./orderSourceState');
 const { parseBoundedInt } = require('../utils/number');
@@ -355,7 +355,7 @@ async function ensureSyncStateShop() {
 }
 
 // Tai lich su don tu hom nay lui ve POS_BACKFILL_FROM, moi lan 1 tuan (theo ngay tao don).
-// backfillCursor = ngay som nhat da tai du; khoang ngay >= moc nay dung don POS ngay (useSheetOrders({ fromDate })),
+// backfillCursor = ngay som nhat da tai du; khoang ngay >= moc nay dung don POS ngay (isPosRangeReady({ fromDate })),
 // nen Dashboard hom nay / luat auto chuyen sang POS sau tuan dau tien thay vi cho tai het lich su.
 async function runPosBackfill() {
   if (backfillRunning) return;
@@ -488,7 +488,7 @@ async function startPosOrderSync() {
   // loi mang de vong dong bo moi phut tu thu lai.
   const config = await getAppConfig();
   if (!String(process.env.PANCAKE_API_KEY || config?.pancakeApiKey || '').trim()) {
-    console.warn('[pos-orders] chua cau hinh Pancake POS API key, van dung Google Sheet');
+    console.warn('[pos-orders] chua cau hinh Pancake POS API key, chi doc don da co trong MongoDB');
     return;
   }
 
@@ -499,7 +499,7 @@ async function startPosOrderSync() {
   orderSourceState.posLastSyncedAt = state.lastSyncedAt || null;
   console.log(`[pos-orders] nguon don: ${orderSourceState.posReady
     ? 'Pancake POS (MongoDB)'
-    : `dang tai lich su POS${orderSourceState.posCoveredFrom ? ` (POS tu ${orderSourceState.posCoveredFrom})` : ''}, ngay cu hon dung Google Sheet`}`);
+    : `dang tai lich su POS${orderSourceState.posCoveredFrom ? ` (POS tu ${orderSourceState.posCoveredFrom})` : ''}, ngay cu hon chua du don`}`);
 
   const tick = async () => {
     try {
@@ -545,7 +545,7 @@ async function getPosHourlySkuStats({ fromDate, toDate, fromHour = 0, toHour = 2
   };
 
   let rows;
-  if (!useSheetOrders({ fromDate })) {
+  if (isPosRangeReady({ fromDate })) {
     const cacheKey = `hourly-sku:${fromDate}:${toDate}:${fromHour}:${toHour}:${getOrderDataVersion({ fromDate })}`;
     const cached = getOrderDerivedCache(cacheKey);
     if (cached) return cached;

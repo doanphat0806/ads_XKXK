@@ -66,10 +66,11 @@ const PORT = process.env.PORT || 3000;
 
 mongoose.connect(MONGO_URI).then(async () => {
   console.log('MongoDB connected');
+  // Don hang lay tu Pancake POS (chi doc config + trang thai trong DB, khong cho mang)
   try {
-    await legacyRuntime.seedOrderSheetCache();
+    await startPosOrderSync();
   } catch (error) {
-    console.error(`Order sheet cache seed failed: ${error.message}`);
+    console.error(`[pos-orders] khoi dong dong bo loi: ${error.message}`);
   }
   app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
 
@@ -82,12 +83,6 @@ mongoose.connect(MONGO_URI).then(async () => {
 
     await legacyRuntime.bootstrapFacebookToken();
     await legacyRuntime.initializeQueues();
-    try {
-      await startPosOrderSync();
-    } catch (error) {
-      console.error(`[pos-orders] khoi dong dong bo loi, van dung Google Sheet: ${error.message}`);
-    }
-    legacyRuntime.startSheetRefresh();
     legacyRuntime.startCronTasks();
     await legacyRuntime.resumeAutoAccounts();
   })().catch(error => {

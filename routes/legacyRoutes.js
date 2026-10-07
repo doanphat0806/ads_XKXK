@@ -2,6 +2,7 @@
 // This keeps the current behavior while server.js is split into route modules.
 const registerPageRoutes = require('./pageRoutes');
 const { trackJob } = require('../utils/perfMonitor');
+const { buildMetaExtraGroupFields, buildMetaExtraProjectField, compactMetaExtraRows } = require('../utils/metaExtraMetrics');
 
 function registerLegacyRoutes(app, deps = {}) {
   const routeDeps = Object.create(deps);
@@ -93,13 +94,7 @@ app.get('/api/stats', async (req, res) => {
       totalOrders = 0;
       ordersError = '';
       try {
-      if (useSheetOrders({ fromDate: fDate })) {
-        const todayRows = await getOrderSheetOrders({ fromDate: fDate, toDate: tDate, limit: 5000 });
-        // Chỉ đếm dòng có ID2 (orderId) không trống
-        totalOrders = todayRows.filter(o => o.orderId && String(o.orderId).trim() !== '').length;
-      } else {
         totalOrders = await Order.countDocuments(buildOrderQuery({ fromDate: fDate, toDate: tDate }));
-      }
       } catch (error) {
         ordersError = error.message;
       }
@@ -1621,7 +1616,8 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           engagements: { $sum: '$engagements' },
           linkClicks: { $sum: '$linkClicks' },
           costPerMessage: { $last: '$costPerMessage' },
-          metaOrders: { $sum: '$metaOrders' }
+          metaOrders: { $sum: '$metaOrders' },
+          ...buildMetaExtraGroupFields()
         }
       },
       {
@@ -1645,11 +1641,13 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
           engagements: 1,
           linkClicks: 1,
           metaOrders: 1,
-          costPerMessage: 1
+          costPerMessage: 1,
+          metaExtra: buildMetaExtraProjectField()
         }
       },
       { $sort: { spend: -1 } }
     ]);
+    compactMetaExtraRows(campaigns);
     let result = campaigns;
     if (includeScheduledNoSpend) {
       try {
@@ -1762,7 +1760,8 @@ app.get('/api/campaigns/today', async (req, res) => {
           engagements: { $sum: '$engagements' },
           linkClicks: { $sum: '$linkClicks' },
           costPerMessage: { $last: '$costPerMessage' },
-          metaOrders: { $sum: '$metaOrders' }
+          metaOrders: { $sum: '$metaOrders' },
+          ...buildMetaExtraGroupFields()
         }
       },
       {
@@ -1786,11 +1785,13 @@ app.get('/api/campaigns/today', async (req, res) => {
           engagements: 1,
           linkClicks: 1,
           metaOrders: 1,
-          costPerMessage: 1
+          costPerMessage: 1,
+          metaExtra: buildMetaExtraProjectField()
         }
       },
       { $sort: { spend: -1 } }
     ]);
+    compactMetaExtraRows(campaigns);
 
     let result = campaigns.map(campaign => ({
       ...campaign,
@@ -2189,7 +2190,7 @@ function toOrderSheetSyncJobPayload(job = {}) {
   return {
     id: job.id || '',
     state: job.state || 'unknown',
-    source: job.source || 'google_sheet',
+    source: job.source || 'pancake_pos',
     fromDate: job.fromDate || '',
     toDate: job.toDate || '',
     totalRows: Number(job.totalRows || 0),
@@ -2211,7 +2212,7 @@ async function runOrderSheetSyncJob(jobId, { fromDate = '', toDate = '' } = {}) 
     setOrderSheetSyncJob(jobId, {
       state: 'active',
       percent: 10,
-      message: 'Dang tai Google Sheet'
+      message: 'Dang dong bo don tu Pancake POS'
     });
 
     const result = await processOrderSheetSyncJob({ fromDate, toDate }, progress => {
@@ -2950,21 +2951,6 @@ app.get('/api/orders', async (req, res) => {
     const limit = parseBoundedInt(req.query.limit, 100, 1, 1000);
     const wantsPaged = req.query.page !== undefined || req.query.limit !== undefined;
 
-    if (useSheetOrders({ fromDate })) {
-      if (wantsPaged) {
-        const data = await getOrderSheetPage({ fromDate, toDate, search, page, limit });
-        res.json({
-          ok: true,
-          source: 'google_sheet',
-          ...data
-        });
-        return;
-      }
-      const orders = await getOrderSheetOrders({ fromDate, toDate, search });
-      res.json(orders);
-      return;
-    }
-
     const query = buildOrderQuery({ fromDate, toDate });
     if (search) {
       const searchRegex = escapeRegExp(search);
@@ -3064,9 +3050,7 @@ app.get('/api/orders/sku-counts', async (req, res) => {
     let pending = orderSkuStatsInFlight.get(cacheKey);
     if (!pending) {
       pending = (async () => {
-        const allOrders = useSheetOrders({ fromDate })
-          ? await getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
-          : await Order.find(buildOrderQuery({ fromDate, toDate })).select(ORDER_SKU_STATS_FIELDS).lean();
+        const allOrders = await Order.find(buildOrderQuery({ fromDate, toDate })).select(ORDER_SKU_STATS_FIELDS).lean();
         const stats = buildOrderSkuStats(allOrders);
         if (cacheKey) {
           orderStatsCache.set(cacheKey, stats);
@@ -3700,13 +3684,11 @@ async function buildReturnSummaryPayload({ accountFilter, provider, fromDate, to
     return result;
   });
   const [orderRows, campaignRows] = await Promise.all([
-    timed('orders', useSheetOrders({ fromDate })
-      ? getOrderSheetOrders({ fromDate, toDate, limit: 200000, refresh })
-      // Bo cac truong POS khong dung cho Tong hoan (items van can cho ti le hoan theo SP)
-      : Order.find(buildOrderQuery({ fromDate, toDate }))
-        .select('-customerName -totalPrice -rawData.ad_id -rawData.ads_source -rawData.page_id -rawData.post_id -rawData.marketer -rawData.total_price -rawData.cod -rawData.inserted_at -rawData.updated_at -rawData.pos_status_name')
-        .limit(200000)
-        .lean()),
+    // Bo cac truong POS khong dung cho Tong hoan (items van can cho ti le hoan theo SP)
+    timed('orders', Order.find(buildOrderQuery({ fromDate, toDate }))
+      .select('-customerName -totalPrice -rawData.ad_id -rawData.ads_source -rawData.page_id -rawData.post_id -rawData.marketer -rawData.total_price -rawData.cod -rawData.inserted_at -rawData.updated_at -rawData.pos_status_name')
+      .limit(200000)
+      .lean()),
     timed('campaigns', accountIds.length ? Campaign.aggregate([
       {
         $match: campaignMatch
@@ -3847,13 +3829,11 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
     const cachedDealStopRows = getOrderDerivedCache(dealStopRowsCacheKey);
 
     const [orderRows, campaignRows, purchasePlacedQtyByCode] = await Promise.all([
-      cachedDealStopRows ? Promise.resolve(null) : useSheetOrders({ fromDate })
-        ? getOrderSheetOrders({ fromDate, toDate, limit: 200000 })
-        : Order.find(buildOrderQuery({ fromDate, toDate }))
-          // Chi truong buildDealStopRows doc (khong lay ca rawData): lich su nhe ~4 lan
-          .select(`${ORDER_SKU_STATS_FIELDS} createdAt rawData.rowNumber rawData.tags rawData.sheetColumns.col13`)
-          .limit(200000)
-          .lean(),
+      cachedDealStopRows ? Promise.resolve(null) : Order.find(buildOrderQuery({ fromDate, toDate }))
+        // Chi truong buildDealStopRows doc (khong lay ca rawData): lich su nhe ~4 lan
+        .select(`${ORDER_SKU_STATS_FIELDS} createdAt rawData.rowNumber rawData.tags rawData.sheetColumns.col13`)
+        .limit(200000)
+        .lean(),
       cachedDealStopRows ? Promise.resolve(null) : cachedCampaignRows || (accountIds.length ? Campaign.aggregate([
         {
           $match: campaignMatch
@@ -3904,7 +3884,7 @@ app.get('/api/orders/deal-stop-rows', async (req, res) => {
   }
 });
 
-// ── Đồng bộ đơn hàng từ Google Sheet ──
+// ── Don nhap hang (Google Sheet Data) ──
 
 app.get('/api/data-purchase-orders', async (req, res) => {
   try {
@@ -4669,13 +4649,13 @@ app.post('/api/orders/sync', async (req, res) => {
       const job = {
         id: jobId,
         state: 'pending',
-        source: 'google_sheet',
+        source: getOrderSourceName(),
         fromDate: fromDate || '',
         toDate: toDate || '',
         totalRows: 0,
         synced: 0,
         percent: 0,
-        message: 'Dang cho tai Google Sheet',
+        message: 'Dang cho dong bo don tu Pancake POS',
         createdAt: now,
         updatedAt: now
       };
@@ -4696,22 +4676,10 @@ app.post('/api/orders/sync', async (req, res) => {
       });
     }
 
-    if (!useSheetOrders()) {
-      const { received } = await syncRecentPosOrders();
-      return res.json({ success: true, synced: received, source: getOrderSourceName(), cachedAt: new Date().toISOString() });
-    }
-
-    const rows = await fetchOrderSheetRows({ refresh: true });
-    const orders = rows
-      .filter(row => {
-        if (fromDate && row.dateKey < fromDate) return false;
-        if (toDate && row.dateKey > toDate) return false;
-        return true;
-      })
-      .map(({ dateKey, ...order }) => order);
-    res.json({ success: true, synced: orders.length, source: 'google_sheet', cachedAt: new Date().toISOString() });
+    const { received } = await syncRecentPosOrders();
+    res.json({ success: true, synced: received, source: getOrderSourceName(), cachedAt: new Date().toISOString() });
   } catch (error) {
-    console.error('Lỗi tải đơn từ Google Sheet:', error.message);
+    console.error('Lỗi đồng bộ đơn từ Pancake POS:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
@@ -4737,7 +4705,7 @@ app.get('/api/orders/sync/:jobId', async (req, res) => {
     const payload = {
       id: String(job.id),
       state: failedJob ? 'failed' : (returnvalue.state || progress.state || state),
-      source: returnvalue.source || progress.source || 'google_sheet',
+      source: returnvalue.source || progress.source || 'pancake_pos',
       fromDate: returnvalue.fromDate || progress.fromDate || job.data.fromDate || '',
       toDate: returnvalue.toDate || progress.toDate || job.data.toDate || '',
       totalRows: returnvalue.totalRows || progress.totalRows || 0,

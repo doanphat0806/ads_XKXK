@@ -4,6 +4,9 @@ import { formatVND, formatNumber, todayString, dateTimeString, api, cachedApi, r
 import DateRangePicker from '../components/DateRangePicker';
 import { toast } from 'react-toastify';
 import { loadXlsx } from '../utils/loadXlsx';
+import ColumnSettingsModal from '../components/ColumnSettingsModal';
+import ColumnPresetMenu from '../components/ColumnPresetMenu';
+import { META_EXTRA_COLUMNS, META_EXTRA_COLUMN_BY_ID } from '../utils/metaExtraColumns';
 
 const toText = (value, fallback = '-') => {
   if (value === null || value === undefined || value === '') return fallback;
@@ -70,41 +73,59 @@ const ORDER_REFRESH_MS = 10000;
 const HOURLY_REFRESH_MS = 2 * 60 * 1000;
 const DASHBOARD_HIDDEN_COLUMNS_KEY = 'dashboard:hiddenColumns';
 const DASHBOARD_COLUMN_ORDER_KEY = 'dashboard:columnOrder';
+const DASHBOARD_COLUMN_PRESETS_KEY = 'dashboard:columnPresets';
+const DASHBOARD_ACTIVE_PRESET_KEY = 'dashboard:activeColumnPreset';
 const DASHBOARD_COLUMNS = [
-  { id: 'duplicateCount', label: 'Trùng' },
-  { id: 'createdTime', label: 'Ngày tạo' },
-  { id: 'toggle', label: 'Tắt/Bật' },
-  { id: 'account', label: 'Tên TKQC' },
-  { id: 'status', label: 'Trạng thái' },
-  { id: 'orderCount', label: 'Tổng đơn', ordersOnly: true },
-  { id: 'metaOrders', label: 'Đơn Meta', ordersOnly: true },
-  { id: 'messages', label: 'Tin nhắn / Click' },
-  { id: 'costPerOrder', label: 'CPO', ordersOnly: true },
-  { id: 'spend', label: 'Chi tiêu' },
-  { id: 'budget', label: 'Ngân sách' },
-  { id: 'returnRate', label: 'Tỉ lệ hoàn', ordersOnly: true },
-  { id: 'impressions', label: 'Hiển thị' },
-  { id: 'reach', label: 'Tiếp cận' },
-  { id: 'engagements', label: 'Tương tác' },
-  { id: 'costPerClick', label: 'CPC' },
-  { id: 'costPerMille', label: 'CPM' },
-  { id: 'ctr', label: 'CTR' },
-  { id: 'linkClicks', label: 'Click liên kết' },
-  { id: 'costPerLinkClick', label: 'CPC liên kết' },
-  { id: 'frequency', label: 'Tần suất' },
-  { id: 'costPerReach', label: 'CPP (1.000 tiếp cận)' },
-  { id: 'bidAmount', label: 'Giá bid' }
+  { id: 'duplicateCount', label: 'Trùng', group: 'settings' },
+  { id: 'createdTime', label: 'Ngày tạo', group: 'settings' },
+  { id: 'toggle', label: 'Tắt/Bật', group: 'settings' },
+  { id: 'account', label: 'Tên TKQC', group: 'settings' },
+  { id: 'status', label: 'Trạng thái', group: 'settings' },
+  { id: 'orderCount', label: 'Tổng đơn', group: 'conversion', ordersOnly: true },
+  { id: 'metaOrders', label: 'Đơn Meta', group: 'conversion', ordersOnly: true },
+  { id: 'messages', label: 'Tin nhắn / Click', group: 'conversion' },
+  { id: 'costPerOrder', label: 'CPO', group: 'conversion', ordersOnly: true },
+  { id: 'spend', label: 'Chi tiêu', group: 'performance' },
+  { id: 'budget', label: 'Ngân sách', group: 'settings' },
+  { id: 'returnRate', label: 'Tỉ lệ hoàn', group: 'conversion', ordersOnly: true },
+  { id: 'impressions', label: 'Hiển thị', group: 'performance' },
+  { id: 'reach', label: 'Tiếp cận', group: 'performance' },
+  { id: 'engagements', label: 'Tương tác', group: 'engagement' },
+  { id: 'costPerClick', label: 'CPC', group: 'engagement' },
+  { id: 'costPerMille', label: 'CPM', group: 'performance' },
+  { id: 'ctr', label: 'CTR', group: 'engagement' },
+  { id: 'linkClicks', label: 'Click liên kết', group: 'engagement' },
+  { id: 'costPerLinkClick', label: 'CPC liên kết', group: 'engagement' },
+  { id: 'frequency', label: 'Tần suất', group: 'performance' },
+  { id: 'costPerReach', label: 'CPP (1.000 tiếp cận)', group: 'performance' },
+  { id: 'bidAmount', label: 'Giá bid', group: 'settings' },
+  ...META_EXTRA_COLUMNS.map(({ id, label, group }) => ({ id, label, group, defaultHidden: true }))
 ];
+const DEFAULT_HIDDEN_COLUMN_IDS = DASHBOARD_COLUMNS.filter(column => column.defaultHidden).map(column => column.id);
+
+// Cot mac dinh an ma nguoi dung chua tung thay (khong co trong thu tu da luu) -> an,
+// tranh viec bang tu dung hien them hang chuc cot moi.
+const withUnseenColumnsHidden = (hiddenIds = [], knownOrder = []) => {
+  const known = new Set(Array.isArray(knownOrder) ? knownOrder : []);
+  return new Set([...hiddenIds, ...DEFAULT_HIDDEN_COLUMN_IDS.filter(id => !known.has(id))]);
+};
 
 const readHiddenColumns = () => {
   try {
     const saved = JSON.parse(localStorage.getItem(DASHBOARD_HIDDEN_COLUMNS_KEY) || '[]');
-    return new Set(Array.isArray(saved) ? saved : []);
+    const savedOrder = JSON.parse(localStorage.getItem(DASHBOARD_COLUMN_ORDER_KEY) || '[]');
+    return withUnseenColumnsHidden(Array.isArray(saved) ? saved : [], savedOrder);
   } catch {
-    return new Set();
+    return new Set(DEFAULT_HIDDEN_COLUMN_IDS);
   }
 };
 
+const DASHBOARD_COLUMN_GROUPS = [
+  { id: 'settings', label: 'Cài đặt' },
+  { id: 'conversion', label: 'Chuyển đổi' },
+  { id: 'performance', label: 'Hiệu quả' },
+  { id: 'engagement', label: 'Tương tác' }
+];
 const DEFAULT_COLUMN_ORDER = DASHBOARD_COLUMNS.map(column => column.id);
 
 // Thu tu da luu; bo id khong con ton tai, cot moi them sau nay (chua co trong ban luu) noi vao cuoi
@@ -118,7 +139,34 @@ const readColumnOrder = () => {
   }
 };
 
-const DASHBOARD_METRIC_SORT_FIELDS = new Set(['impressions', 'reach', 'engagements', 'costPerClick', 'costPerMille', 'ctr', 'linkClicks', 'costPerLinkClick', 'frequency', 'costPerReach', 'bidAmount']);
+// Phuong an cot da luu: [{ name, order, hidden: [] }]
+const readColumnPresets = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DASHBOARD_COLUMN_PRESETS_KEY) || '[]');
+    return Array.isArray(saved) ? saved.filter(preset => preset && typeof preset.name === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
+const readActivePreset = () => {
+  try {
+    return localStorage.getItem(DASHBOARD_ACTIVE_PRESET_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+
+const DASHBOARD_METRIC_SORT_FIELDS = new Set([
+  'impressions', 'reach', 'engagements', 'costPerClick', 'costPerMille', 'ctr', 'linkClicks', 'costPerLinkClick', 'frequency', 'costPerReach', 'bidAmount',
+  ...META_EXTRA_COLUMNS.map(column => column.id)
+]);
+const formatMetaExtraValue = (value, format) => {
+  if (value === null || value === undefined) return '-';
+  if (format === 'vnd') return value > 0 ? formatVND(value) : '-';
+  if (format === 'percent') return value > 0 ? formatPercent(value) : '-';
+  return formatNumber(Math.round(value));
+};
 const EMPTY_RETURN_STATS = { returned: 0, returning: 0, received: 0, denominator: 0, rate: 0 };
 
 const buildStatsFromCampaigns = (campaigns = [], isShopee = false) => {
@@ -311,7 +359,12 @@ const CampaignRow = React.memo(function CampaignRow({
         )}
         <div style={{ fontSize: '10px', color: 'var(--muted2)' }}>{campaign.campaignId}</div>
       </td>
-      {visibleColumnIds.map(id => cells[id]?.())}
+      {visibleColumnIds.map(id => {
+        if (cells[id]) return cells[id]();
+        const extraColumn = META_EXTRA_COLUMN_BY_ID.get(id);
+        if (!extraColumn) return null;
+        return <td key={id} className="text-right mono-sm">{formatMetaExtraValue(campaign[id], extraColumn.format)}</td>;
+      })}
     </tr>
   );
 });
@@ -361,10 +414,8 @@ export default function Dashboard() {
   const [disablingDuplicates, setDisablingDuplicates] = useState(false);
   const [exportingExcel, setExportingExcel] = useState(false);
   const [hiddenColumns, setHiddenColumns] = useState(readHiddenColumns);
-  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
-  const columnMenuRef = useRef(null);
+  const [columnModalOpen, setColumnModalOpen] = useState(false);
   const availableColumns = useMemo(() => DASHBOARD_COLUMNS.filter(column => showOrders || !column.ordersOnly), [showOrders]);
-  const hiddenColumnCount = availableColumns.filter(column => hiddenColumns.has(column.id)).length;
   const updateHiddenColumns = (next) => {
     setHiddenColumns(next);
     try {
@@ -373,14 +424,7 @@ export default function Dashboard() {
       // localStorage khong kha dung -> chi giu trong phien hien tai
     }
   };
-  const toggleColumn = (id) => {
-    const next = new Set(hiddenColumns);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    updateHiddenColumns(next);
-  };
   const [columnOrder, setColumnOrder] = useState(readColumnOrder);
-  const [draggingColumnId, setDraggingColumnId] = useState('');
-  const [dragOverColumnId, setDragOverColumnId] = useState('');
   const updateColumnOrder = (next) => {
     setColumnOrder(next);
     try {
@@ -388,15 +432,6 @@ export default function Dashboard() {
     } catch {
       // localStorage khong kha dung -> chi giu trong phien hien tai
     }
-  };
-  // Dua cot fromId vao vi tri cua toId (keo xuong thi nam sau toId, keo len thi nam truoc)
-  const moveColumn = (fromId, toId) => {
-    if (!fromId || !toId || fromId === toId) return;
-    const next = columnOrder.filter(id => id !== fromId);
-    const fromIndex = columnOrder.indexOf(fromId);
-    const toIndex = next.indexOf(toId);
-    next.splice(fromIndex <= toIndex ? toIndex + 1 : toIndex, 0, fromId);
-    updateColumnOrder(next);
   };
   const orderedMenuColumns = useMemo(() => {
     const byId = new Map(availableColumns.map(column => [column.id, column]));
@@ -406,22 +441,52 @@ export default function Dashboard() {
     () => orderedMenuColumns.filter(column => !hiddenColumns.has(column.id)).map(column => column.id),
     [orderedMenuColumns, hiddenColumns]
   );
-  const isDefaultColumnOrder = columnOrder.every((id, index) => id === DEFAULT_COLUMN_ORDER[index]);
-  // Len/xuong 1 bac trong cac cot dang co tren menu (bo qua cot an theo provider, vd cot don voi Shopee)
-  const shiftColumn = (id, step) => {
-    const ids = orderedMenuColumns.map(column => column.id);
-    const target = ids[ids.indexOf(id) + step];
-    if (target) moveColumn(id, target);
+  const [columnPresets, setColumnPresets] = useState(readColumnPresets);
+  const [activePreset, setActivePreset] = useState(readActivePreset);
+  const updateColumnPresets = (next) => {
+    setColumnPresets(next);
+    try {
+      localStorage.setItem(DASHBOARD_COLUMN_PRESETS_KEY, JSON.stringify(next));
+    } catch {
+      // localStorage khong kha dung -> chi giu trong phien hien tai
+    }
   };
-
-  useEffect(() => {
-    if (!columnMenuOpen) return undefined;
-    const handleClickOutside = (event) => {
-      if (columnMenuRef.current && !columnMenuRef.current.contains(event.target)) setColumnMenuOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [columnMenuOpen]);
+  const updateActivePreset = (name) => {
+    setActivePreset(name);
+    try {
+      localStorage.setItem(DASHBOARD_ACTIVE_PRESET_KEY, name);
+    } catch {
+      // localStorage khong kha dung -> chi giu trong phien hien tai
+    }
+  };
+  const applyColumnSettings = ({ order, hidden }) => {
+    updateColumnOrder(order);
+    updateHiddenColumns(hidden);
+    updateActivePreset('');
+    setColumnModalOpen(false);
+  };
+  // Luu (hoac ghi de neu trung ten) phuong an roi ap dung luon
+  const saveColumnPreset = (name, { order, hidden }) => {
+    const preset = { name, order, hidden: [...hidden] };
+    const exists = columnPresets.some(item => item.name === name);
+    updateColumnPresets(exists ? columnPresets.map(item => (item.name === name ? preset : item)) : [...columnPresets, preset]);
+    updateColumnOrder(order);
+    updateHiddenColumns(new Set(hidden));
+    updateActivePreset(name);
+    setColumnModalOpen(false);
+  };
+  const selectColumnPreset = (preset) => {
+    const known = (preset.order || []).filter(id => DEFAULT_COLUMN_ORDER.includes(id));
+    updateColumnOrder([...new Set([...known, ...DEFAULT_COLUMN_ORDER])]);
+    updateHiddenColumns(withUnseenColumnsHidden(preset.hidden || [], preset.order));
+    updateActivePreset(preset.name);
+  };
+  const deleteColumnPreset = (name) => {
+    updateColumnPresets(columnPresets.filter(item => item.name !== name));
+    if (activePreset === name) updateActivePreset('');
+  };
+  // On dinh tham chieu: modal dang ky Esc / khoa cuon theo onClose, Dashboard render lai moi ~10s
+  const closeColumnModal = useCallback(() => setColumnModalOpen(false), []);
   const [renderLimit, setRenderLimit] = useState(DASHBOARD_INITIAL_RENDER_ROWS);
   const deferredCampaignSearch = useDeferredValue(campaignSearch);
   const [isSortPending, startSortTransition] = useTransition();
@@ -772,6 +837,8 @@ export default function Dashboard() {
         costPerMessage: messages > 0 ? spend / messages : 0,
         reach: 0,
         reachUnavailable: true,
+        // Meta khong co chi so phu theo gio
+        metaExtra: null,
         metaOrders: sumRange(hourlyData.ordersByCampaign?.[id])
       };
     });
@@ -788,6 +855,12 @@ export default function Dashboard() {
         );
       });
   }, [hourAdjustedCampaigns, deferredCampaignSearch]);
+
+  // Chi tinh cot chi so phu dang hien (sap xep chi theo cot dang hien)
+  const visibleExtraColumns = useMemo(
+    () => visibleColumnIds.map(id => META_EXTRA_COLUMN_BY_ID.get(id)).filter(Boolean),
+    [visibleColumnIds]
+  );
 
   const enrichedCampaigns = useMemo(() => {
     return filteredCampaigns.map(campaign => {
@@ -807,8 +880,11 @@ export default function Dashboard() {
       const costPerLinkClick = linkClicks > 0 ? spend / linkClicks : 0;
       const frequency = reach > 0 ? impressions / reach : 0;
       const costPerReach = reach > 0 ? (spend / reach) * 1000 : 0;
+      const extraValues = {};
+      for (const column of visibleExtraColumns) extraValues[column.id] = column.value(campaign);
       return {
         ...campaign,
+        ...extraValues,
         orderCount,
         returnStats,
         returnRate: returnStats.rate || 0,
@@ -824,7 +900,7 @@ export default function Dashboard() {
         metaOrders
       };
     });
-  }, [filteredCampaigns, getOrderCountForCampaign, getReturnStatsForCampaign, showOrders]);
+  }, [filteredCampaigns, getOrderCountForCampaign, getReturnStatsForCampaign, showOrders, visibleExtraColumns]);
 
   const processedCampaigns = useMemo(() => {
     const duplicateCounts = enrichedCampaigns.reduce((counts, campaign) => {
@@ -1035,50 +1111,56 @@ export default function Dashboard() {
     setExportingExcel(true);
     try {
       const XLSX = await loadXlsx();
+      // Chi xuat cac cot dang hien (theo phuong an / tuy chinh cot), dung thu tu tren bang.
+      // Moi cot -> danh sach [tieu de, gia tri]; cot "Tat/Bat" khong co du lieu de xuat.
+      const percent = (value) => Number(((value || 0) * 100).toFixed(2));
+      const exportCells = {
+        duplicateCount: c => [['Trùng', c.sameDayDuplicateCount || 1]],
+        createdTime: c => [['Ngày tạo', formatDateTime(c.createdTime || c.created_time)]],
+        account: c => [['Tên TKQC', c.accountId?.name || ''], ['ID TKQC', c.accountId?.adAccountId || '']],
+        status: c => [['Trạng thái', isCampaignActiveStatus(c.status) ? 'ACTIVE' : 'PAUSE']],
+        orderCount: c => [['Tổng đơn', c.orderCount || 0]],
+        metaOrders: c => [['Đơn Meta', c.metaOrders || 0]],
+        messages: c => (isShopee
+          ? [['Lượt click', Number(c.clicks || 0)], ['Giá/click', Math.round(c.costPerClick || 0)]]
+          : [['Tin nhắn', Number(c.messages || 0)], ['Giá/TN', Math.round(c.costPerMessage || 0)]]),
+        costPerOrder: c => [['CPO', Math.round(c.costPerOrder || 0)]],
+        spend: c => [['Chi tiêu', Math.round(Number(c.spend || 0))]],
+        budget: c => [['Ngân sách', Number(c.dailyBudget || c.lifetimeBudget || 0)]],
+        returnRate: c => [['Tỉ lệ hoàn (%)', percent(c.returnRate)]],
+        impressions: c => [['Hiển thị', Number(c.impressions || 0)]],
+        reach: c => [['Tiếp cận', c.reachUnavailable ? '' : Number(c.reach || 0)]],
+        engagements: c => [['Tương tác', Number(c.engagements || 0)]],
+        costPerClick: c => [['CPC', Math.round(c.costPerClick || 0)]],
+        costPerMille: c => [['CPM', Math.round(c.costPerMille || 0)]],
+        ctr: c => [['CTR (%)', percent(c.ctr)]],
+        linkClicks: c => [['Click liên kết', c.linkClicks || 0]],
+        costPerLinkClick: c => [['CPC liên kết', Math.round(c.costPerLinkClick || 0)]],
+        frequency: c => [['Tần suất', Number((c.frequency || 0).toFixed(2))]],
+        costPerReach: c => [['CPP', Math.round(c.costPerReach || 0)]],
+        bidAmount: c => [['Giá bid', Number(c.bidAmount || 0)]]
+      };
+      const getExportCells = (id, campaign) => {
+        if (exportCells[id]) return exportCells[id](campaign);
+        const extraColumn = META_EXTRA_COLUMN_BY_ID.get(id);
+        if (!extraColumn) return [];
+        const value = campaign[id];
+        const label = extraColumn.format === 'percent' ? `${extraColumn.label} (%)` : extraColumn.label;
+        if (value === null || value === undefined) return [[label, '']];
+        return [[label, extraColumn.format === 'percent' ? percent(value) : Math.round(value)]];
+      };
       const rows = processedCampaigns.map(campaign => {
         const row = {
-          'Ten Campaign': toText(campaign.name),
-          'ID Campaign': campaign.campaignId || '',
-          'Ngay tao': formatDateTime(campaign.createdTime || campaign.created_time),
-          'Ten TKQC': campaign.accountId?.name || '',
-          'ID TKQC': campaign.accountId?.adAccountId || '',
-          'Trang thai': isCampaignActiveStatus(campaign.status) ? 'ACTIVE' : 'PAUSE'
+          'Tên Campaign': toText(campaign.name),
+          'ID Campaign': campaign.campaignId || ''
         };
-        if (showOrders) {
-          row['Tong don'] = campaign.orderCount || 0;
-          row['Don Meta'] = campaign.metaOrders || 0;
+        for (const id of visibleColumnIds) {
+          for (const [label, value] of getExportCells(id, campaign)) row[label] = value;
         }
-        if (isShopee) {
-          row['Luot click'] = Number(campaign.clicks || 0);
-          row['Gia/click'] = Math.round(campaign.costPerClick || 0);
-        } else {
-          row['Tin nhan'] = Number(campaign.messages || 0);
-          row['Gia/TN'] = Math.round(campaign.costPerMessage || 0);
-        }
-        if (showOrders) row['CPO'] = Math.round(campaign.costPerOrder || 0);
-        Object.assign(row, {
-          'Chi tieu': Math.round(Number(campaign.spend || 0)),
-          'Ngan sach': Number(campaign.dailyBudget || campaign.lifetimeBudget || 0)
-        });
-        if (showOrders) row['Ti le hoan (%)'] = Number(((campaign.returnRate || 0) * 100).toFixed(2));
-        Object.assign(row, {
-          'Hien thi': Number(campaign.impressions || 0),
-          'Tiep can': campaign.reachUnavailable ? '' : Number(campaign.reach || 0),
-          'Tuong tac': Number(campaign.engagements || 0),
-          'Clicks': Number(campaign.clicks || 0),
-          'CPC': Math.round(campaign.costPerClick || 0),
-          'CPM': Math.round(campaign.costPerMille || 0),
-          'CTR (%)': Number(((campaign.ctr || 0) * 100).toFixed(2)),
-          'Click lien ket': campaign.linkClicks || 0,
-          'CPC lien ket': Math.round(campaign.costPerLinkClick || 0),
-          'Tan suat': Number((campaign.frequency || 0).toFixed(2)),
-          'CPP': Math.round(campaign.costPerReach || 0),
-          'Gia bid': Number(campaign.bidAmount || 0)
-        });
         return row;
       });
       const worksheet = XLSX.utils.json_to_sheet(rows);
-      worksheet['!cols'] = Object.keys(rows[0]).map(key => ({ wch: key === 'Ten Campaign' ? 40 : Math.max(12, key.length + 2) }));
+      worksheet['!cols'] = Object.keys(rows[0]).map(key => ({ wch: key === 'Tên Campaign' ? 40 : Math.max(12, key.length + 2) }));
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Dashboard');
       const range = reportFromDate === reportToDate ? reportFromDate : `${reportFromDate}_${reportToDate}`;
@@ -1114,7 +1196,8 @@ export default function Dashboard() {
     costPerLinkClick: { label: 'CPC liên kết', className: 'text-right', sortField: 'costPerLinkClick' },
     frequency: { label: 'Tần suất', className: 'text-right', sortField: 'frequency' },
     costPerReach: { label: 'CPP', className: 'text-right', sortField: 'costPerReach' },
-    bidAmount: { label: 'Giá bid', className: 'text-right', sortField: 'bidAmount' }
+    bidAmount: { label: 'Giá bid', className: 'text-right', sortField: 'bidAmount' },
+    ...Object.fromEntries(META_EXTRA_COLUMNS.map(column => [column.id, { label: column.label, className: 'text-right', sortField: column.id }]))
   };
   const renderColumnHeader = (id) => {
     const header = COLUMN_HEADERS[id];
@@ -1154,7 +1237,7 @@ export default function Dashboard() {
           <div className="stat g2" style={{ borderColor: 'var(--g2)' }}>
             <div className="stat-label">Don hang {dateLabel}</div>
             <div className="stat-value g2" id="sOrders" style={{ color: 'var(--g2)' }}>{skuLoading ? '...' : effectiveSkuTotal}</div>
-            <div className="stat-sub">Tu Google Sheet</div>
+            <div className="stat-sub">Từ Pancake POS</div>
           </div>
         )}
         {showOrders && (
@@ -1216,53 +1299,29 @@ export default function Dashboard() {
             <button className="btn btn-ghost btn-sm" onClick={exportDashboardExcel} disabled={exportingExcel || processedCampaigns.length === 0}>
               {exportingExcel ? 'Dang xuat...' : 'Xuất Excel'}
             </button>
-            <div className="dashboard-column-menu" ref={columnMenuRef}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setColumnMenuOpen(open => !open)} aria-expanded={columnMenuOpen}>
-                Tùy chỉnh cột{hiddenColumnCount > 0 ? ` (ẩn ${hiddenColumnCount})` : ''}
-              </button>
-              {columnMenuOpen && (
-                <div className="dashboard-column-menu-panel">
-                  <div className="dashboard-column-menu-actions">
-                    <span className="dashboard-column-menu-hint">Kéo ⠿ để đổi thứ tự</span>
-                    {!isDefaultColumnOrder && <button type="button" onClick={() => updateColumnOrder(DEFAULT_COLUMN_ORDER)}>Thứ tự mặc định</button>}
-                    <button type="button" onClick={() => updateHiddenColumns(new Set())}>Hiện tất cả</button>
-                  </div>
-                  {orderedMenuColumns.map((column, index) => (
-                    <div
-                      key={column.id}
-                      className={`dashboard-column-menu-item${draggingColumnId === column.id ? ' is-dragging' : ''}${dragOverColumnId === column.id && draggingColumnId !== column.id ? ' is-drag-over' : ''}`}
-                      draggable
-                      onDragStart={event => {
-                        setDraggingColumnId(column.id);
-                        event.dataTransfer.effectAllowed = 'move';
-                        event.dataTransfer.setData('text/plain', column.id);
-                      }}
-                      onDragOver={event => {
-                        event.preventDefault();
-                        if (dragOverColumnId !== column.id) setDragOverColumnId(column.id);
-                      }}
-                      onDrop={event => {
-                        event.preventDefault();
-                        moveColumn(draggingColumnId || event.dataTransfer.getData('text/plain'), column.id);
-                        setDraggingColumnId('');
-                        setDragOverColumnId('');
-                      }}
-                      onDragEnd={() => { setDraggingColumnId(''); setDragOverColumnId(''); }}
-                    >
-                      <span className="dashboard-column-menu-grip" aria-hidden="true">⠿</span>
-                      <label className="dashboard-column-menu-label">
-                        <input type="checkbox" checked={!hiddenColumns.has(column.id)} onChange={() => toggleColumn(column.id)} />
-                        <span>{column.label}</span>
-                      </label>
-                      <span className="dashboard-column-menu-move">
-                        <button type="button" disabled={index === 0} onClick={() => shiftColumn(column.id, -1)} title="Lên" aria-label={`Đưa ${column.label} lên`}>↑</button>
-                        <button type="button" disabled={index === orderedMenuColumns.length - 1} onClick={() => shiftColumn(column.id, 1)} title="Xuống" aria-label={`Đưa ${column.label} xuống`}>↓</button>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <ColumnPresetMenu
+              label={activePreset ? `Cột: ${activePreset}` : 'Tùy chỉnh'}
+              presets={columnPresets}
+              activePreset={activePreset}
+              onSelect={selectColumnPreset}
+              onDelete={deleteColumnPreset}
+              onCustomize={() => setColumnModalOpen(true)}
+            />
+            {columnModalOpen && (
+              <ColumnSettingsModal
+                columns={availableColumns}
+                groups={DASHBOARD_COLUMN_GROUPS}
+                order={columnOrder}
+                hidden={hiddenColumns}
+                defaultOrder={DEFAULT_COLUMN_ORDER}
+                defaultHidden={DEFAULT_HIDDEN_COLUMN_IDS}
+                pinnedLabel="Tên Campaign"
+                presetName={activePreset}
+                onApply={applyColumnSettings}
+                onSavePreset={saveColumnPreset}
+                onClose={closeColumnModal}
+              />
+            )}
             {(skuLoading || statsLoading || isSortPending) && <span className="spin" style={{ fontSize: '14px' }}>...</span>}
           </div>
         </div>

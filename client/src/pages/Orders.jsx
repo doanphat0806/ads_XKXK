@@ -136,7 +136,7 @@ export default function Orders() {
     uniqueSkus: 0,
     statusCounts: {}
   });
-  const [source, setSource] = useState('google_sheet');
+  const [source, setSource] = useState('pancake_pos');
   const [lastSyncedAt, setLastSyncedAt] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -193,7 +193,7 @@ export default function Orders() {
       setTotalRows(Array.isArray(data) ? rows.length : Number(data.total || 0));
       setTotalPages(Array.isArray(data) ? 1 : Number(data.totalPages || 1));
       setSummary(data?.stats || { totalQuantity: 0, uniqueSkus: 0, statusCounts: {} });
-      setSource(data?.source || 'google_sheet');
+      setSource(data?.source || 'pancake_pos');
       setLastSyncedAt(data?.cachedAt || '');
       setCurrentPage(page);
       if (shouldSync) loadAll?.();
@@ -217,7 +217,7 @@ export default function Orders() {
   const pageRows = useMemo(() => orderRows, [orderRows]);
   const rangeStart = totalRows === 0 ? 0 : ((currentPage - 1) * ordersPerPage) + 1;
   const rangeEnd = Math.min(totalRows, currentPage * ordersPerPage);
-  const sourceLabel = { google_sheet: 'Google Sheet', pancake_pos: 'Pancake POS' }[source] || 'Cơ sở dữ liệu';
+  const sourceLabel = { pancake_pos: 'Pancake POS' }[source] || 'Cơ sở dữ liệu';
 
   if (provider === 'shopee') {
     return (
