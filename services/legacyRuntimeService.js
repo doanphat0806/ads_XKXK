@@ -418,7 +418,7 @@ function createLegacyRuntime(app) {
         'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
         'dailyZeroMessageSpendLimit dailyOneMessageSpendLimit dailyFewMessageThreshold dailyFewMessageSpendLimit dailyCheapMessageCostLimit dailyCheapMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
         'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeOneMessageSpendLimit lifetimeFewMessageThreshold lifetimeFewMessageSpendLimit lifetimeCheapMessageCostLimit lifetimeCheapMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
-        'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent'
+        'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseMultiOrderThreshold autoPauseMultiOrderThresholdLifetime autoPauseMultiOrderCpoLimit autoPauseMultiOrderCpoLimitLifetime autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent'
       ).lean() : null
     ]);
     return mergeAutoConfig(globalConfig || {}, userConfig || {});
@@ -1642,12 +1642,23 @@ function createLegacyRuntime(app) {
       };
     }
   
-    const cpoLimit = isDaily
+    const baseCpoLimit = isDaily
       ? Number(limits?.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT)
       : Number(limits?.autoPauseCpoLimitLifetime ?? limits?.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT);
+    // Camp co tren N don: dung nguong CPO rieng thay cho nguong CPO chung
+    const multiOrderThreshold = isDaily
+      ? Number(limits?.autoPauseMultiOrderThreshold ?? 2)
+      : Number(limits?.autoPauseMultiOrderThresholdLifetime ?? limits?.autoPauseMultiOrderThreshold ?? 2);
+    const multiOrderCpoLimit = isDaily
+      ? Number(limits?.autoPauseMultiOrderCpoLimit || 0)
+      : Number(limits?.autoPauseMultiOrderCpoLimitLifetime || 0);
+    const useMultiOrderCpo = multiOrderCpoLimit > 0 && orderCount > multiOrderThreshold;
+    const cpoLimit = useMultiOrderCpo ? multiOrderCpoLimit : baseCpoLimit;
     if (cpoLimit > 0 && orderCount > 0 && costPerOrder > cpoLimit) {
       return {
-        pauseReason: `CPO ${formatAutoMoney(costPerOrder)} > limit ${formatAutoMoney(cpoLimit)} (${orderCount} don)`,
+        pauseReason: useMultiOrderCpo
+          ? `CPO ${formatAutoMoney(costPerOrder)} > limit ${formatAutoMoney(cpoLimit)} (${orderCount} don, tren ${multiOrderThreshold} don)`
+          : `CPO ${formatAutoMoney(costPerOrder)} > limit ${formatAutoMoney(cpoLimit)} (${orderCount} don)`,
         orderCount,
         costPerOrder
       };

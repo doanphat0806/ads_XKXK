@@ -41,7 +41,20 @@ export default function Sidebar() {
     if (dataRouteActive) setDataOpen(true);
   }, [dataRouteActive]);
 
+  // Nut menu tren Topbar (dien thoai) mo/dong sidebar
+  React.useEffect(() => {
+    const toggle = () => setIsTouchExpanded(value => !value);
+    window.addEventListener('app:toggle-sidebar', toggle);
+    return () => window.removeEventListener('app:toggle-sidebar', toggle);
+  }, []);
+
+  React.useEffect(() => {
+    setIsTouchExpanded(false);
+  }, [location.pathname]);
+
   return (
+    <>
+    {isTouchExpanded && <div className="sidebar-backdrop" onClick={() => setIsTouchExpanded(false)} />}
     <nav className={`sidebar ${isTouchExpanded ? 'is-touch-expanded' : ''}`} id="sidebar" aria-label="Main menu">
       <div className="sidebar-logo">
         <button
@@ -189,11 +202,11 @@ export default function Sidebar() {
             </NavLink>
           )}
 
-          <div className="nav-item" style={{ cursor: 'pointer' }} onClick={() => openModal('ACCOUNT')} title="Them tai khoan">
+          <div className="nav-item" style={{ cursor: 'pointer' }} onClick={() => { setIsTouchExpanded(false); openModal('ACCOUNT'); }} title="Them tai khoan">
             <span className="icon"><CirclePlus size={16} strokeWidth={2} /></span><span>Them tai khoan</span>
           </div>
 
-          <div className="nav-item" style={{ cursor: 'pointer' }} onClick={() => openModal('CONFIG')} title="Cau hinh API">
+          <div className="nav-item" style={{ cursor: 'pointer' }} onClick={() => { setIsTouchExpanded(false); openModal('CONFIG'); }} title="Cau hinh API">
             <span className="icon"><Settings size={16} strokeWidth={2} /></span><span>Cau hinh API</span>
           </div>
         </>
@@ -208,5 +221,6 @@ export default function Sidebar() {
         </div>
       </div>
     </nav>
+    </>
   );
 }

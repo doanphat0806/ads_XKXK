@@ -7134,3 +7134,158 @@
       #page-return-summary .return-reason-row { grid-template-columns: minmax(0, 1fr) 96px; }
       #page-return-summary .return-reason-track { grid-column: 1 / -1; grid-row: 2; }
     }
+
+    /* ===== Config modal ===== */
+    .cfg-modal { border: none; margin: 0; width: min(720px, calc(100vw - 24px)); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+    .cfg-tabs { display: flex; gap: 4px; padding: 10px 20px 0; border-bottom: 1px solid var(--border); background: var(--s1); }
+    .cfg-tab { border: none; background: transparent; padding: 9px 14px; font-size: 13px; font-weight: 600; color: var(--muted2); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    .cfg-tab:hover { color: var(--txt); }
+    .cfg-tab.is-active { color: var(--b); border-bottom-color: var(--b); }
+    .cfg-body { padding: 16px 20px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+    .cfg-block { border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; background: var(--s1); display: flex; flex-direction: column; gap: 10px; }
+    .cfg-block-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .cfg-block-title { font-size: 14px; font-weight: 700; color: var(--txt); display: flex; align-items: center; gap: 8px; }
+    .cfg-cond { font-size: 13px; font-weight: 600; color: var(--txt); }
+    .cfg-hint { font-size: 11.5px; color: var(--muted2); line-height: 1.5; }
+    .cfg-field { display: flex; flex-direction: column; gap: 5px; }
+    .cfg-field > label { font-size: 11px; font-weight: 600; color: var(--muted2); }
+    .cfg-inline { display: flex; gap: 8px; align-items: center; }
+    .cfg-inline .btn { flex: none; }
+    .cfg-modal input[type="text"], .cfg-modal input[type="password"], .cfg-modal input[type="number"] {
+      width: 100%; min-width: 0; box-sizing: border-box; background: #fff; border: 1px solid var(--border);
+      border-radius: 9px; padding: 7px 10px; font-size: 13px; color: var(--txt); font-family: var(--mono); outline: none;
+    }
+    .cfg-modal input:focus { border-color: var(--b); box-shadow: 0 0 0 3px rgba(25, 118, 243, 0.1); }
+    .cfg-pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: rgba(239, 71, 111, 0.1); color: var(--r); }
+    .cfg-pill.is-ok { background: rgba(24, 201, 200, 0.14); color: #0d8f8e; }
+    .cfg-table { width: 100%; border-collapse: collapse; }
+    .cfg-table th { text-align: left; font-size: 11px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: 0.5px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    .cfg-table th:not(:first-child), .cfg-table td:not(:first-child) { width: 140px; }
+    .cfg-table td { padding: 7px 8px; border-bottom: 1px solid var(--s3); vertical-align: middle; }
+    .cfg-table tbody tr:last-child td { border-bottom: none; }
+    .cfg-group-row td { padding-top: 12px; font-size: 11px; font-weight: 700; color: var(--b); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+    .cfg-footer { display: flex; justify-content: flex-end; position: sticky; bottom: -20px; padding: 10px 0 0; background: linear-gradient(180deg, transparent, var(--s1) 40%); }
+    @media (max-width: 640px) {
+      .modal-overlay:has(.cfg-modal) { align-items: stretch; }
+      .cfg-modal { width: 100vw; max-height: none; height: 100vh; height: 100dvh; border-radius: 0; }
+      .cfg-modal .card-header { padding: 12px 16px; }
+      .cfg-tabs { padding: 6px 12px 0; }
+      .cfg-tab { flex: 1; padding: 10px 2px; font-size: 12.5px; white-space: nowrap; }
+      .cfg-body { padding: 12px 12px calc(16px + env(safe-area-inset-bottom)); gap: 10px; }
+      .cfg-block { padding: 12px; border-radius: 12px; }
+      /* iOS zoom khi focus neu font < 16px */
+      .cfg-modal input[type="text"], .cfg-modal input[type="password"], .cfg-modal input[type="number"] { font-size: 16px; padding: 9px 10px; }
+      .cfg-tab-sub { display: none; }
+      .cfg-modal .btn { justify-content: center; text-align: center; }
+      .cfg-inline { flex-wrap: wrap; }
+      .cfg-inline > input { flex: 1 1 140px; }
+      .cfg-inline .btn { flex: 1 1 100%; padding: 10px; }
+      /* Dong chi co 1 o nhap: giu nut Luu nho ngay ben canh */
+      .cfg-inline:not(:has(> input + input)) { flex-wrap: nowrap; }
+      .cfg-inline:not(:has(> input + input)) .btn { flex: none; padding: 9px 18px; }
+      .cfg-block-head .cfg-inline { width: 100%; flex-wrap: nowrap; }
+      .cfg-block-head .cfg-inline > input { flex: 1; width: auto !important; }
+      .cfg-block-head .cfg-inline .btn { flex: none; width: auto; padding: 9px 18px; }
+      .cfg-block-head > .btn { width: 100%; padding: 10px; }
+
+      /* Bang dieu kien -> the: ten dieu kien o tren, 2 o Ngay / Tron doi o duoi */
+      .cfg-table, .cfg-table tbody, .cfg-table tr, .cfg-table td { display: block; width: auto !important; }
+      .cfg-table thead { display: none; }
+      .cfg-table tbody tr:not(.cfg-group-row) { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; padding: 10px 0; border-bottom: 1px solid var(--s3); }
+      .cfg-table tbody tr:last-child { border-bottom: none; }
+      .cfg-table td { padding: 0; border: none; }
+      .cfg-table td:first-child { grid-column: 1 / -1; }
+      .cfg-table td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; font-weight: 600; color: var(--muted2); margin-bottom: 3px; }
+      .cfg-group-row td { padding: 12px 0 6px; }
+      .cfg-footer { bottom: calc(-16px - env(safe-area-inset-bottom)); padding: 10px 0 calc(4px + env(safe-area-inset-bottom)); }
+      .cfg-footer .btn { width: 100%; padding: 12px; font-size: 14px; }
+    }
+
+    /* ===== Mobile shell: menu truot, topbar gon, bo chon ngay dang bottom sheet ===== */
+    .topbar-menu-btn { display: none; }
+    .topbar-icon-btn { display: inline-flex; align-items: center; gap: 6px; }
+    .cfg-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .sidebar-backdrop { display: none; }
+
+    @media (max-width: 640px) {
+      /* Sidebar -> drawer, an hoan toan khi dong */
+      .sidebar {
+        width: var(--sidebar-width);
+        transform: translateX(-100%);
+        transition: transform 0.2s var(--sidebar-ease);
+        z-index: 300;
+        box-shadow: none;
+      }
+      .sidebar.is-touch-expanded { transform: translateX(0); box-shadow: 14px 0 38px rgba(15, 23, 42, 0.18); }
+      .sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 299; background: rgba(15, 23, 42, 0.35); }
+
+      .main,
+      .app-shell .main { margin-left: 0; width: 100%; }
+      .content { padding: 12px 10px; }
+
+      /* Topbar: [menu] Tieu de ........ [cau hinh] tren 1 hang */
+      .topbar { padding: 10px 12px; gap: 8px; flex-wrap: nowrap; align-items: center; }
+      .topbar-title { width: auto; flex: 1; min-width: 0; font-size: 16px; flex-wrap: nowrap; gap: 8px; }
+      .topbar-title #pageTitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .topbar-menu-btn {
+        display: inline-flex; align-items: center; justify-content: center; flex: none;
+        width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border);
+        background: var(--s1); color: var(--txt); font-size: 18px; line-height: 1; cursor: pointer;
+      }
+      .topbar-actions { display: flex !important; width: auto; margin-left: 0; flex: none; gap: 6px; }
+      .topbar-actions #dateLabel { display: none; }
+      .topbar-icon-btn span { display: none; }
+      .topbar-icon-btn { width: 36px !important; height: 36px; padding: 0 !important; justify-content: center; }
+      .cfg-actions .btn { flex: 1 1 calc(50% - 8px); justify-content: center; padding: 10px; }
+
+      /* Luoi / header chung */
+      .form-grid { grid-template-columns: 1fr; }
+      .card-header { flex-wrap: wrap; gap: 8px; padding: 12px; }
+      .modal { padding: 18px; }
+      .modal-content { max-width: 100vw; }
+
+      /* iOS tu zoom khi focus o nhap chu < 16px */
+      input[type="text"], input[type="number"], input[type="password"], input[type="search"], input[type="email"], input:not([type]), select, textarea { font-size: 16px; }
+
+      /* Bo chon ngay: bottom sheet, 1 thang */
+      .drp-popover,
+      .drp-popover.fixed,
+      .drp-popover.centered {
+        position: fixed !important;
+        top: auto !important; bottom: 0 !important; left: 0 !important; right: 0 !important;
+        transform: none !important;
+        width: 100% !important; min-width: 0 !important; max-width: 100% !important;
+        max-height: 88vh; max-height: 88dvh; overflow-y: auto;
+        flex-direction: column; gap: 12px;
+        padding: 14px 14px calc(14px + env(safe-area-inset-bottom)) !important;
+        border-radius: 18px 18px 0 0;
+        box-shadow: 0 0 0 100vmax rgba(15, 23, 42, 0.35), 0 -10px 30px rgba(15, 23, 42, 0.15);
+        z-index: 10001;
+        animation: drp-sheet-in 0.2s ease-out;
+      }
+      .drp-popover .drp-sidebar,
+      .drp-popover.centered .drp-sidebar { width: auto; min-width: 0; border-right: none; padding: 0; }
+      .drp-sidebar-title { margin-bottom: 8px; }
+      .drp-presets-list { flex-direction: row; overflow-x: auto; gap: 8px; scrollbar-width: none; padding-bottom: 2px; }
+      .drp-presets-list::-webkit-scrollbar { display: none; }
+      .drp-preset-pill { flex: none; min-height: 34px; padding: 6px 12px; white-space: nowrap; }
+      .drp-main,
+      .drp-popover.centered .drp-main { padding: 0; gap: 12px; }
+      .drp-calendars,
+      .drp-popover.centered .drp-calendars { flex-direction: column; }
+      .drp-calendar-wrap,
+      .drp-popover.centered .drp-calendar-wrap { width: 100%; max-width: 100%; flex: 1 1 auto; padding: 12px; }
+      .drp-calendar-wrap + .drp-calendar-wrap { display: none; }
+      .drp-header select { font-size: 16px; }
+      .drp-day { min-height: 38px; }
+      .drp-footer { flex-direction: column; align-items: stretch; }
+      .drp-hours select { font-size: 16px; }
+      .drp-footer-actions { display: grid; grid-template-columns: 1fr 1fr; }
+      .btn-drp { min-width: 0; padding: 12px; font-size: 14px; }
+      .drp-backdrop { background: transparent; backdrop-filter: none; }
+    }
+
+    @keyframes drp-sheet-in {
+      from { transform: translateY(24px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }

@@ -92,7 +92,7 @@ async function getUserAutoConfig(userId) {
     'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeOneMessageSpendLimit ' +
     'lifetimeFewMessageThreshold lifetimeFewMessageSpendLimit lifetimeCheapMessageCostLimit ' +
     'lifetimeCheapMessageSpendLimit lifetimeHighCostPerMessageLimit lifetimeHighCostSpendLimit ' +
-    'lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime ' +
+    'lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseMultiOrderThreshold autoPauseMultiOrderThresholdLifetime autoPauseMultiOrderCpoLimit autoPauseMultiOrderCpoLimitLifetime ' +
     'autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent'
   ).lean();
   return user || {};

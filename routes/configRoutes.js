@@ -25,7 +25,7 @@ router.get('/config', async (req, res) => {
       'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
       'dailyZeroMessageSpendLimit dailyOneMessageSpendLimit dailyFewMessageThreshold dailyFewMessageSpendLimit dailyCheapMessageCostLimit dailyCheapMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
       'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeOneMessageSpendLimit lifetimeFewMessageThreshold lifetimeFewMessageSpendLimit lifetimeCheapMessageCostLimit lifetimeCheapMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
-      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent'
+      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseMultiOrderThreshold autoPauseMultiOrderThresholdLifetime autoPauseMultiOrderCpoLimit autoPauseMultiOrderCpoLimitLifetime autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent'
     ).lean();
     const autoConfig = mergeAutoConfig(config || {}, user || {});
 
@@ -122,6 +122,10 @@ router.put('/auto-limits', async (req, res) => {
       lifetimeCpcLimit: Number(req.body.lifetimeCpcLimit || 0),
       autoPauseCpoLimit: Number(req.body.autoPauseCpoLimit ?? AUTO_PAUSE_CPO_LIMIT),
       autoPauseCpoLimitLifetime: Number(req.body.autoPauseCpoLimitLifetime ?? AUTO_PAUSE_CPO_LIMIT),
+      autoPauseMultiOrderThreshold: Number(req.body.autoPauseMultiOrderThreshold ?? 2),
+      autoPauseMultiOrderThresholdLifetime: Number(req.body.autoPauseMultiOrderThresholdLifetime ?? 2),
+      autoPauseMultiOrderCpoLimit: Number(req.body.autoPauseMultiOrderCpoLimit || 0),
+      autoPauseMultiOrderCpoLimitLifetime: Number(req.body.autoPauseMultiOrderCpoLimitLifetime || 0),
       autoPauseZeroOrderSpendLimit: Number(req.body.autoPauseZeroOrderSpendLimit ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
       autoPauseZeroOrderSpendLimitLifetime: Number(req.body.autoPauseZeroOrderSpendLimitLifetime ?? AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
       autoPauseShopeeMinSpendLimit: getShopeeAutoMinSpendLimit({ autoPauseShopeeMinSpendLimit: req.body.autoPauseShopeeMinSpendLimit }),
