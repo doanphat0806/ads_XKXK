@@ -4,6 +4,7 @@ const express = require('express');
 const axios = require('axios');
 const Account = require('../models/Account');
 const User = require('../models/User');
+const FbProfile = require('../models/FbProfile');
 const { fbGet } = require('../utils/fbApi');
 const { exchangeToken } = require('../utils/fbApi');
 const { clearAllReadCache } = require('../utils/cacheManager');
@@ -50,6 +51,8 @@ function getFacebookOAuthState(req) {
   const redirectUri = getFacebookOAuthRedirectUri(req);
   facebookOAuthStates.set(state, {
     userId: String(req.currentUser?._id || ''),
+    // 'via': luu thanh VIA rieng (FbProfile), khong ghi de token cua user
+    mode: req.query?.mode === 'via' ? 'via' : 'user',
     redirectUri,
     createdAt: Date.now()
   });
@@ -65,8 +68,50 @@ function getFacebookOAuthState(req) {
 /**
  * Render popup result HTML
  */
-function renderOAuthPopupResult({ ok, error, expires_at, scopes }) {
-  const payload = JSON.stringify({ ok, error, expires_at, scopes }).replace(/</g, '\\u003c');
+/**
+ * Luu/cap nhat VIA tu token dai han, roi thay token moi cho moi tai khoan quang cao cua VIA do.
+ */
+async function saveFbProfileFromToken({ userId, token, appId, appSecret, graphVersion }) {
+  const me = await axios.get(`https://graph.facebook.com/${graphVersion}/me`, {
+    params: { fields: 'id,name,picture.type(large){url}', access_token: token },
+    timeout: 15000
+  }).then(response => response.data || {});
+  if (!me.id) throw new Error('Khong lay duoc thong tin tai khoan Facebook');
+
+  const expiresAt = await axios.get('https://graph.facebook.com/debug_token', {
+    params: { input_token: token, access_token: `${appId}|${appSecret}` },
+    timeout: 15000
+  }).then(response => {
+    const seconds = Number(response.data?.data?.expires_at || 0);
+    return seconds > 0 ? new Date(seconds * 1000) : null;
+  }).catch(() => null);
+
+  const now = new Date();
+  const profile = await FbProfile.findOneAndUpdate(
+    { ownerUserId: userId, fbUserId: String(me.id) },
+    {
+      $set: {
+        name: String(me.name || ''),
+        pictureUrl: String(me.picture?.data?.url || ''),
+        token,
+        expiresAt,
+        lastLoginAt: now,
+        updatedAt: now
+      },
+      $setOnInsert: { createdAt: now }
+    },
+    { upsert: true, new: true }
+  ).lean();
+
+  const updateResult = await Account.updateMany(
+    { ownerUserId: userId, fbProfileId: profile._id, fbToken: { $ne: token } },
+    { $set: { fbToken: token } }
+  );
+  return { profile, tokenUpdated: Number(updateResult?.modifiedCount || 0) };
+}
+
+function renderOAuthPopupResult({ ok, error, expires_at, scopes, fbName, profileId, tokenUpdated }) {
+  const payload = JSON.stringify({ ok, error, expires_at, scopes, fbName, profileId, tokenUpdated }).replace(/</g, '\\u003c');
   return `<!doctype html>
 <html>
   <head><meta charset="utf-8"><title>Facebook Login</title></head>
@@ -165,6 +210,27 @@ router.get('/oauth/callback', async (req, res) => {
     if (!shortToken) throw new Error('Facebook khong tra ve access_token');
 
     const longLivedToken = await exchangeToken(shortToken, appId, appSecret);
+
+    if (stateRecord.mode === 'via') {
+      if (!stateRecord.userId) throw new Error('Thieu nguoi dung de luu VIA');
+      const via = await saveFbProfileFromToken({
+        userId: stateRecord.userId,
+        token: longLivedToken,
+        appId,
+        appSecret,
+        graphVersion: FACEBOOK_GRAPH_API_VERSION
+      });
+      clearAllReadCache();
+      return res.send(renderOAuthPopupResult({
+        ok: true,
+        expires_at: via.profile.expiresAt || null,
+        scopes: FB_OAUTH_SCOPES,
+        fbName: via.profile.name,
+        profileId: String(via.profile._id),
+        tokenUpdated: via.tokenUpdated
+      }));
+    }
+
     const tokenState = stateRecord.userId
       ? await User.findByIdAndUpdate(stateRecord.userId, {
           fbToken: longLivedToken,
@@ -181,10 +247,17 @@ router.get('/oauth/callback', async (req, res) => {
         });
     clearAllReadCache();
 
+    // Ten tai khoan Facebook vua dang nhap, de client hien thi khi tu dong bo
+    const fbName = await axios.get(`https://graph.facebook.com/${FACEBOOK_GRAPH_API_VERSION}/me`, {
+      params: { fields: 'name', access_token: longLivedToken },
+      timeout: 10000
+    }).then(response => String(response.data?.name || '')).catch(() => '');
+
     res.send(renderOAuthPopupResult({
       ok: true,
       expires_at: tokenState.expires_at,
-      scopes: FB_OAUTH_SCOPES
+      scopes: FB_OAUTH_SCOPES,
+      fbName
     }));
   } catch (callbackError) {
     const { sendTokenAlert } = require('../services/facebookTokenService');

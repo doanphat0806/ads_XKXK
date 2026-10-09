@@ -106,6 +106,35 @@ export default function ConfigModal() {
   const [pancake, setPancake] = useState({ apiKey: '', shopId: '' });
   const [scheduledPauseTime, setScheduledPauseTime] = useState('21:00');
   const [tab, setTab] = useState('general');
+  const [viaProfiles, setViaProfiles] = useState([]);
+  const [viaLoading, setViaLoading] = useState(false);
+
+  const loadViaProfiles = async () => {
+    setViaLoading(true);
+    try {
+      setViaProfiles(await api('GET', '/fb-profiles'));
+    } catch (e) {
+      toast.error('Không tải được danh sách VIA: ' + e.message);
+    } finally {
+      setViaLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === 'connect' && showAdActions) loadViaProfiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  const removeVia = async (via) => {
+    if (!window.confirm(`Xóa VIA "${via.name}"? ${via.accountCount} TKQC vẫn giữ token hiện tại cho đến khi hết hạn.`)) return;
+    try {
+      await api('DELETE', `/fb-profiles/${via._id}`);
+      toast.success('Đã xóa VIA');
+      loadViaProfiles();
+    } catch (e) {
+      toast.error('Lỗi: ' + e.message);
+    }
+  };
   const [autoLimits, setAutoLimits] = useState({
     dailyZero: 25000, dailyOne: 25000, dailyFewThreshold: 0, dailyFewSpend: 0, dailyCheapCost: 0, dailyCheapSpend: 0, dailyHighCost: 20000, dailyHighSpend: 50000,
     lifetimeZero: 25000, lifetimeOne: 25000, lifetimeFewThreshold: 0, lifetimeFewSpend: 0, lifetimeCheapCost: 0, lifetimeCheapSpend: 0, lifetimeHighCost: 20000, lifetimeHighSpend: 50000,
@@ -166,8 +195,10 @@ export default function ConfigModal() {
       await api('PUT', path, body);
       await loadConfig();
       toast.success(successMsg);
+      return true;
     } catch (e) {
       toast.error('Lỗi: ' + e.message);
+      return false;
     }
   };
 
@@ -190,7 +221,11 @@ export default function ConfigModal() {
 
       await loadConfig();
       setFbToken('');
-      toast.success('Đã đăng nhập Facebook và lưu token đủ quyền');
+      toast.success(payload.fbName
+        ? `Đã đăng nhập Facebook: ${payload.fbName}. Đang tự đồng bộ tài khoản quảng cáo...`
+        : 'Đã đăng nhập Facebook. Đang tự đồng bộ tài khoản quảng cáo...');
+      // Tu lay tai khoan quang cao cua Facebook vua dang nhap + thay token moi cho tai khoan da co
+      await handleAutoDiscover();
     };
 
     try {
@@ -332,7 +367,8 @@ export default function ConfigModal() {
               <div className="cfg-block">
                 <div className="cfg-block-title">Tài khoản quảng cáo</div>
                 <div className="cfg-actions">
-                  <button className="btn btn-g btn-sm" onClick={() => openModal('ACCOUNT')}>+ Thêm tài khoản</button>
+                  <button className="btn btn-g btn-sm" onClick={() => openModal('ADD_VIA')}>+ Thêm VIA</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => openModal('ACCOUNT')}>+ Thêm tài khoản</button>
                   <button className="btn btn-ghost btn-sm" onClick={() => openModal('BULK_ADD')}>+ Thêm nhiều</button>
                   {isShopee && (
                     <button className="btn btn-ghost btn-sm" onClick={() => openModal('SHOPEE_PAGES')}>+ Thêm Page</button>
@@ -432,16 +468,52 @@ export default function ConfigModal() {
           <>
             <div className="cfg-block">
               <div className="cfg-block-head">
-                <div className="cfg-block-title">Facebook {statusPill(appConfig.hasFbToken, 'Đã có token', 'Chưa có token')}</div>
+                <div className="cfg-block-title">VIA Facebook <span className="cfg-pill is-ok">{viaProfiles.length}</span></div>
+                <button className="btn btn-g btn-sm" onClick={() => openModal('ADD_VIA')}>+ Thêm VIA</button>
+              </div>
+              <div className="cfg-hint">Mỗi VIA giữ token riêng; TKQC nhập từ VIA nào dùng token của VIA đó. Đăng nhập lại VIA sẽ tự cập nhật token cho các TKQC của nó.</div>
+              {viaLoading ? (
+                <div className="cfg-hint">Đang tải...</div>
+              ) : viaProfiles.length === 0 ? (
+                <div className="cfg-hint">Chưa có VIA nào.</div>
+              ) : (
+                <div className="cfg-via-list">
+                  {viaProfiles.map(via => (
+                    <div key={via._id} className="cfg-via-row">
+                      {via.pictureUrl
+                        ? <img src={via.pictureUrl} alt="" className="cfg-via-avatar" />
+                        : <span className="cfg-via-avatar">{(via.name || '?').charAt(0)}</span>}
+                      <div className="cfg-via-info">
+                        <div className="cfg-cond">{via.name || via.fbUserId}</div>
+                        <div className="cfg-hint">
+                          {via.accountCount} TKQC
+                          {via.expiresAt && ` · token ${via.expired ? 'đã hết hạn' : `hết hạn ${new Date(via.expiresAt).toLocaleDateString('vi-VN')}`}`}
+                        </div>
+                      </div>
+                      {via.expired && <span className="cfg-pill">Hết hạn</span>}
+                      <div className="cfg-via-actions">
+                        <button className="btn btn-ghost btn-sm" onClick={() => openModal('ADD_VIA', { profileId: via._id, profileName: via.name })}>Chọn TKQC</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => openModal('ADD_VIA')} title="Đăng nhập lại để làm mới token">Đăng nhập lại</button>
+                        <button className="btn btn-danger btn-sm" onClick={() => removeVia(via)}>Xóa</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="cfg-block">
+              <div className="cfg-block-head">
+                <div className="cfg-block-title">Token Facebook chính {statusPill(appConfig.hasFbToken, 'Đã có token', 'Chưa có token')}</div>
                 <button className="btn btn-g btn-sm" onClick={loginFacebookOAuth} disabled={fbOAuthLoading}>
-                  {fbOAuthLoading ? 'Đang đợi Facebook...' : 'Đăng nhập Facebook'}
+                  {fbOAuthLoading ? 'Đang đợi Facebook...' : discovering ? 'Đang đồng bộ...' : 'Đăng nhập / đổi Facebook'}
                 </button>
               </div>
               <div className="cfg-field">
                 <label>Access token (nhập tay)</label>
                 <div className="cfg-inline">
                   <input type="password" placeholder={appConfig.hasFbToken ? 'Đã lưu — nhập mới để ghi đè' : 'EAAxxxxxxxxxx...'} value={fbToken} onChange={e => setFbToken(e.target.value)} />
-                  <button className="btn btn-p btn-sm" onClick={() => save('/config', { fbToken }, 'Đã lưu FB Token')}>Lưu</button>
+                  <button className="btn btn-p btn-sm" onClick={async () => { if (await save('/config', { fbToken }, 'Đã lưu FB Token')) { setFbToken(''); await handleAutoDiscover(); } }}>Lưu</button>
                 </div>
               </div>
               <div className="cfg-field">
@@ -452,7 +524,7 @@ export default function ConfigModal() {
                   <button className="btn btn-p btn-sm" onClick={() => save('/config', { fbAppId: fbApp.id, fbAppSecret: fbApp.secret }, 'Đã lưu App ID & Secret')}>Lưu</button>
                 </div>
               </div>
-              <div className="cfg-hint">Đăng nhập sẽ xin quyền ads_read, ads_management, business_management, pages_show_list, pages_manage_metadata, pages_read_engagement.</div>
+              <div className="cfg-hint">Đăng nhập xong sẽ <b>tự đồng bộ</b>: thêm tài khoản quảng cáo mới của Facebook đó và cập nhật token cho tài khoản đã có. Muốn đổi sang Facebook khác: trong cửa sổ đăng nhập bấm "Không phải bạn?" / đăng nhập tài khoản khác (hoặc đăng xuất facebook.com trước).</div>
             </div>
 
             <div className="cfg-block">

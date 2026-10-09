@@ -319,11 +319,13 @@ app.post('/api/accounts/auto-discover', async (req, res) => {
 
     const pendingCreates = [];
     const skipped = [];
+    const existingReachableIds = [];
 
     for (const adAccount of finalAdAccounts) {
       const actId = normalizeAdAccountId(adAccount.account_id);
       if (existingIds.has(actId)) {
         skipped.push({ name: adAccount.name, adAccountId: actId });
+        existingReachableIds.push(actId);
         continue;
       }
 
@@ -379,7 +381,17 @@ app.post('/api/accounts/auto-discover', async (req, res) => {
         }
       }
     }
-    console.log(`[auto-discover] done provider=${provider} found=${finalAdAccounts.length} created=${created.length} skipped=${skipped.length} after ${Date.now() - startedAt}ms`);
+    // Tai khoan da co ma token nay van truy cap duoc: thay token moi (vd vua dang nhap lai FB) de khong bi dung token cu het han
+    let tokenUpdated = 0;
+    if (provider === 'facebook' && existingReachableIds.length) {
+      const idVariants = existingReachableIds.flatMap(id => [id, id.replace(/^act_/, '')]);
+      const updateResult = await Account.updateMany(
+        withUserFilter(req, { ...buildAccountProviderFilter(provider), adAccountId: { $in: idVariants }, fbToken: { $ne: fbToken }, fbProfileId: null }),
+        { $set: { fbToken } }
+      );
+      tokenUpdated = Number(updateResult?.modifiedCount || 0);
+    }
+    console.log(`[auto-discover] done provider=${provider} found=${finalAdAccounts.length} created=${created.length} skipped=${skipped.length} tokenUpdated=${tokenUpdated} after ${Date.now() - startedAt}ms`);
 
     res.json({
       ok: true,
@@ -393,9 +405,10 @@ app.post('/api/accounts/auto-discover', async (req, res) => {
       sources,
       sourceErrors,
       spendCheckErrors,
+      tokenUpdated,
       spendScope: fastSync ? 'all' : spendDatePreset,
       message: fastSync
-        ? `Dong bo tai khoan duoc gan trong BM: tim thay ${finalAdAccounts.length}/${discoveredAdAccounts.length} tai khoan ${provider}. Da them ${created.length}, bo qua ${skipped.length} (da ton tai).`
+        ? `Dong bo tai khoan duoc gan trong BM: tim thay ${finalAdAccounts.length}/${discoveredAdAccounts.length} tai khoan ${provider}. Da them ${created.length}, bo qua ${skipped.length} (da ton tai)${tokenUpdated ? `, cap nhat token moi cho ${tokenUpdated}` : ''}.`
         : `Tim thay ${finalAdAccounts.length}/${discoveredAdAccounts.length} tai khoan ${provider} duoc gan trong BM va da chi tieu theo khoang ${spendDatePreset}. Da them ${created.length}, bo qua ${skipped.length} (da ton tai).`
     });
   } catch (error) {

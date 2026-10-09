@@ -5,6 +5,8 @@ const AccountSchema = new mongoose.Schema({
   name: { type: String, required: true },
   provider: { type: String, enum: ['facebook', 'shopee'], default: 'facebook' },
   fbToken: { type: String, default: '' },
+  // VIA (FbProfile) cung cap token cho tai khoan nay; dang nhap lai VIA se cap nhat fbToken
+  fbProfileId: { type: mongoose.Schema.Types.ObjectId, ref: 'FbProfile' },
   adAccountId: { type: String, required: true },
   claudeKey: { type: String, default: '' },
   geminiKey: { type: String, default: '' },

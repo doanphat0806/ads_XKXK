@@ -6,6 +6,7 @@ const AutomationModal = React.lazy(() => import('./Modals/AutomationModal'));
 const ConfigModal = React.lazy(() => import('./Modals/ConfigModal'));
 const BulkAddModal = React.lazy(() => import('./Modals/BulkAddModal'));
 const ShopeePagesModal = React.lazy(() => import('./Modals/ShopeePagesModal'));
+const AddViaModal = React.lazy(() => import('./Modals/AddViaModal'));
 
 function ModalLoading() {
   return (
@@ -33,6 +34,8 @@ export default function ModalContainer() {
         return <BulkAddModal />;
       case 'SHOPEE_PAGES':
         return <ShopeePagesModal />;
+      case 'ADD_VIA':
+        return <AddViaModal data={modalState.data} />;
       default:
         return null;
     }

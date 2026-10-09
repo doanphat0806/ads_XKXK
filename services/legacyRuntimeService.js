@@ -61,6 +61,7 @@ function createLegacyRuntime(app) {
   const Account = require('../models/Account');
   const Campaign = require('../models/Campaign');
   const Log = require('../models/Log');
+  const FbProfile = require('../models/FbProfile');
   const Config = require('../models/Config');
   const User = require('../models/User');
   const FacebookToken = require('../models/FacebookToken');
@@ -240,10 +241,32 @@ function createLegacyRuntime(app) {
     return '';
   }
   
+  // Cache ten VIA theo accountId (5 phut) de khong query them moi lan ghi log
+  const logViaNameCache = new Map();
+  const LOG_VIA_NAME_TTL_MS = 5 * 60 * 1000;
+
+  async function getViaNameForLog(accountId) {
+    if (!accountId) return '';
+    const key = String(accountId);
+    const cached = logViaNameCache.get(key);
+    if (cached && Date.now() - cached.at < LOG_VIA_NAME_TTL_MS) return cached.name;
+    let name = '';
+    try {
+      const account = await Account.findById(accountId).select('fbProfileId').lean();
+      if (account?.fbProfileId) {
+        const profile = await FbProfile.findById(account.fbProfileId).select('name').lean();
+        name = profile?.name || '';
+      }
+    } catch { }
+    logViaNameCache.set(key, { name, at: Date.now() });
+    return name;
+  }
+
   async function addLog(accountId, accountName, level, message) {
     try {
       if (isShuttingDown || mongoose.connection.readyState !== 1) return;
-      await Log.create({ accountId, accountName, level, message });
+      const viaName = await getViaNameForLog(accountId);
+      await Log.create({ accountId, accountName, viaName, level, message });
     } catch { }
   }
 

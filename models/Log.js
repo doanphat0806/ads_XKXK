@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const LogSchema = new mongoose.Schema({
   accountId: { type: mongoose.Schema.Types.ObjectId, ref: 'Account' },
   accountName: { type: String },
+  // Ten VIA cap token cho tai khoan luc ghi log (rong = token chinh)
+  viaName: { type: String, default: '' },
   level: { type: String, enum: ['info', 'success', 'warn', 'error', 'ai'], default: 'info' },
   message: { type: String },
   createdAt: { type: Date, default: Date.now }

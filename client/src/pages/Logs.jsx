@@ -92,6 +92,7 @@ export default function Logs() {
                 <tr>
                   <th style={{ width: '160px' }}>Thoi gian</th>
                   <th style={{ width: '180px' }}>Tai khoan</th>
+                  <th style={{ width: '150px' }}>VIA</th>
                   <th style={{ width: '80px' }}>Muc do</th>
                   <th>Noi dung</th>
                 </tr>
@@ -101,6 +102,7 @@ export default function Logs() {
                   <tr key={log._id}>
                     <td style={{ color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{timeString(log.createdAt)}</td>
                     <td style={{ fontWeight: 600 }}>{log.accountName || 'System'}</td>
+                    <td style={{ color: log.viaName ? 'var(--txt)' : 'var(--muted)' }}>{log.viaName || '—'}</td>
                     <td>
                       <span className={`badge-mini ${log.level}`}>
                         {String(log.level || '').toUpperCase()}

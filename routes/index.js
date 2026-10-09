@@ -9,6 +9,7 @@ function registerAllRoutes(app) {
   app.use('/api/deal-stop', require('./dealStopRoutes'));
   app.use('/api/google', require('./googleRoutes'));
   app.use('/api/facebook', require('./facebookRoutes'));
+  app.use('/api/fb-profiles', require('./fbProfileRoutes'));
 }
 
 module.exports = { registerAllRoutes };
