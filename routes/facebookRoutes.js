@@ -8,11 +8,11 @@ const FbProfile = require('../models/FbProfile');
 const { fbGet } = require('../utils/fbApi');
 const { exchangeToken } = require('../utils/fbApi');
 const { clearAllReadCache } = require('../utils/cacheManager');
+const { createSignedState, parseSignedState } = require('../utils/authUtils');
 
 const router = express.Router();
 
-// Facebook OAuth state store (in-memory, có TTL 10 phút)
-const facebookOAuthStates = new Map();
+const FB_OAUTH_STATE_PREFIX = 'facebook-oauth';
 
 const FB_OAUTH_SCOPES = [
   'public_profile',
@@ -43,26 +43,16 @@ function getFacebookOAuthRedirectUri(req) {
 }
 
 /**
- * Tạo state ngẫu nhiên cho OAuth
+ * Tạo state có chữ ký (HMAC, hết hạn sau 10 phút) cho OAuth.
+ * Không lưu trong bộ nhớ nên vẫn hợp lệ khi server khởi động lại hoặc pm2 chạy nhiều tiến trình.
  */
 function getFacebookOAuthState(req) {
-  const crypto = require('crypto');
-  const state = crypto.randomBytes(16).toString('hex');
-  const redirectUri = getFacebookOAuthRedirectUri(req);
-  facebookOAuthStates.set(state, {
+  return createSignedState(FB_OAUTH_STATE_PREFIX, {
     userId: String(req.currentUser?._id || ''),
     // 'via': luu thanh VIA rieng (FbProfile), khong ghi de token cua user
     mode: req.query?.mode === 'via' ? 'via' : 'user',
-    redirectUri,
-    createdAt: Date.now()
+    redirectUri: getFacebookOAuthRedirectUri(req)
   });
-  // Dọn state cũ
-  for (const [key, val] of facebookOAuthStates.entries()) {
-    if (Date.now() - val.createdAt > 10 * 60 * 1000) {
-      facebookOAuthStates.delete(key);
-    }
-  }
-  return state;
 }
 
 /**
@@ -174,6 +164,8 @@ router.get('/oauth/callback', async (req, res) => {
     const { configureFacebookToken } = require('../services/facebookTokenService');
     const { sendTokenAlert } = require('../services/facebookTokenService');
     const { code, state, error, error_description } = req.query;
+    const stateRecord = parseSignedState(FB_OAUTH_STATE_PREFIX, String(state || ''));
+    console.log(`[facebook-oauth] callback hasCode=${Boolean(code)} error=${error || ''} mode=${stateRecord?.mode || 'invalid-state'}`);
     if (error) {
       return res.status(400).send(renderOAuthPopupResult({
         ok: false,
@@ -181,9 +173,7 @@ router.get('/oauth/callback', async (req, res) => {
       }));
     }
 
-    const stateRecord = facebookOAuthStates.get(String(state || ''));
-    facebookOAuthStates.delete(String(state || ''));
-    if (!code || !stateRecord || Date.now() - stateRecord.createdAt > 10 * 60 * 1000) {
+    if (!code || !stateRecord) {
       return res.status(400).send(renderOAuthPopupResult({
         ok: false,
         error: 'Phien dang nhap Facebook khong hop le hoac da het han'
@@ -245,10 +235,23 @@ router.get('/oauth/callback', async (req, res) => {
           app_secret: appSecret,
           long_lived_user_access_token: longLivedToken
         });
+    // Facebook dang nhap bang token chinh cung duoc luu vao danh sach VIA (khong loi neu that bai)
+    const via = stateRecord.userId
+      ? await saveFbProfileFromToken({
+          userId: stateRecord.userId,
+          token: longLivedToken,
+          appId,
+          appSecret,
+          graphVersion: FACEBOOK_GRAPH_API_VERSION
+        }).catch(viaError => {
+          console.warn(`[facebook-oauth] luu VIA tu token chinh that bai: ${viaError.message}`);
+          return null;
+        })
+      : null;
     clearAllReadCache();
 
     // Ten tai khoan Facebook vua dang nhap, de client hien thi khi tu dong bo
-    const fbName = await axios.get(`https://graph.facebook.com/${FACEBOOK_GRAPH_API_VERSION}/me`, {
+    const fbName = via?.profile?.name || await axios.get(`https://graph.facebook.com/${FACEBOOK_GRAPH_API_VERSION}/me`, {
       params: { fields: 'name', access_token: longLivedToken },
       timeout: 10000
     }).then(response => String(response.data?.name || '')).catch(() => '');
@@ -260,14 +263,16 @@ router.get('/oauth/callback', async (req, res) => {
       fbName
     }));
   } catch (callbackError) {
+    // Uu tien thong bao loi Facebook tra ve thay vi "Request failed with status code 400"
+    const message = callbackError.response?.data?.error?.message || callbackError.message;
+    console.error(`[facebook-oauth] callback failed: ${message}`);
     const { sendTokenAlert } = require('../services/facebookTokenService');
-    await sendTokenAlert('Facebook OAuth login failed', { error: callbackError.message }).catch(() => {});
+    await sendTokenAlert('Facebook OAuth login failed', { error: message }).catch(() => {});
     res.status(400).send(renderOAuthPopupResult({
       ok: false,
-      error: callbackError.message
+      error: message
     }));
   }
 });
 
 module.exports = router;
-module.exports.facebookOAuthStates = facebookOAuthStates;

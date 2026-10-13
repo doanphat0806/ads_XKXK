@@ -63,6 +63,11 @@ function isCampaignActiveStatus(status) {
   return ACTIVE_CAMPAIGN_STATUSES.has(normalizeStatus(status));
 }
 
+// Giong backend khi sua ngan sach (legacyRoutes /campaigns/:id/budget)
+function isLifetimeBudgetCampaign(campaign) {
+  return String(campaign?.budgetType || '').toUpperCase() === 'LIFETIME' || Number(campaign?.lifetimeBudget || 0) > 0;
+}
+
 const DASHBOARD_CAMPAIGNS_PER_PAGE = 500;
 const DASHBOARD_INITIAL_RENDER_ROWS = 300;
 const DASHBOARD_RENDER_BATCH_ROWS = 300;
@@ -88,6 +93,7 @@ const DASHBOARD_COLUMNS = [
   { id: 'duplicateCount', label: 'Trùng', group: 'settings' },
   { id: 'createdTime', label: 'Ngày tạo', group: 'settings' },
   { id: 'toggle', label: 'Tắt/Bật', group: 'settings' },
+  { id: 'autoRule', label: 'Quy tắc auto', group: 'settings' },
   { id: 'account', label: 'Tên TKQC', group: 'settings' },
   { id: 'status', label: 'Trạng thái', group: 'settings' },
   { id: 'orderCount', label: 'Tổng đơn', group: 'conversion', ordersOnly: true },
@@ -271,9 +277,12 @@ const CampaignRow = React.memo(function CampaignRow({
   onCancelEditBudget,
   setEditingCampaignName,
   setEditingBudget,
+  campaignRule,
+  onOpenRule,
   visibleColumnIds
 }) {
   const budget = campaign.dailyBudget || campaign.lifetimeBudget || 0;
+  const isLifetimeBudget = isLifetimeBudgetCampaign(campaign);
 
   const cells = {
     duplicateCount: () => (
@@ -298,6 +307,26 @@ const CampaignRow = React.memo(function CampaignRow({
             <div className="tgl-thumb"></div>
           </label>
         </div>
+      </td>
+    ),
+    autoRule: () => (
+      <td key="autoRule" className="text-center">
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          onClick={() => onOpenRule(campaign)}
+          title={campaignRule?.mode === 'custom'
+            ? `Có ${Object.keys(campaignRule.limits || {}).length} điều kiện riêng — bấm để xem / sửa`
+            : campaignRule?.mode === 'skip'
+              ? 'Auto không tự tắt / bật camp này'
+              : 'Đặt quy tắc auto riêng cho camp này'}
+          style={{
+            whiteSpace: 'nowrap',
+            color: campaignRule?.mode === 'skip' ? 'var(--o)' : campaignRule?.mode === 'custom' ? 'var(--b)' : 'var(--muted2)'
+          }}
+        >
+          {campaignRule?.mode === 'skip' ? 'Bỏ qua auto' : campaignRule?.mode === 'custom' ? 'Điều kiện riêng' : 'Mặc định'}
+        </button>
       </td>
     ),
     account: () => (
@@ -350,6 +379,11 @@ const CampaignRow = React.memo(function CampaignRow({
           <button type="button" onClick={() => onStartEditBudget(campaign)} title="Click de sua ngan sach" style={{ border: 0, padding: 0, background: 'transparent', color: 'var(--txt)', cursor: 'text', font: 'inherit' }}>
             {isSavingBudget ? '...' : formatVND(budget)}
           </button>
+        )}
+        {budget > 0 && (
+          <div style={{ fontSize: '10px', fontWeight: 600, color: isLifetimeBudget ? 'var(--o)' : 'var(--muted2)' }}>
+            {isLifetimeBudget ? 'Trọn đời' : 'Hằng ngày'}
+          </div>
         )}
       </td>
     ),
@@ -424,9 +458,59 @@ const CampaignRow = React.memo(function CampaignRow({
 });
 
 export default function Dashboard() {
-  const { provider, stats: globalStats, currentUser } = useAppContext();
+  const { provider, stats: globalStats, currentUser, openModal } = useAppContext();
   const showOrders = provider !== 'shopee';
   const isShopee = provider === 'shopee';
+  // Quy tac auto rieng tung camp, key `${accountId}:${campaignId}`
+  const [campaignRules, setCampaignRules] = useState(() => new Map());
+  const campaignRulesRef = useRef(campaignRules);
+  // openModal trong AppContext tao moi moi lan render -> giu qua ref, neu khong callback
+  // ben duoi doi lien tuc va moi CampaignRow (memo) render lai moi khi context cap nhat
+  const openModalRef = useRef(openModal);
+  useEffect(() => {
+    campaignRulesRef.current = campaignRules;
+    openModalRef.current = openModal;
+  }, [campaignRules, openModal]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api('GET', '/campaign-rules')
+      .then(rules => {
+        if (cancelled) return;
+        setCampaignRules(new Map((rules || []).map(rule => [`${rule.accountId}:${rule.campaignId}`, rule])));
+      })
+      .catch(error => {
+        if (!cancelled) toast.error('Lỗi tải quy tắc camp: ' + error.message);
+      });
+    return () => { cancelled = true; };
+  }, [provider, currentUser?._id]);
+
+  // Doc Map qua ref de callback on dinh -> CampaignRow (memo) khong render lai ca bang khi luu 1 quy tac
+  const openCampaignRuleModal = useCallback((campaign) => {
+    const accountId = String(campaign.accountId?._id || campaign.accountId || '');
+    const campaignId = String(campaign.campaignId || '');
+    if (!accountId || !campaignId) {
+      toast.error('Camp thiếu tài khoản hoặc ID, không đặt quy tắc được');
+      return;
+    }
+    const key = `${accountId}:${campaignId}`;
+    openModalRef.current('CAMPAIGN_RULE', {
+      accountId,
+      campaignId,
+      campaignName: campaign.name,
+      provider,
+      isLifetimeBudget: isLifetimeBudgetCampaign(campaign),
+      rule: campaignRulesRef.current.get(key) || null,
+      onSaved: (rule) => {
+        setCampaignRules(previous => {
+          const next = new Map(previous);
+          if (rule) next.set(key, rule);
+          else next.delete(key);
+          return next;
+        });
+      }
+    });
+  }, [provider]);
   const dashboardRef = useRef(null);
   const stickySummaryRef = useRef(null);
   const editingCampaignNameRef = useRef('');
@@ -1213,7 +1297,10 @@ export default function Dashboard() {
           : [['Tin nhắn', Number(c.messages || 0)], ['Giá/TN', Math.round(c.costPerMessage || 0)]]),
         costPerOrder: c => [['CPO', Math.round(c.costPerOrder || 0)]],
         spend: c => [['Chi tiêu', Math.round(Number(c.spend || 0))]],
-        budget: c => [['Ngân sách', Number(c.dailyBudget || c.lifetimeBudget || 0)]],
+        budget: c => [
+          ['Ngân sách', Number(c.dailyBudget || c.lifetimeBudget || 0)],
+          ['Loại ngân sách', isLifetimeBudgetCampaign(c) ? 'Trọn đời' : 'Hằng ngày']
+        ],
         returnRate: c => [['Tỉ lệ hoàn (%)', percent(c.returnRate)]],
         impressions: c => [['Hiển thị', Number(c.impressions || 0)]],
         reach: c => [['Tiếp cận', c.reachUnavailable ? '' : Number(c.reach || 0)]],
@@ -1264,6 +1351,7 @@ export default function Dashboard() {
     duplicateCount: { label: 'Trung', className: 'text-center', sortField: 'duplicateCount' },
     createdTime: { label: 'Ngay tao' },
     toggle: { label: 'Tắt/Bật', className: 'text-center' },
+    autoRule: { label: 'Quy tắc auto', className: 'text-center' },
     account: { label: 'Ten TKQC' },
     status: { label: 'Trạng Thái', className: 'text-center' },
     orderCount: { label: 'Tổng Đơn', className: 'text-center', sortField: 'orderCount' },
@@ -1476,6 +1564,8 @@ export default function Dashboard() {
                       onCancelEditBudget={cancelEditBudget}
                       setEditingCampaignName={setEditingCampaignName}
                       setEditingBudget={setEditingBudget}
+                      campaignRule={campaignRules.get(`${campaign.accountId?._id || campaign.accountId}:${campaignId}`) || null}
+                      onOpenRule={openCampaignRuleModal}
                       visibleColumnIds={visibleColumnIds}
                     />
                   );

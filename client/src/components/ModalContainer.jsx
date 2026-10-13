@@ -7,6 +7,7 @@ const ConfigModal = React.lazy(() => import('./Modals/ConfigModal'));
 const BulkAddModal = React.lazy(() => import('./Modals/BulkAddModal'));
 const ShopeePagesModal = React.lazy(() => import('./Modals/ShopeePagesModal'));
 const AddViaModal = React.lazy(() => import('./Modals/AddViaModal'));
+const CampaignRuleModal = React.lazy(() => import('./Modals/CampaignRuleModal'));
 
 function ModalLoading() {
   return (
@@ -36,6 +37,8 @@ export default function ModalContainer() {
         return <ShopeePagesModal />;
       case 'ADD_VIA':
         return <AddViaModal data={modalState.data} />;
+      case 'CAMPAIGN_RULE':
+        return <CampaignRuleModal data={modalState.data} />;
       default:
         return null;
     }

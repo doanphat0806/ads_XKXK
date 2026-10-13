@@ -105,12 +105,13 @@ export default function AddViaModal({ data }) {
       const timer = setInterval(() => {
         if (popup.closed) {
           clearInterval(timer);
-          // Popup dong ma chua nhan ket qua -> nguoi dung huy
+          // Popup dong ma chua nhan ket qua: Facebook chua chuyen huong ve server (URL bi chan / nguoi dung huy)
           setTimeout(() => {
             if (messageHandlerRef.current === handleMessage) {
               window.removeEventListener('message', handleMessage);
               messageHandlerRef.current = null;
               setLoggingIn(false);
+              notify.error(`Chưa nhận được kết quả từ Facebook nên chưa lưu VIA. Nếu Facebook báo "URL bị chặn", cần thêm ${res.redirectUri || 'URI chuyển hướng'} vào "URI chuyển hướng OAuth hợp lệ" của app.`);
             }
           }, 800);
         }

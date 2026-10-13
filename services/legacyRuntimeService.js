@@ -14,6 +14,7 @@ const { registerShopeeSocialAccountsRoutes } = require('../routes/shopeeSocialAc
 const { registerShopeeSocialCommissionReceiptsRoutes } = require('../routes/shopeeSocialCommissionReceiptsRoutes');
 const { authenticateApiRequest } = require('../middleware/auth');
 const { parseBoundedInt } = require('../utils/number');
+const { applyCampaignRuleLimits } = require('../utils/campaignRuleLimits');
 const {
   META_EXTRA_INSIGHT_FIELDS,
   getMetaExtraMetricsFromInsight,
@@ -59,6 +60,7 @@ function createLegacyRuntime(app) {
   // getVietnamDayMinute, isVietnamTimeMinute, isWithinAutoRuleTimeWindow — imported from utils/timeUtils.js
   
   const Account = require('../models/Account');
+  const CampaignRule = require('../models/CampaignRule');
   const Campaign = require('../models/Campaign');
   const Log = require('../models/Log');
   const FbProfile = require('../models/FbProfile');
@@ -449,6 +451,13 @@ function createLegacyRuntime(app) {
   
   async function getAccountAutoConfig(account) {
     return getUserAutoConfig(account?.ownerUserId || null);
+  }
+
+  async function getCampaignRulesForAuto(account) {
+    const rules = await CampaignRule.find({ accountId: account._id })
+      .select('campaignId mode limits')
+      .lean();
+    return new Map(rules.map(rule => [String(rule.campaignId), rule]));
   }
   
   async function getEffectiveSecrets(account) {
@@ -3172,8 +3181,13 @@ function createLegacyRuntime(app) {
         : [];
       const ruleCampaigns = isShopee ? [...campaigns, ...historicalShopeeCampaigns] : campaigns;
       const shopeePerformanceTotals = isShopee ? await getShopeePerformanceTotalsForAuto(account, ruleCampaigns) : {};
+      const campaignRulesById = await getCampaignRulesForAuto(account);
       const ruleCandidates = ruleCampaigns
         .map(campaign => {
+          const campaignRule = campaignRulesById.get(String(campaign.id || campaign.campaignId || ''));
+          // Camp duoc dat "bo qua auto": khong tat, khong bat lai
+          if (campaignRule?.mode === 'skip') return null;
+          const campaignLimits = applyCampaignRuleLimits(config, campaignRule);
           const { spend, messages, costPerMessage, clicks, costPerClick } = getCampaignRuleStats(campaign);
           const shopeeKey = normalizeShopeeSubIdKey(campaign.name);
           const shopeeTotals = isShopee ? (shopeePerformanceTotals[shopeeKey] || {}) : {};
@@ -3190,7 +3204,7 @@ function createLegacyRuntime(app) {
             costPerMessage,
             clicks,
             costPerClick,
-            limits: config,
+            limits: campaignLimits,
             budgetType,
             skuCounts,
             shopeeCommission: ruleCommission
@@ -3204,7 +3218,7 @@ function createLegacyRuntime(app) {
             ? (autoOptimizationDecision || getShopeeOptimizationDecision({
               spend: ruleSpend,
               commission: ruleCommission,
-              minSpendLimit: config?.autoPauseShopeeMinSpendLimit
+              minSpendLimit: campaignLimits?.autoPauseShopeeMinSpendLimit
             }))
             : null;
           return {
