@@ -291,7 +291,9 @@ function createLegacyRuntime(app) {
   }
   
   // readCache, purchaseOrderReadCache — imported from utils/cacheManager.js
-  const AUTO_CHECK_MIN_INTERVAL_SECONDS = parseBoundedInt(process.env.AUTO_CHECK_MIN_INTERVAL_SECONDS, 180, 60, 60 * 60);
+  // Mac dinh 60s (truoc la 180s). Moi lan kiem tra goi Facebook 2-3 lan; neu Logs bao rate
+  // limit thuong xuyen thi tang lai bang env AUTO_CHECK_MIN_INTERVAL_SECONDS
+  const AUTO_CHECK_MIN_INTERVAL_SECONDS = parseBoundedInt(process.env.AUTO_CHECK_MIN_INTERVAL_SECONDS, 60, 60, 60 * 60);
   // getReadCache, setReadCache, clearCampaignReadCache — imported from utils/cacheManager.js
   
   const FB_ACTIVE_CAMPAIGN_STATUSES = new Set([
@@ -1006,10 +1008,10 @@ function createLegacyRuntime(app) {
     if (withinFastWindow) {
       return Math.max(Number(account.checkInterval || minInterval), minInterval);
     }
-    // Outside the fast window: check every 3-5 minutes instead of a fixed 5 —
-    // re-randomized each cycle (scheduleNext calls this fresh every time) so accounts
-    // don't all end up polling in lockstep.
-    return 180 + Math.floor(Math.random() * 121);
+    // Ngoai khung nhanh: kiem tra moi 1-2 phut (truoc la 3-5 phut), ngau nhien lai moi
+    // chu ky (scheduleNext goi lai ham nay moi lan) de cac tai khoan khong goi cung luc.
+    // Khong thap hon nguong toi thieu (env AUTO_CHECK_MIN_INTERVAL_SECONDS).
+    return Math.max(60 + Math.floor(Math.random() * 61), minInterval);
   }
   
   function isMessagingPurchaseOptimizationError(error) {
