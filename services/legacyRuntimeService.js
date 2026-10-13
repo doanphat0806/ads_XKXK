@@ -1630,7 +1630,7 @@ function createLegacyRuntime(app) {
     };
   }
   
-  function getAutoPauseDecision({ provider, campaignName, spend, messages, costPerMessage, clicks, costPerClick, limits, budgetType, skuCounts, shopeeCommission }) {
+  function getAutoPauseDecision({ provider, campaignName, spend, messages, costPerMessage, clicks, costPerClick, limits, budgetType, skuCounts, shopeeCommission, hasCampaignRule = false }) {
     const normalizedProvider = normalizeProvider(provider);
     const basePauseReason = getPauseReason(provider, spend, messages, costPerMessage, clicks, costPerClick, limits, budgetType);
     if (normalizedProvider === 'shopee') {
@@ -1639,7 +1639,8 @@ function createLegacyRuntime(app) {
         commission: shopeeCommission || 0,
         minSpendLimit: limits?.autoPauseShopeeMinSpendLimit
       });
-      if (decision.shouldPause) {
+      // Camp co quy tac rieng: luat ROI chung khong co trong bang quy tac rieng -> khong tat theo luat nay
+      if (decision.shouldPause && !hasCampaignRule) {
         return { pauseReason: decision.reason, orderCount: 0, costPerOrder: 0, optimizationDecision: decision };
       }
       return { pauseReason: basePauseReason, orderCount: 0, costPerOrder: 0, optimizationDecision: decision };
@@ -3233,7 +3234,8 @@ function createLegacyRuntime(app) {
             limits: campaignLimits,
             budgetType,
             skuCounts,
-            shopeeCommission: ruleCommission
+            shopeeCommission: ruleCommission,
+            hasCampaignRule: campaignRule?.mode === 'custom'
           });
           // Luat chung "tieu TB thap" khong co trong bang quy tac rieng -> camp co quy tac rieng
           // duoc uu tien, chi xet theo dieu kien da dat cho camp do
