@@ -453,8 +453,11 @@ function createLegacyRuntime(app) {
     return getUserAutoConfig(account?.ownerUserId || null);
   }
 
+  // Quy tac rieng dung chung theo TKQC (moi user nhap cung TKQC deu dung chung)
   async function getCampaignRulesForAuto(account) {
-    const rules = await CampaignRule.find({ accountId: account._id })
+    const adAccountId = normalizeAdAccountId(account?.adAccountId);
+    if (!adAccountId) return new Map();
+    const rules = await CampaignRule.find({ adAccountId })
       .select('campaignId mode limits')
       .lean();
     return new Map(rules.map(rule => [String(rule.campaignId), rule]));
@@ -1709,7 +1712,7 @@ function createLegacyRuntime(app) {
     const parts = [
       `Auto pause Facebook: ${item.campaign.name || campaignGraphId}`,
       `id=${campaignGraphId}`,
-      `reason=${item.pauseReason}`,
+      `reason=${item.pauseReason}${item.hasCampaignRule ? ' (quy tac rieng)' : ''}`,
       `budget=${item.budgetType || 'DAILY'}`,
       `spend=${formatAutoMoney(spend)}`,
       `messages=${Number(item.messages || 0)}`,
@@ -1730,7 +1733,7 @@ function createLegacyRuntime(app) {
     const parts = [
       `Auto pause Shopee: ${item.campaign.name || campaignGraphId}`,
       `id=${campaignGraphId}`,
-      `reason=${item.pauseReason}`,
+      `reason=${item.pauseReason}${item.hasCampaignRule ? ' (quy tac rieng)' : ''}`,
       `spend=${formatAutoMoney(spend)}`,
       `commission=${formatAutoMoney(commission)}`,
       `profit=${formatAutoMoney(profit)}`,
@@ -2800,10 +2803,31 @@ function createLegacyRuntime(app) {
         dailyDate
       });
       if (!scheduledPauseTargets.length) return;
-  
+
+      // Camp co quy tac rieng duoc uu tien: luat chung "tat camp trung" khong dong vao
+      const targetCampaignIds = scheduledPauseTargets
+        .map(item => String(item.campaign.id || item.campaign.campaignId || ''))
+        .filter(Boolean);
+      const ruledCampaignIds = new Set((await CampaignRule.find({
+        adAccountId: { $in: scopeAccounts.map(scopeAccount => normalizeAdAccountId(scopeAccount.adAccountId)).filter(Boolean) },
+        campaignId: { $in: targetCampaignIds }
+      }).select('campaignId').lean()).map(rule => String(rule.campaignId)));
+      const pauseTargets = scheduledPauseTargets.filter(item =>
+        !ruledCampaignIds.has(String(item.campaign.id || item.campaign.campaignId || ''))
+      );
+      if (ruledCampaignIds.size > 0) {
+        await addLog(
+          account._id,
+          account.name,
+          'info',
+          `Bo qua tat camp trung cho ${ruledCampaignIds.size} camp co quy tac rieng`
+        );
+      }
+      if (!pauseTargets.length) return;
+
       const accountsById = new Map(scopeAccounts.map(scopeAccount => [String(scopeAccount._id), scopeAccount]));
       let pausedCount = 0;
-      for (const item of scheduledPauseTargets) {
+      for (const item of pauseTargets) {
         try {
           if (await pauseScheduledDuplicateTarget(item, accountsById, account, dailyDate)) {
             pausedCount += 1;
@@ -3209,7 +3233,10 @@ function createLegacyRuntime(app) {
             skuCounts,
             shopeeCommission: ruleCommission
           });
+          // Luat chung "tieu TB thap" khong co trong bang quy tac rieng -> camp co quy tac rieng
+          // duoc uu tien, chi xet theo dieu kien da dat cho camp do
           const lowRecentSpendReason = isShopee
+            && campaignRule?.mode !== 'custom'
             && shopeeRecentSpend?.hasFullWindow
             && shopeeRecentSpend.avgDailySpend < SHOPEE_LOW_SPEND_AVG_DAILY_LIMIT
               ? `Tieu TB ${formatAutoMoney(shopeeRecentSpend.avgDailySpend)}/ngay trong ${SHOPEE_LOW_SPEND_WINDOW_DAYS} ngay da chot gan nhat < ${formatAutoMoney(SHOPEE_LOW_SPEND_AVG_DAILY_LIMIT)}`
@@ -3235,7 +3262,8 @@ function createLegacyRuntime(app) {
             costPerOrder,
             pauseReason: lowRecentSpendReason || pauseReason,
             shopeeRecentSpend,
-            optimizationDecision
+            optimizationDecision,
+            hasCampaignRule: campaignRule?.mode === 'custom'
           };
         })
         .filter(Boolean);
@@ -4229,11 +4257,23 @@ function createLegacyRuntime(app) {
     ShopeeAffCommissionReceipt
   });
 
+  // Ban dau quy tac rieng khoa theo Account._id (unique accountId+campaignId); nay khoa
+  // theo TKQC (adAccountId+campaignId) de dung chung giua cac user -> bo index cu khong con dung.
+  async function dropLegacyCampaignRuleIndex() {
+    try {
+      await mongoose.connection.collection('campaignrules').dropIndex('campaignRule_account_campaign');
+      console.log('Dropped legacy campaign rule index: campaignRule_account_campaign');
+    } catch (error) {
+      if (!['IndexNotFound', 'NamespaceNotFound'].includes(error?.codeName)) throw error;
+    }
+  }
+
   async function runStartupMaintenance() {
     await ensureDefaultUsers();
     await migrateLegacyAccountsToDefaultUser();
     await migrateLegacyAccountProviders();
     await ensureCampaignDailyStorage();
+    await dropLegacyCampaignRuleIndex();
     await ensureApplicationIndexes();
   }
 

@@ -119,6 +119,13 @@ export default function CampaignRuleModal({ data }) {
       </div>
 
       <div className="cfg-body">
+        {rule && (
+          <div className="cfg-hint">
+            Quy tắc dùng chung cho mọi user quản lý TKQC này.
+            {rule.updatedBy?.name ? ` Sửa lần cuối bởi ${rule.updatedBy.name}` : ''}
+            {rule.updatedAt ? ` lúc ${new Date(rule.updatedAt).toLocaleString('vi-VN', { hour12: false, timeZone: 'Asia/Ho_Chi_Minh' })}` : ''}.
+          </div>
+        )}
         {mode === 'default' && (
           <div className="cfg-block">
             <div className="cfg-hint">Camp dùng các điều kiện trong Cấu hình → Tắt camp tự động.</div>
@@ -127,7 +134,7 @@ export default function CampaignRuleModal({ data }) {
 
         {mode === 'skip' && (
           <div className="cfg-block">
-            <div className="cfg-hint">Auto sẽ không tự tắt / bật camp này. Bạn tự tắt bật bằng tay.</div>
+            <div className="cfg-hint">Auto sẽ không tự tắt / bật camp này, kể cả luật tắt camp trùng theo giờ. Bạn tự tắt bật bằng tay.</div>
           </div>
         )}
 
@@ -137,6 +144,9 @@ export default function CampaignRuleModal({ data }) {
             <div className="cfg-hint" style={{ marginBottom: '10px' }}>
               Camp dùng ngân sách <b>{isLifetimeBudget ? 'trọn đời' : 'hằng ngày'}</b> nên chỉ hiện điều kiện {isLifetimeBudget ? 'trọn đời' : 'theo ngày'}.{' '}
               Để <b>trống</b> = dùng mức của cấu hình chung (hiện mờ trong ô). Nhập <b>0</b> = bỏ qua điều kiện đó cho camp này. Đơn vị: đ (trừ số đơn, số click).
+            </div>
+            <div className="cfg-hint" style={{ marginBottom: '10px' }}>
+              <b>Quy tắc riêng được ưu tiên:</b> camp chỉ bị tắt theo các điều kiện trong bảng này, không bị luật chung tắt camp trùng theo giờ{isShopee ? ' hay luật tiêu trung bình thấp' : ''}.
             </div>
 
             {isShopee && (

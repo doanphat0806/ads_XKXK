@@ -461,7 +461,7 @@ export default function Dashboard() {
   const { provider, stats: globalStats, currentUser, openModal } = useAppContext();
   const showOrders = provider !== 'shopee';
   const isShopee = provider === 'shopee';
-  // Quy tac auto rieng tung camp, key `${accountId}:${campaignId}`
+  // Quy tac auto rieng tung camp, dung chung giua cac user theo TKQC; key = campaignId (ID camp Facebook la duy nhat)
   const [campaignRules, setCampaignRules] = useState(() => new Map());
   const campaignRulesRef = useRef(campaignRules);
   // openModal trong AppContext tao moi moi lan render -> giu qua ref, neu khong callback
@@ -472,18 +472,25 @@ export default function Dashboard() {
     openModalRef.current = openModal;
   }, [campaignRules, openModal]);
 
+  // Tang de tai lai quy tac (bam Reload); them chu ky 2 phut de thay quy tac user khac vua sua
+  const [campaignRulesVersion, setCampaignRulesVersion] = useState(0);
   useEffect(() => {
     let cancelled = false;
-    api('GET', '/campaign-rules')
+    const loadRules = (showError) => api('GET', '/campaign-rules')
       .then(rules => {
         if (cancelled) return;
-        setCampaignRules(new Map((rules || []).map(rule => [`${rule.accountId}:${rule.campaignId}`, rule])));
+        setCampaignRules(new Map((rules || []).map(rule => [String(rule.campaignId), rule])));
       })
       .catch(error => {
-        if (!cancelled) toast.error('Lỗi tải quy tắc camp: ' + error.message);
+        if (!cancelled && showError) toast.error('Lỗi tải quy tắc camp: ' + error.message);
       });
-    return () => { cancelled = true; };
-  }, [provider, currentUser?._id]);
+    loadRules(true);
+    const interval = setInterval(() => loadRules(false), HOURLY_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [provider, currentUser?._id, campaignRulesVersion]);
 
   // Doc Map qua ref de callback on dinh -> CampaignRow (memo) khong render lai ca bang khi luu 1 quy tac
   const openCampaignRuleModal = useCallback((campaign) => {
@@ -493,7 +500,7 @@ export default function Dashboard() {
       toast.error('Camp thiếu tài khoản hoặc ID, không đặt quy tắc được');
       return;
     }
-    const key = `${accountId}:${campaignId}`;
+    const key = campaignId;
     openModalRef.current('CAMPAIGN_RULE', {
       accountId,
       campaignId,
@@ -750,6 +757,7 @@ export default function Dashboard() {
       toggleReloadTimerRef.current = null;
     }
     loadDashboardData(reportFromDate, reportToDate);
+    setCampaignRulesVersion(version => version + 1);
   }, [loadDashboardData, reportFromDate, reportToDate]);
 
   const scheduleToggleReload = useCallback(() => {
@@ -1564,7 +1572,7 @@ export default function Dashboard() {
                       onCancelEditBudget={cancelEditBudget}
                       setEditingCampaignName={setEditingCampaignName}
                       setEditingBudget={setEditingBudget}
-                      campaignRule={campaignRules.get(`${campaign.accountId?._id || campaign.accountId}:${campaignId}`) || null}
+                      campaignRule={campaignRules.get(String(campaignId)) || null}
                       onOpenRule={openCampaignRuleModal}
                       visibleColumnIds={visibleColumnIds}
                     />
