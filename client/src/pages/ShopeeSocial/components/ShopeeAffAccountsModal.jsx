@@ -143,7 +143,7 @@ export default function ShopeeAffAccountsModal({ accounts, adAccounts = [], onCr
           <br />
           Tài khoản QC: chọn thủ công tài khoản quảng cáo thuộc về tài khoản này (không cần khớp mã SubID2 nữa). Nếu không chọn, tài khoản này sẽ tự nhận tất cả tài khoản QC nào chưa bị tài khoản AFF khác chọn.
           <br />
-          Thuế (%): % trừ thẳng vào hoa hồng của tài khoản này khi tính Lợi nhuận (báo cáo). Lợi nhuận thực không trừ thuế vì tiền thực nhận đã bị trừ thuế sẵn. Để 0 nếu không áp thuế.
+          Thuế (%): % trừ thẳng vào hoa hồng của tài khoản này khi tính Lợi nhuận (báo cáo). Lợi nhuận thực chỉ trừ thêm (% thuế − 10%) trên tiền thực nhận, vì Shopee đã khấu trừ sẵn 10%. Để 0 nếu không áp thuế.
         </div>
 
         <div className="tbl-wrap" style={{ padding: '0 18px' }}>

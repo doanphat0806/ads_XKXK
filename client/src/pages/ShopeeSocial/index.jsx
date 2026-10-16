@@ -12,7 +12,7 @@ import { fetchAdsSpend } from './adsSpendApi';
 import { importOrdersToServer, fetchSavedOrders, deleteSavedOrders } from './ordersApi';
 import { fetchShopeeAffAccounts, createShopeeAffAccount, updateShopeeAffAccount, deleteShopeeAffAccount, fetchShopeeAdAccounts } from './accountsApi';
 import { fetchCommissionReceipts, createCommissionReceipt, deleteCommissionReceipt } from './commissionReceiptsApi';
-import { buildAccountTrendSeries, toDayStr, resolveAdAccountScope, campaignBelongsToScope } from './accountTrend';
+import { buildAccountTrendSeries, toDayStr, resolveAdAccountScope, campaignBelongsToScope, remainingTaxRate } from './accountTrend';
 
 import UploadPanel from './components/UploadPanel';
 import FiltersBar from './components/FiltersBar';
@@ -363,8 +363,12 @@ export default function ShopeeSocial() {
       .filter(r => filters.accountName === 'all' || r.accountName === filters.accountName)
       .reduce((s, r) => s + r.amount, 0);
   }, [commissionReceipts, filters.accountName]);
-  // Tien thuc nhan da bi Shopee tru thue san -> khong tru thue lan nua.
-  const realProfit = totalActualReceived - totalAdSpend;
+  const totalActualTax = useMemo(() => {
+    return commissionReceipts
+      .filter(r => filters.accountName === 'all' || r.accountName === filters.accountName)
+      .reduce((s, r) => s + r.amount * remainingTaxRate(taxRateByAccountName[r.accountName]), 0);
+  }, [commissionReceipts, filters.accountName, taxRateByAccountName]);
+  const realProfit = totalActualReceived - totalActualTax - totalAdSpend;
   const platformDistribution = useMemo(() => computePlatformDistribution(filteredOrders), [filteredOrders]);
   const hourlyDistribution = useMemo(() => computeHourlyDistribution(filteredOrders), [filteredOrders]);
   const topProducts = useMemo(() => computeTopProducts(filteredOrders), [filteredOrders]);
@@ -487,6 +491,7 @@ export default function ShopeeSocial() {
             totalActualReceived={totalActualReceived}
             realProfit={realProfit}
             totalTax={totalTax}
+            totalActualTax={totalActualTax}
           />
 
           {accountTrends.length > 0 && (
