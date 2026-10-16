@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { api, timeString } from '../lib/api';
 import { toast } from 'react-toastify';
 import { useAppContext } from '../contexts/AppContext';
+import { useVisibleInterval } from '../hooks/useVisibleInterval';
 
 export default function Logs() {
   const { provider } = useAppContext();
@@ -40,9 +41,8 @@ export default function Logs() {
 
   useEffect(() => {
     fetchLogs();
-    const interval = setInterval(fetchLogs, 30000);
-    return () => clearInterval(interval);
   }, [fetchLogs]);
+  useVisibleInterval(fetchLogs, 30000);
 
   const getLevelClass = (level) => {
     switch (level) {

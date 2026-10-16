@@ -363,12 +363,8 @@ export default function ShopeeSocial() {
       .filter(r => filters.accountName === 'all' || r.accountName === filters.accountName)
       .reduce((s, r) => s + r.amount, 0);
   }, [commissionReceipts, filters.accountName]);
-  const totalActualTax = useMemo(() => {
-    return commissionReceipts
-      .filter(r => filters.accountName === 'all' || r.accountName === filters.accountName)
-      .reduce((s, r) => s + r.amount * ((taxRateByAccountName[r.accountName] || 0) / 100), 0);
-  }, [commissionReceipts, filters.accountName, taxRateByAccountName]);
-  const realProfit = totalActualReceived - totalActualTax - totalAdSpend;
+  // Tien thuc nhan da bi Shopee tru thue san -> khong tru thue lan nua.
+  const realProfit = totalActualReceived - totalAdSpend;
   const platformDistribution = useMemo(() => computePlatformDistribution(filteredOrders), [filteredOrders]);
   const hourlyDistribution = useMemo(() => computeHourlyDistribution(filteredOrders), [filteredOrders]);
   const topProducts = useMemo(() => computeTopProducts(filteredOrders), [filteredOrders]);
@@ -491,7 +487,6 @@ export default function ShopeeSocial() {
             totalActualReceived={totalActualReceived}
             realProfit={realProfit}
             totalTax={totalTax}
-            totalActualTax={totalActualTax}
           />
 
           {accountTrends.length > 0 && (

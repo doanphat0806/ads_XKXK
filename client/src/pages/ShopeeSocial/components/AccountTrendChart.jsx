@@ -30,7 +30,7 @@ export default function AccountTrendChart({ accountName, series, taxRate = 0 }) 
   const plotWidth = WIDTH - PAD_LEFT - PAD_RIGHT;
   const plotHeight = HEIGHT - PAD_TOP - PAD_BOTTOM;
 
-  const summary = useMemo(() => summarizeAccountTrend(series, taxRate), [series, taxRate]);
+  const summary = useMemo(() => summarizeAccountTrend(series), [series]);
 
   const { min, max } = useMemo(() => {
     let mn = 0;

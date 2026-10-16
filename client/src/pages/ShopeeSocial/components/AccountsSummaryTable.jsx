@@ -4,7 +4,7 @@ import { summarizeAccountTrend } from '../accountTrend';
 
 export default function AccountsSummaryTable({ accountTrends }) {
   const rows = useMemo(
-    () => accountTrends.map(({ accountName, series, taxRate }) => ({ accountName, ...summarizeAccountTrend(series, taxRate) })),
+    () => accountTrends.map(({ accountName, series }) => ({ accountName, ...summarizeAccountTrend(series) })),
     [accountTrends]
   );
 

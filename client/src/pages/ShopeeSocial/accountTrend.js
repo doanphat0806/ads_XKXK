@@ -127,7 +127,7 @@ export function buildAccountTrendSeries({
 
 // Rolls a trend series up into the headline numbers shown in the account's collapsed
 // row and in the all-accounts totals table — kept in one place so both stay consistent.
-export function summarizeAccountTrend(series, taxRate = 0) {
+export function summarizeAccountTrend(series) {
   const totalCommission = series.reduce((s, p) => s + p.commission, 0);
   const totalAdSpend = series.reduce((s, p) => s + p.adSpend, 0);
   const totalActualReceived = series.reduce((s, p) => s + p.actualReceived, 0);
@@ -140,14 +140,12 @@ export function summarizeAccountTrend(series, taxRate = 0) {
   // (well under 100%) is expected while orders are still within the 5-14 day completion
   // window, but a persistently low number for OLDER orders flags cancellations/returns.
   const receivedOverReported = totalCommission > 0 ? (totalActualReceived / totalCommission) * 100 : 0;
-  // Cash-based profit — actual money received (post-tax, same account tax rate) minus
-  // actual money spent — as opposed to reportProfitTotal, which is based on the report's
-  // (not-yet-paid) commission figure.
-  const rate = Math.min(100, Math.max(0, Number(taxRate) || 0)) / 100;
-  const actualTax = totalActualReceived * rate;
-  const realProfit = totalActualReceived - actualTax - totalAdSpend;
+  // Cash-based profit — actual money received minus actual money spent — as opposed to
+  // reportProfitTotal, which is based on the report's (not-yet-paid) commission figure.
+  // Tien thuc nhan Shopee tra ve da bi tru thue san, nen KHONG tru thue them lan nua.
+  const realProfit = totalActualReceived - totalAdSpend;
   return {
-    totalCommission, totalAdSpend, totalActualReceived, totalTax, actualTax, reportProfitTotal, avgDaily, peak,
+    totalCommission, totalAdSpend, totalActualReceived, totalTax, reportProfitTotal, avgDaily, peak,
     adsOverCommission, receivedOverReported, realProfit
   };
 }

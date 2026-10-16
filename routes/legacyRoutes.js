@@ -1724,7 +1724,10 @@ app.get('/api/campaigns/today', async (req, res) => {
     const shouldFetchMetaInsights = includeMetaInsights && provider !== 'shopee' && String(fDate) <= today;
     const metaInsightsToDate = String(tDate) > today ? today : tDate;
     const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}:${shouldFetchMetaInsights ? 'meta-insights' : 'stored-insights'}`);
-    const cached = includeLiveCampaigns || shouldFetchMetaInsights ? null : getReadCache(cacheKey);
+    // Ban "live" (trang Chien dich) / meta-insights goi thang Facebook: truoc day khong cache nen
+    // moi lan mo / tai lai trang la 1 luot goi Facebook. Nay cache 30s (READ_CACHE_TTL_MS) nhu ban
+    // thuong; key da tach rieng live / meta, va bat/tat/sua camp deu clearCampaignReadCache.
+    const cached = getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
     const accountFilter = provider ? buildAccountProviderFilter(provider) : {};
@@ -1853,7 +1856,7 @@ app.get('/api/campaigns/today', async (req, res) => {
     }
 
     console.log(`[campaigns:today] provider=${provider || 'all'} ${fDate}..${tDate} rows=${result.length} meta=${shouldFetchMetaInsights ? 'yes' : 'no'} ${Date.now() - startedAt}ms`);
-    res.json(includeLiveCampaigns || shouldFetchMetaInsights ? result : setReadCache(cacheKey, result));
+    res.json(setReadCache(cacheKey, result));
   } catch (error) {
     console.error(`[campaigns:today] failed after ${Date.now() - startedAt}ms: ${error.message}`);
     res.status(500).json({ error: error.message });
@@ -3049,36 +3052,95 @@ app.get('/api/orders/hourly-sku-counts', async (req, res) => {
 // Nhieu nguoi mo Dashboard cung luc -> dung chung 1 lan tinh (khoang lich su ~2s query + ~0.4s tinh)
 const orderSkuStatsInFlight = new Map();
 
+// Khoang dai (vd ti le hoan tu 22/02, ~120k don): moi lan tinh lai ~2s CPU va nap ca tram nghin
+// don vao RAM. Cache theo phien ban du lieu bi xoa ~2 phut/lan (moi khi co don moi) nen truoc day
+// tinh lai lien tuc. Ti le hoan nhieu thang khong can cap nhat tung phut -> cache 10 phut theo
+// khoang ngay; het han thi tra ban cu ngay va tinh lai o nen (nguoi dung khong phai cho).
+const LONG_RANGE_ORDER_STATS_MIN_DAYS = 7;
+const LONG_RANGE_ORDER_STATS_TTL_MS = 10 * 60 * 1000;
+const longRangeOrderStats = new Map(); // `${fromDate}:${toDate}` -> { stats, at, compactJson }
+
+function isLongOrderStatsRange(fromDate, toDate) {
+  const from = Date.parse(`${fromDate}T00:00:00Z`);
+  const to = Date.parse(`${toDate || fromDate}T00:00:00Z`);
+  return Number.isFinite(from) && Number.isFinite(to) && (to - from) / 86400000 >= LONG_RANGE_ORDER_STATS_MIN_DAYS;
+}
+
+// Dashboard chi dung ti le hoan theo SKU: gui dang gon [hoan, dang hoan, da nhan] thay cho
+// object 5 truong cua ~28k SKU (2.7 MB -> vai tram KB). Client tu tinh denominator / rate.
+function buildCompactReturnStatsJson(stats) {
+  const compact = {};
+  for (const [sku, item] of Object.entries(stats.returnStatsBySku || {})) {
+    if (item.denominator > 0) compact[sku] = [item.returned, item.returning, item.received];
+  }
+  return JSON.stringify({ ok: true, compact: true, returnStatsBySku: compact });
+}
+
+function computeOrderSkuStats(fromDate, toDate, cacheKey) {
+  let pending = orderSkuStatsInFlight.get(cacheKey);
+  if (!pending) {
+    pending = (async () => {
+      const allOrders = await Order.find(buildOrderQuery({ fromDate, toDate })).select(ORDER_SKU_STATS_FIELDS).lean();
+      return buildOrderSkuStats(allOrders);
+    })().finally(() => orderSkuStatsInFlight.delete(cacheKey));
+    orderSkuStatsInFlight.set(cacheKey, pending);
+  }
+  return pending;
+}
+
+function refreshLongRangeOrderStats(fromDate, toDate) {
+  const rangeKey = `${fromDate}:${toDate || ''}`;
+  return computeOrderSkuStats(fromDate, toDate, `long:${rangeKey}`).then(stats => {
+    const entry = { stats, at: Date.now(), compactJson: buildCompactReturnStatsJson(stats) };
+    longRangeOrderStats.set(rangeKey, entry);
+    if (longRangeOrderStats.size > 10) longRangeOrderStats.delete(longRangeOrderStats.keys().next().value);
+    return entry;
+  });
+}
+
 app.get('/api/orders/sku-counts', async (req, res) => {
   try {
     const fromDate = req.query.fromDate || todayStr();
     const { toDate } = req.query;
-    const cacheKey = getOrderStatsCacheKey({ fromDate, toDate });
+    const compact = req.query.fields === 'returnStatsBySku';
 
-    if (cacheKey && orderStatsCache.has(cacheKey)) {
-      res.json({ ok: true, ...orderStatsCache.get(cacheKey), cached: true });
+    if (isLongOrderStatsRange(fromDate, toDate)) {
+      let entry = longRangeOrderStats.get(`${fromDate}:${toDate || ''}`);
+      if (!entry) {
+        entry = await refreshLongRangeOrderStats(fromDate, toDate);
+      } else if (Date.now() - entry.at > LONG_RANGE_ORDER_STATS_TTL_MS) {
+        // Tinh lai o nen; loi thi giu ban cu, lan sau thu lai
+        refreshLongRangeOrderStats(fromDate, toDate).catch(error => {
+          console.error(`[sku-counts] tinh lai thong ke ${fromDate}..${toDate} loi: ${error.message}`);
+        });
+      }
+      if (compact) {
+        res.type('application/json').send(entry.compactJson);
+      } else {
+        res.json({ ok: true, ...entry.stats, cached: true });
+      }
       return;
     }
 
-    let pending = orderSkuStatsInFlight.get(cacheKey);
-    if (!pending) {
-      pending = (async () => {
-        const allOrders = await Order.find(buildOrderQuery({ fromDate, toDate })).select(ORDER_SKU_STATS_FIELDS).lean();
-        const stats = buildOrderSkuStats(allOrders);
-        if (cacheKey) {
-          orderStatsCache.set(cacheKey, stats);
-          if (orderStatsCache.size > 50) {
-            const oldestKey = orderStatsCache.keys().next().value;
-            orderStatsCache.delete(oldestKey);
-          }
+    const cacheKey = getOrderStatsCacheKey({ fromDate, toDate });
+    let stats = cacheKey ? orderStatsCache.get(cacheKey) : null;
+    const cached = Boolean(stats);
+    if (!stats) {
+      stats = await computeOrderSkuStats(fromDate, toDate, cacheKey);
+      if (cacheKey) {
+        orderStatsCache.set(cacheKey, stats);
+        if (orderStatsCache.size > 50) {
+          const oldestKey = orderStatsCache.keys().next().value;
+          orderStatsCache.delete(oldestKey);
         }
-        return stats;
-      })().finally(() => orderSkuStatsInFlight.delete(cacheKey));
-      orderSkuStatsInFlight.set(cacheKey, pending);
+      }
     }
-    const stats = await pending;
 
-    res.json({ ok: true, ...stats });
+    if (compact) {
+      res.type('application/json').send(buildCompactReturnStatsJson(stats));
+    } else {
+      res.json({ ok: true, ...stats, ...(cached ? { cached: true } : {}) });
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

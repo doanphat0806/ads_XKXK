@@ -6,6 +6,7 @@ import { toast } from 'react-toastify';
 import { loadXlsx } from '../utils/loadXlsx';
 import ColumnSettingsModal from '../components/ColumnSettingsModal';
 import ColumnPresetMenu from '../components/ColumnPresetMenu';
+import { useVisibleInterval } from '../hooks/useVisibleInterval';
 import { META_EXTRA_COLUMNS, META_EXTRA_COLUMN_BY_ID } from '../utils/metaExtraColumns';
 
 const toText = (value, fallback = '-') => {
@@ -228,6 +229,14 @@ const formatMetaExtraValue = (value, format) => {
   return formatNumber(Math.round(value));
 };
 const EMPTY_RETURN_STATS = { returned: 0, returning: 0, received: 0, denominator: 0, rate: 0 };
+// Server gui ti le hoan theo SKU dang gon [hoan, dang hoan, da nhan] (fields=returnStatsBySku);
+// ban cu trong cache trinh duyet van la object -> nhan ca 2 dang
+const toReturnStats = (value) => {
+  if (!Array.isArray(value)) return value || EMPTY_RETURN_STATS;
+  const [returned = 0, returning = 0, received = 0] = value;
+  const denominator = returned + returning + received;
+  return { returned, returning, received, denominator, rate: denominator > 0 ? (returned + returning) / denominator : 0 };
+};
 
 const buildStatsFromCampaigns = (campaigns = [], isShopee = false) => {
   const totals = campaigns.reduce((items, campaign) => {
@@ -485,7 +494,7 @@ export default function Dashboard() {
         if (!cancelled && showError) toast.error('Lỗi tải quy tắc camp: ' + error.message);
       });
     loadRules(true);
-    const interval = setInterval(() => loadRules(false), HOURLY_REFRESH_MS);
+    const interval = setInterval(() => { if (document.visibilityState !== 'hidden') loadRules(false); }, HOURLY_REFRESH_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -896,7 +905,7 @@ export default function Dashboard() {
       setSkuTotal(data.totalOrders || 0);
       setOrderReturnStats(data.returnStats || EMPTY_RETURN_STATS);
       if (includeReturnStats) {
-        const returnStatsUrl = `/orders/sku-counts?fromDate=${CAMPAIGN_RETURN_STATS_FROM_DATE}&toDate=${todayString()}`;
+        const returnStatsUrl = `/orders/sku-counts?fromDate=${CAMPAIGN_RETURN_STATS_FROM_DATE}&toDate=${todayString()}&fields=returnStatsBySku`;
         const cachedReturnStats = readResponseCache(`GET:${returnStatsUrl}`);
         if (cachedReturnStats) setReturnStatsBySku(cachedReturnStats.returnStatsBySku || {});
         cachedApi('GET', returnStatsUrl)
@@ -920,13 +929,11 @@ export default function Dashboard() {
     loadSkuCounts(reportFromDate, reportToDate);
   }, [reportFromDate, reportToDate, loadDashboardData, loadSkuCounts]);
 
-  useEffect(() => {
-    if (provider === 'shopee') return undefined;
-    const interval = setInterval(() => {
-      loadSkuCounts(reportFromDate, reportToDate, { silent: true, includeReturnStats: false });
-    }, ORDER_REFRESH_MS);
-    return () => clearInterval(interval);
-  }, [provider, reportFromDate, reportToDate, loadSkuCounts]);
+  // Tab an thi dung tu lam moi so don (10s/lan); mo lai tab thi tai ngay
+  const refreshSkuCountsSilently = useCallback(() => {
+    loadSkuCounts(reportFromDate, reportToDate, { silent: true, includeReturnStats: false });
+  }, [loadSkuCounts, reportFromDate, reportToDate]);
+  useVisibleInterval(refreshSkuCountsSilently, ORDER_REFRESH_MS, provider !== 'shopee');
 
   // Dang chon khung gio -> Tong don lay tu Pancake POS (co gio tao don), sheet chi co ngay
   useEffect(() => {
@@ -937,7 +944,7 @@ export default function Dashboard() {
       .then(data => { if (!cancelled) { setHourlySkuStats(data); setHourlySkuError(''); } })
       .catch(error => { if (!cancelled) setHourlySkuError(error?.message || 'Khong tai duoc don theo gio'); });
     load();
-    const interval = setInterval(load, 60 * 1000);
+    const interval = setInterval(() => { if (document.visibilityState !== 'hidden') load(); }, 60 * 1000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [hourRangeActive, showOrders, reportFromDate, reportToDate, reportHours]);
 
@@ -967,7 +974,7 @@ export default function Dashboard() {
     if (!campaignName || !hasReturnStatsBySku) return EMPTY_RETURN_STATS;
     for (const skuKey of getCampaignSkuCandidates(campaignName)) {
       const stats = returnStatsBySku[skuKey];
-      if (stats) return stats;
+      if (stats) return toReturnStats(stats);
     }
     return EMPTY_RETURN_STATS;
   }, [returnStatsBySku, hasReturnStatsBySku]);
@@ -988,7 +995,7 @@ export default function Dashboard() {
       .then(data => { if (!cancelled) { setHourlyData({ ...data, provider }); setHourlyError(''); } })
       .catch(error => { if (!cancelled) setHourlyError(error?.message || 'Khong tai duoc so lieu theo gio'); });
     load();
-    const interval = setInterval(load, HOURLY_REFRESH_MS);
+    const interval = setInterval(() => { if (document.visibilityState !== 'hidden') load(); }, HOURLY_REFRESH_MS);
     return () => { cancelled = true; clearInterval(interval); };
   }, [hourRangeActive, provider, reportFromDate, reportToDate]);
   const hourAdjustedCampaigns = useMemo(() => {

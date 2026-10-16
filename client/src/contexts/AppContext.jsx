@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { api, cachedApi, clearResponseCache, readResponseCache, todayString } from '../lib/api';
 import { setGeminiKeyStatus } from '../lib/gemini';
 import { notify } from '../lib/notify';
+import { useVisibleInterval } from '../hooks/useVisibleInterval';
 
 const AppContext = createContext();
 
@@ -192,14 +193,11 @@ export const AppProvider = ({ children }) => {
   }, [loadAll, provider]);
 
   useEffect(() => {
-    if (isAuthenticated) {
-      loadAll();
-      const interval = setInterval(() => {
-        loadLiveData();
-      }, AUTO_REFRESH_MS);
-      return () => clearInterval(interval);
-    }
-  }, [isAuthenticated, loadAll, loadLiveData]);
+    if (isAuthenticated) loadAll();
+  }, [isAuthenticated, loadAll]);
+
+  // Tab an thi dung tu lam moi (xem hooks/useVisibleInterval)
+  useVisibleInterval(loadLiveData, AUTO_REFRESH_MS, isAuthenticated);
 
   return (
     <AppContext.Provider value={{
