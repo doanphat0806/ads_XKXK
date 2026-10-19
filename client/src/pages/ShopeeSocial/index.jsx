@@ -153,22 +153,13 @@ export default function ShopeeSocial() {
     saveState({ orders, fileName, defaultCpc, cpcBySubId, clicksBySubId });
   }, [hydrated, orders, fileName, defaultCpc, cpcBySubId, clicksBySubId]);
 
-  // Widened date range: the top filter's range PLUS any commission-receipt dates
-  // outside it, so a receipt logged for e.g. "today" while filters still show an older
-  // report's range still gets its own day — WITH matching ad-spend data fetched for
-  // it — on the per-account trend charts, instead of silently landing outside the
-  // fetched window and showing adSpend=0 for that day.
-  const widenedDateRange = useMemo(() => {
-    let fromDate = filters.fromDate;
-    let toDate = filters.toDate;
-    commissionReceipts.forEach(r => {
-      if (!r.date) return;
-      const day = toDayStr(r.date);
-      if (!fromDate || day < fromDate) fromDate = day;
-      if (!toDate || day > toDate) toDate = day;
-    });
-    return { fromDate, toDate };
-  }, [filters.fromDate, filters.toDate, commissionReceipts]);
+  // Truoc day khoang ngay bi "noi rong" theo moi ngay co ghi tay thuc nhan, nen chon 1 ngay
+  // (vd 18/10) van cong ca hoa hong/chi phi Ads cua tat ca cac ngay co thuc nhan vao bang
+  // "Tong hop theo tai khoan". Gio moi so lieu chi theo dung khoang ngay dang loc.
+  const widenedDateRange = useMemo(
+    () => ({ fromDate: filters.fromDate, toDate: filters.toDate }),
+    [filters.fromDate, filters.toDate]
+  );
 
   // Real Facebook ad spend, matched to orders by SubID2 (see adsSpendApi.js). Refetches
   // whenever the selected date range changes so spend always lines up with what's on screen.
@@ -354,20 +345,25 @@ export default function ShopeeSocial() {
   const totalTax = useMemo(() => matrixRows.reduce((s, r) => s + r.taxAmount, 0), [matrixRows]);
   const netProfit = kpis.commissionTotal - totalTax - totalAdSpend;
 
-  // "Hoa hồng thực nhận" is a running cash ledger, not a report metric tied to the order
-  // date range — a payout entered for today shouldn't vanish from the KPI just because
-  // the date filter (driven by the imported report's order dates) doesn't cover today.
-  // Only the account filter applies; date range is intentionally ignored here.
-  const totalActualReceived = useMemo(() => {
-    return commissionReceipts
-      .filter(r => filters.accountName === 'all' || r.accountName === filters.accountName)
-      .reduce((s, r) => s + r.amount, 0);
-  }, [commissionReceipts, filters.accountName]);
-  const totalActualTax = useMemo(() => {
-    return commissionReceipts
-      .filter(r => filters.accountName === 'all' || r.accountName === filters.accountName)
-      .reduce((s, r) => s + r.amount * remainingTaxRate(taxRateByAccountName[r.accountName]), 0);
-  }, [commissionReceipts, filters.accountName, taxRateByAccountName]);
+  // "Hoa hồng thực nhận" loc theo tai khoan VA khoang ngay dang chon — neu cong don moi
+  // ngay thi "Loi nhuan thuc" se lay thuc nhan cua tat ca cac ngay tru chi phi Ads cua
+  // rieng ngay dang loc, ra so vo nghia.
+  const receiptsInFilter = useMemo(() => commissionReceipts.filter(r => {
+    if (filters.accountName !== 'all' && r.accountName !== filters.accountName) return false;
+    if (!r.date) return false;
+    const day = toDayStr(r.date);
+    if (filters.fromDate && day < filters.fromDate) return false;
+    if (filters.toDate && day > filters.toDate) return false;
+    return true;
+  }), [commissionReceipts, filters.accountName, filters.fromDate, filters.toDate]);
+  const totalActualReceived = useMemo(
+    () => receiptsInFilter.reduce((s, r) => s + r.amount, 0),
+    [receiptsInFilter]
+  );
+  const totalActualTax = useMemo(
+    () => receiptsInFilter.reduce((s, r) => s + r.amount * remainingTaxRate(taxRateByAccountName[r.accountName]), 0),
+    [receiptsInFilter, taxRateByAccountName]
+  );
   const realProfit = totalActualReceived - totalActualTax - totalAdSpend;
   const platformDistribution = useMemo(() => computePlatformDistribution(filteredOrders), [filteredOrders]);
   const hourlyDistribution = useMemo(() => computeHourlyDistribution(filteredOrders), [filteredOrders]);
@@ -386,18 +382,9 @@ export default function ShopeeSocial() {
       const taxRate = taxRateByAccountName[accountName] || 0;
       const adAccountScope = resolveAdAccountScope(shopeeAccounts, accountName);
 
-      // Widen the range to cover this account's own commission-receipt dates — otherwise
-      // a receipt entered for a day outside the top date filter (e.g. today, while the
-      // filter still shows an older report's date range) silently has no day to land on
-      // and the chart looks unchanged even though the entry was saved fine.
-      let fromDate = filters.fromDate;
-      let toDate = filters.toDate;
-      commissionReceipts.forEach(r => {
-        if (r.accountName !== accountName || !r.date) return;
-        const day = toDayStr(r.date);
-        if (!fromDate || day < fromDate) fromDate = day;
-        if (!toDate || day > toDate) toDate = day;
-      });
+      // Chi dung dung khoang ngay dang loc (khong noi rong theo ngay ghi thuc nhan nua).
+      const fromDate = filters.fromDate;
+      const toDate = filters.toDate;
 
       return {
         accountName,

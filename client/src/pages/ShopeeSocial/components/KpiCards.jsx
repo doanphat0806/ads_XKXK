@@ -47,7 +47,7 @@ export default function KpiCards({ kpis, netProfit, totalAdSpend, totalClicks, t
         tone="teal"
         label="Hoa Hồng Thực Nhận"
         value={formatVND(totalActualReceived)}
-        sub="Ghi tay · tổng cộng dồn (không theo ngày lọc)"
+        sub="Ghi tay · theo ngày lọc"
       />
       <Kpi
         tone={realProfit >= 0 ? 'g' : 'r'}
