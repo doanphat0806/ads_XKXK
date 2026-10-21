@@ -998,6 +998,8 @@ function createLegacyRuntime(app) {
   // fast polling 00:00-12:00, throttled to 3-5 min outside it.
   const FACEBOOK_DATA_FETCH_FAST_WINDOW_START = '00:00';
   const FACEBOOK_DATA_FETCH_FAST_WINDOW_END = '12:00';
+  // Gio bat dau ap rule tat camp Facebook moi ngay (truoc gio nay chi theo doi, khong tat)
+  const FACEBOOK_AUTO_PAUSE_START_TIME = '02:00';
 
   async function getAutoCheckIntervalSeconds(account) {
     const minInterval = account.provider === 'shopee' ? 60 : AUTO_CHECK_MIN_INTERVAL_SECONDS;
@@ -1414,11 +1416,11 @@ function createLegacyRuntime(app) {
     return 0;
   }
   
-  async function getTodayOrderSkuCountsForAuto(account) {
+  async function getTodayOrderSkuCountsForAuto(account, dateKey = todayStr()) {
     if (normalizeProvider(account.provider) === 'shopee') return {};
-  
+
     try {
-      const today = todayStr();
+      const today = normalizeCampaignDate(dateKey);
       const orders = await Order.find(buildOrderQuery({ fromDate: today, toDate: today })).select(ORDER_SKU_STATS_FIELDS).lean();
       return buildOrderSkuStats(orders).counts || {};
     } catch (error) {
@@ -2922,8 +2924,8 @@ function createLegacyRuntime(app) {
       .filter(Boolean);
   }
   
-  async function fetchShopeeAccountData(account) {
-    const today = todayStr();
+  async function fetchShopeeAccountData(account, dateKey = todayStr()) {
+    const today = normalizeCampaignDate(dateKey);
     let campaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
     const { fbToken } = await getEffectiveSecrets(account);
     if (fbToken) {
@@ -2990,8 +2992,8 @@ function createLegacyRuntime(app) {
     return { campaigns, totalSpend, totalMessages, unreadMessages };
   }
 
-  async function fetchAccountData(account) {
-    const today = todayStr();
+  async function fetchAccountData(account, dateKey = todayStr()) {
+    const today = normalizeCampaignDate(dateKey);
     const { fbToken } = await getEffectiveSecrets(account);
     if (!fbToken) throw new Error('Thieu Facebook Access Token');
   
@@ -3176,11 +3178,15 @@ function createLegacyRuntime(app) {
   
     try {
       const isShopee = account.provider === 'shopee';
-      const { campaigns, totalSpend, totalMessages, unreadMessages } = isShopee
-        ? await fetchShopeeAccountData(account)
-        : await fetchAccountData(account);
-      const { fbToken, geminiKey } = await getEffectiveSecrets(account);
+      // Chot ngay MOT lan o dau luot chay: truoc day spend lay theo ngay luc bat dau fetch,
+      // con don hang lay theo todayStr() goi lai sau khi fetch xong. Luot chay vat qua 00:00
+      // -> spend ca ngay hom qua nhung don hang ngay moi = 0 -> tat nham camp CPO thap
+      // ("0 don va da tieu tu ..."). Spend, don hang va ghi DB phai cung 1 ngay.
       const today = todayStr();
+      const { campaigns, totalSpend, totalMessages, unreadMessages } = isShopee
+        ? await fetchShopeeAccountData(account, today)
+        : await fetchAccountData(account, today);
+      const { fbToken, geminiKey } = await getEffectiveSecrets(account);
   
       await Account.findByIdAndUpdate(account._id, {
         lastChecked: new Date(),
@@ -3202,7 +3208,7 @@ function createLegacyRuntime(app) {
       // after 12:00), a bad campaign gets caught and turned off right away either way.
       const canReactivateShopeeAtMidnight = isShopee
         && (options.allowShopeeReactivateAtMidnight || isVietnamTimeMinute(0, 0));
-      const skuCounts = await getTodayOrderSkuCountsForAuto(account);
+      const skuCounts = await getTodayOrderSkuCountsForAuto(account, today);
       const historicalShopeeCampaigns = canReactivateShopeeAtMidnight
         ? await getShopeeHistoricalCampaignCandidatesForAuto(account, fbToken, campaigns, today)
         : [];
@@ -3309,7 +3315,33 @@ function createLegacyRuntime(app) {
         } catch { }
       }
   
-      if (campaignsToPause.length > 0) {
+      // Chot chan them: luot chay vat qua 00:00 thi KHONG tat camp nao o luot nay. Du lieu luot
+      // nay la cua ngay cu, tat luc nua dem se lam camp nam im ca ngay moi. Luot sau (1-3 phut)
+      // se tinh lai theo spend + don hang cua ngay moi.
+      const dateChangedDuringRun = todayStr() !== today;
+      if (dateChangedDuringRun && campaignsToPause.length > 0) {
+        await addLog(
+          account._id,
+          account.name,
+          'info',
+          `Bo qua tat ${campaignsToPause.length} camp: luot kiem tra vat qua 00:00 (du lieu ngay ${today}), cho luot sau tinh theo ngay moi`
+        );
+      }
+
+      // Facebook: 00:00 - 02:00 chua tat camp theo rule. Dau ngay spend vua reset, don hang
+      // chua kip ve -> rule 0 don / CPO de tat nham camp dang chay tot. Tu 02:00 xet binh thuong.
+      const { hour: fbPauseStartHour, minute: fbPauseStartMinute } = parseHourMinute(FACEBOOK_AUTO_PAUSE_START_TIME, '02:00');
+      const isBeforeFacebookPauseStart = !isShopee && !isAfterVietnamTime(fbPauseStartHour, fbPauseStartMinute);
+      if (isBeforeFacebookPauseStart && !dateChangedDuringRun && campaignsToPause.length > 0) {
+        await addLog(
+          account._id,
+          account.name,
+          'info',
+          `Bo qua tat ${campaignsToPause.length} camp: truoc ${FACEBOOK_AUTO_PAUSE_START_TIME} chua ap rule tat camp`
+        );
+      }
+
+      if (campaignsToPause.length > 0 && !dateChangedDuringRun && !isBeforeFacebookPauseStart) {
         for (const item of campaignsToPause) {
           const campaignGraphId = item.campaign.id || item.campaign.campaignId;
           if (isShopee) {
