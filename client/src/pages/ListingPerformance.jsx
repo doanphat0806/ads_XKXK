@@ -4,9 +4,11 @@ import { api, formatNumber, todayString } from '../lib/api';
 import DateRangePicker from '../components/DateRangePicker';
 import { loadXlsx } from '../utils/loadXlsx';
 
-// Mac dinh 5 tuan gan nhat (35 ngay, ket thuc hom nay)
+// Mac dinh 5 tuan thuc te gan nhat: tu Thu 2 cua 4 tuan truoc den hom nay
 function defaultFromDate() {
-  return new Date(Date.parse(`${todayString()}T00:00:00Z`) - 34 * 86400000).toISOString().slice(0, 10);
+  const today = new Date(`${todayString()}T00:00:00Z`);
+  const daysSinceMonday = (today.getUTCDay() + 6) % 7;
+  return new Date(today.getTime() - (daysSinceMonday + 28) * 86400000).toISOString().slice(0, 10);
 }
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 const CODE_RE = /^(MS\s*)?[A-Z]{2}\s*\d{5,}$/i;
@@ -326,7 +328,7 @@ export default function ListingPerformance() {
                 setToDate(to);
               }}
             />
-            {report && <span className="listing-tile-when">{report.weeks.length} tuan · tinh nguoc 7 ngay tu ngay cuoi</span>}
+            {report && <span className="listing-tile-when">{report.weeks.length} tuan · Thu 2 → CN</span>}
             <button className="btn btn-ghost btn-sm" onClick={loadReport} disabled={loading}>Tai lai</button>
             <button className="btn btn-ghost btn-sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
               {uploading ? 'Dang doc file...' : 'Upload ma moi'}

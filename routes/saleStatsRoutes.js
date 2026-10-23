@@ -3,7 +3,7 @@
 const express = require('express');
 const Config = require('../models/Config');
 const { getAppConfig, clearAppConfigCache } = require('../services/configService');
-const { buildSaleStaffStats } = require('../services/pancakePageStatsService');
+const { buildSaleStaffStats, mondayOf, resolveWeekSchedule } = require('../services/pancakePageStatsService');
 const { isAdminUser, requireAdminUser } = require('../utils/authUtils');
 const { todayStr } = require('../utils/timeUtils');
 
@@ -20,6 +20,118 @@ function getStoredPages(config = {}) {
 function getSaleStaffIds(config = {}) {
   return (Array.isArray(config.saleStaffIds) ? config.saleStaffIds : []).map(String).filter(Boolean);
 }
+
+// Lich ca tuan: { shifts: ['8-12h', ...], days: [7 mang (Thu 2..CN) cac { shift, staffId }] }
+function normalizeShiftSchedule(value = {}) {
+  const shifts = [...new Set((Array.isArray(value.shifts) ? value.shifts : [])
+    .map(label => String(label || '').trim().slice(0, 30))
+    .filter(Boolean))].slice(0, 20);
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const entries = Array.isArray(value.days?.[index]) ? value.days[index] : [];
+    return entries
+      .map(entry => ({ shift: String(entry?.shift || '').trim(), staffId: String(entry?.staffId || '').trim() }))
+      .filter(entry => shifts.includes(entry.shift) && /^[\w-]{6,64}$/.test(entry.staffId))
+      .slice(0, 100);
+  });
+  return { shifts, days };
+}
+
+// Lich ca theo tuan { [Thu 2]: lich }. Ban cu chi co 1 lich lap lai (saleShiftSchedule) -> coi la lich cua tuan hien tai,
+// cac tuan khac muon lich nay cho den khi luu lich rieng.
+function getShiftSchedules(config = {}) {
+  const schedules = config.saleShiftSchedules && typeof config.saleShiftSchedules === 'object' ? config.saleShiftSchedules : {};
+  if (Object.keys(schedules).length) return schedules;
+  const legacy = config.saleShiftSchedule;
+  return legacy?.days?.some(day => day?.length) ? { [mondayOf(todayStr())]: legacy } : {};
+}
+
+function parseWeekStart(value) {
+  const date = String(value || '').trim();
+  return mondayOf(DATE_RE.test(date) ? date : todayStr());
+}
+
+// GET /api/sale-stats/shift-schedule?week=YYYY-MM-DD -> lich cua tuan chua ngay do (own=false: dang muon lich tuan sourceWeek)
+router.get('/shift-schedule', async (req, res) => {
+  try {
+    const schedules = getShiftSchedules(await getAppConfig());
+    const { weekStart, schedule, sourceWeek, own } = resolveWeekSchedule(schedules, parseWeekStart(req.query.week));
+    res.json({
+      weekStart,
+      own,
+      sourceWeek,
+      savedWeeks: Object.keys(schedules).sort(),
+      ...normalizeShiftSchedule(schedule || {})
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Body: { week, shifts, days } - luu lich rieng cho 1 tuan ($set rieng key tuan, khong de len tuan khac)
+router.put('/shift-schedule', async (req, res) => {
+  try {
+    if (!requireAdminUser(req, res)) return;
+    const weekStart = parseWeekStart(req.body?.week);
+    const schedule = normalizeShiftSchedule(req.body || {});
+    const config = await getAppConfig({ fresh: true });
+    // Chuyen lich cu (1 lich chung) sang dang theo tuan truoc khi them tuan moi, de khong mat
+    const migrate = !Object.keys(config.saleShiftSchedules || {}).length ? getShiftSchedules(config) : {};
+    const set = { [`saleShiftSchedules.${weekStart}`]: schedule, updatedAt: new Date() };
+    for (const [week, legacy] of Object.entries(migrate)) {
+      if (week !== weekStart) set[`saleShiftSchedules.${week}`] = normalizeShiftSchedule(legacy);
+    }
+    await Config.updateOne({ key: 'app' }, { $set: set }, { upsert: true });
+    clearAppConfigCache();
+    res.json({ weekStart, own: true, sourceWeek: weekStart, ...schedule });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Xoa lich rieng cua 1 tuan (tuan do quay ve muon lich tuan gan nhat truoc do)
+router.delete('/shift-schedule', async (req, res) => {
+  try {
+    if (!requireAdminUser(req, res)) return;
+    const weekStart = parseWeekStart(req.query.week);
+    await Config.updateOne({ key: 'app' }, { $unset: { [`saleShiftSchedules.${weekStart}`]: '' }, $set: { updatedAt: new Date() } });
+    clearAppConfigCache();
+    res.json({ weekStart, deleted: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Ten goi tat trong lich ca Excel -> id nhan vien Pancake (vd "linh" -> id HE LO). Key da bo dau, chu thuong.
+function normalizeAliasKey(value) {
+  return String(value || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'd')
+    .toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 60);
+}
+
+router.get('/staff-aliases', async (req, res) => {
+  try {
+    const aliases = (await getAppConfig()).saleStaffAliases;
+    res.json({ aliases: aliases && typeof aliases === 'object' ? aliases : {} });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Body: { aliases: { "Linh": "<id>" } } - ghi de toan bo bang ten goi tat
+router.put('/staff-aliases', async (req, res) => {
+  try {
+    if (!requireAdminUser(req, res)) return;
+    const input = req.body?.aliases && typeof req.body.aliases === 'object' ? req.body.aliases : {};
+    const aliases = Object.fromEntries(Object.entries(input)
+      .map(([alias, staffId]) => [normalizeAliasKey(alias), String(staffId || '').trim()])
+      .filter(([alias, staffId]) => alias && /^[\w-]{6,64}$/.test(staffId))
+      .slice(0, 200));
+    await Config.updateOne({ key: 'app' }, { $set: { saleStaffAliases: aliases, updatedAt: new Date() } }, { upsert: true });
+    clearAppConfigCache();
+    res.json({ aliases });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Body: { staffIds: [id Pancake] } - chi admin
 router.put('/sale-staff', async (req, res) => {
@@ -69,6 +181,7 @@ router.get('/staff', async (req, res) => {
       toDate,
       pageId: String(req.query.pageId || '').trim(),
       staffIds: getSaleStaffIds(config),
+      shiftSchedules: getShiftSchedules(config),
       fresh: req.query.fresh === '1',
       // response tho chi cho admin (de doi chieu ten truong khi Pancake doi format)
       debug: req.query.debug === '1' && isAdminUser(req.currentUser)

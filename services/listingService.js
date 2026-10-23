@@ -39,23 +39,27 @@ function daysBetween(fromKey, toKey) {
   return Math.round((Date.parse(`${toKey}T00:00:00Z`) - Date.parse(`${fromKey}T00:00:00Z`)) / DAY_MS);
 }
 
-// Chia [fromDate, toDate] thanh cac tuan 7 ngay tinh nguoc tu toDate; tuan dau co the le (bi cat o fromDate).
+// Thu 2 cua tuan chua dateKey
+function mondayOf(dateKey) {
+  const weekday = new Date(`${dateKey}T00:00:00Z`).getUTCDay(); // 0 = CN
+  return addDays(dateKey, -((weekday + 6) % 7));
+}
+
+// Chia [fromDate, toDate] theo tuan thuc te Thu 2 -> CN; tuan dau/cuoi co the le (bi cat o fromDate/toDate).
 function buildListingWeeks(fromDate, toDate) {
-  const weekCount = Math.ceil((daysBetween(fromDate, toDate) + 1) / 7);
   const weeks = [];
-  for (let i = weekCount - 1; i >= 0; i -= 1) {
-    const to = addDays(toDate, -7 * i);
-    const fullFrom = addDays(to, -6);
-    const from = fullFrom < fromDate ? fromDate : fullFrom;
-    weeks.push({ key: `W${weekCount - i}`, from, to, label: `${shortDate(from)}–${shortDate(to)}` });
+  for (let weekStart = mondayOf(fromDate); weekStart <= toDate; weekStart = addDays(weekStart, 7)) {
+    const weekEnd = addDays(weekStart, 6);
+    const from = weekStart < fromDate ? fromDate : weekStart;
+    const to = weekEnd > toDate ? toDate : weekEnd;
+    weeks.push({ key: `W${weeks.length + 1}`, from, to, label: `${shortDate(from)}–${shortDate(to)}` });
   }
   return weeks;
 }
 
 function findWeekIndex(weeks, dateKey) {
-  const lastWeek = weeks[weeks.length - 1];
-  if (!dateKey || dateKey < weeks[0].from || dateKey > lastWeek.to) return -1;
-  return weeks.length - 1 - Math.floor(daysBetween(dateKey, lastWeek.to) / 7);
+  if (!dateKey || dateKey < weeks[0].from || dateKey > weeks[weeks.length - 1].to) return -1;
+  return Math.floor(daysBetween(mondayOf(weeks[0].from), dateKey) / 7);
 }
 
 function vnDateKey(date) {
@@ -72,9 +76,9 @@ function createWeekCell() {
  */
 async function buildListingWeeklyReport({ fromDate, toDate, staffNames = {} } = {}) {
   const endDate = normalizeCampaignDate(toDate || todayStr());
-  // Mac dinh 5 tuan; khoang qua dai thi cat con MAX_WEEKS tuan gan nhat
-  const minStart = addDays(endDate, -7 * MAX_WEEKS + 1);
-  let startDate = fromDate && fromDate <= endDate ? fromDate : addDays(endDate, -34);
+  // Mac dinh 5 tuan (T2 cua 4 tuan truoc -> endDate); khoang qua dai thi cat con MAX_WEEKS tuan gan nhat
+  const minStart = addDays(mondayOf(endDate), -7 * (MAX_WEEKS - 1));
+  let startDate = fromDate && fromDate <= endDate ? fromDate : addDays(mondayOf(endDate), -28);
   if (startDate < minStart) startDate = minStart;
   const weeks = buildListingWeeks(startDate, endDate);
   const names = { ...DEFAULT_LISTING_STAFF_NAMES, ...staffNames };

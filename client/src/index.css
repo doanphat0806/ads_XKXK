@@ -7459,3 +7459,31 @@
       .sale-sticky { min-width: 150px; }
     }
     .sale-warning { margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; background: #fcefd2; color: #8a5c06; }
+    .sale-shift-labels { display: flex; gap: 8px; flex-wrap: wrap; }
+    .sale-shift-labels input { flex: 1; min-width: 220px; height: 32px; padding: 0 8px; border: 1px solid var(--border2); border-radius: 8px; }
+    .sale-shift-table th, .sale-shift-table td { white-space: nowrap; vertical-align: top; }
+    .sale-shift-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 96px; }
+    .sale-shift-cell select { height: 24px; border: 1px dashed var(--border2); border-radius: 6px; background: transparent; color: var(--muted2); font-size: 11.5px; }
+    .sale-shift-chip { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
+    .sale-shift-chip button { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0; font-size: 13px; line-height: 1; }
+    .sale-shift-week { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .sale-shift-week input { height: 30px; padding: 0 8px; border: 1px solid var(--border2); border-radius: 8px; }
+    /* Lich ca kieu bang Excel: Ca sang xanh la, Ca trua vang, Ca toi xanh ngoc */
+    .sale-shift-table { border-collapse: collapse; }
+    .sale-shift-table th, .sale-shift-table td { border: 1px solid #9aa79a; text-align: center; padding: 6px 8px; }
+    .sale-shift-table thead th { position: static; background: #b9d8a8; color: #1d2b1d; font-weight: 700; text-transform: none; letter-spacing: 0; }
+    .sale-shift-table .sale-shift-group { font-size: 14px; font-weight: 800; }
+    .sale-shift-table td.sale-shift-day { background: #e9a3a3; color: #4a1a1a; }
+    .sale-shift-table th.sale-shift-day { background: #b9d8a8; }
+    .sale-shift-table td.is-morning { background: #22d82a; }
+    .sale-shift-table td.is-noon { background: #fff200; }
+    .sale-shift-table td.is-evening { background: #13f3f3; }
+    .sale-shift-table td .sale-shift-cell { align-items: center; }
+    .sale-shift-table .sale-shift-chip { background: rgba(255, 255, 255, 0.55); color: #111; font-size: 13px; }
+    .sale-shift-table .sale-shift-cell select { border-color: rgba(0, 0, 0, 0.35); color: #222; }
+    .sale-paste { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px dashed var(--border2); border-radius: 10px; background: var(--s2); }
+    .sale-paste-box { width: 100%; min-height: 64px; padding: 10px; border: 1px solid var(--border2); border-radius: 8px; resize: vertical; font: inherit; background: var(--s1); }
+    .sale-paste-unmatched { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+    .sale-paste-unmatched .listing-note { flex-basis: 100%; margin: 0; }
+    .sale-paste-unmatched label { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+    .sale-paste-unmatched select { height: 28px; border: 1px solid var(--border2); border-radius: 6px; }

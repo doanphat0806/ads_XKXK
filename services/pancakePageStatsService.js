@@ -1,7 +1,7 @@
 'use strict';
 
 const Order = require('../models/Order');
-const { buildOrderQuery } = require('./orderService');
+const { buildOrderQuery, classifyReturnOrderTagBucket } = require('./orderService');
 
 const PAGES_API_BASE = 'https://pages.fm/api/public_api/v1';
 const REQUEST_TIMEOUT_MS = 30000;
@@ -130,52 +130,102 @@ async function mapWithConcurrency(items, limit, iteratee) {
   return results;
 }
 
-/**
- * Thong ke nhan vien sale tu Pancake Pages cho cac page da cau hinh, gop theo nhan vien (id Pancake dung chung giua cac page).
- * debug=true tra kem response tho cua page dau tien de doi chieu.
- */
+// Nhom don theo the chinh cho bang sale (cung cach chia voi bao cao hoan): "Oder + Sẵn" tinh la Order; Sale 119/99 tinh la Sale
+const ORDER_TYPE_FIELDS = { sale: 'ordersSale', sale119: 'ordersSale', san: 'ordersSan', od: 'ordersOrder' };
+const ORDER_TYPE_KEYS = ['ordersSale', 'ordersSan', 'ordersOrder'];
+
+function classifySaleOrderType(tags = []) {
+  return classifyReturnOrderTagBucket(Array.isArray(tags) ? tags : []);
+}
+
 /**
  * Dem don POS theo nhan vien chot (rawData.seller_id) trong khoang ngay tao don, bo don huy/xoa nhu cac bao cao don khac.
- * withoutSeller: don chua co seller_id (don luu truoc khi them truong -> chay scripts/backfillPosSeller.js).
+ * Moi nhan vien: tong don + so don Sale / Sẵn / Order / Order + Sẵn (theo the don).
+ * withoutSeller: don chua co truong seller_id (luu truoc khi them truong -> chay scripts/backfillPosSeller.js);
+ * don co seller_id rong = POS khong gan ai, backfill cung khong bo sung duoc.
  */
 async function countPosOrdersBySeller({ fromDate, toDate, pageId = '' }) {
   const match = buildOrderQuery({ fromDate, toDate });
   match['rawData.source'] = 'pancake_pos';
   if (pageId) match['rawData.page_id'] = pageId;
 
-  const [result] = await Order.aggregate([
-    { $match: match },
-    {
-      $facet: {
-        sellers: [
-          { $match: { 'rawData.seller_id': { $nin: [null, ''] } } },
-          {
-            $group: {
-              _id: '$rawData.seller_id',
-              orders: { $sum: 1 },
-              name: { $last: '$rawData.seller_name' },
-              avatar: { $last: '$rawData.seller_avatar' }
-            }
-          }
-        ],
-        total: [{ $count: 'count' }],
-        withoutSeller: [
-          // Chi don chua co truong seller_id (luu truoc khi them truong); don co seller_id rong = POS khong gan ai, backfill cung khong bo sung duoc
-          { $match: { 'rawData.seller_id': { $exists: false } } },
-          { $count: 'count' }
-        ]
-      }
-    }
-  ]);
+  const bySeller = new Map();
+  let total = 0;
+  let withoutSeller = 0;
+  const cursor = Order.find(match)
+    .select('rawData.seller_id rawData.seller_name rawData.seller_avatar rawData.tags')
+    .lean()
+    .cursor();
 
+  for await (const order of cursor) {
+    total += 1;
+    const raw = order.rawData || {};
+    if (raw.seller_id === undefined) {
+      withoutSeller += 1;
+      continue;
+    }
+    if (!raw.seller_id) continue;
+    if (!bySeller.has(raw.seller_id)) {
+      bySeller.set(raw.seller_id, {
+        id: raw.seller_id,
+        name: raw.seller_name || '',
+        avatar: raw.seller_avatar || '',
+        orders: 0,
+        ...Object.fromEntries(ORDER_TYPE_KEYS.map(key => [key, 0]))
+      });
+    }
+    const seller = bySeller.get(raw.seller_id);
+    seller.orders += 1;
+    const field = ORDER_TYPE_FIELDS[classifySaleOrderType(raw.tags)];
+    if (field) seller[field] += 1;
+    if (raw.seller_avatar) seller.avatar = raw.seller_avatar;
+  }
+
+  return { sellers: [...bySeller.values()], total, withoutSeller };
+}
+
+// Thu 2 (YYYY-MM-DD) cua tuan chua dateKey
+function mondayOf(dateKey) {
+  const time = Date.parse(`${dateKey}T00:00:00Z`);
+  const weekday = new Date(time).getUTCDay();
+  return new Date(time - ((weekday + 6) % 7) * 86400000).toISOString().slice(0, 10);
+}
+
+/**
+ * Lich ca theo tuan: schedules = { [Thu 2 YYYY-MM-DD]: { shifts, days: [7 mang Thu 2..CN cac { shift, staffId }] } }.
+ * Tuan khong co lich rieng dung lich cua tuan gan nhat truoc do (khong co thi tuan som nhat).
+ * Tra { weekStart, schedule, own } - own=false la dang muon lich tuan khac.
+ */
+function resolveWeekSchedule(schedules = {}, dateKey) {
+  const weekStart = mondayOf(dateKey);
+  const keys = Object.keys(schedules || {}).filter(key => schedules[key]?.days?.some(day => day?.length)).sort();
+  if (!keys.length) return { weekStart, schedule: null, sourceWeek: '', own: false };
+  if (keys.includes(weekStart)) return { weekStart, schedule: schedules[weekStart], sourceWeek: weekStart, own: true };
+  const sourceWeek = keys.filter(key => key < weekStart).pop() || keys[0];
+  return { weekStart, schedule: schedules[sourceWeek], sourceWeek, own: false };
+}
+
+// Dem so ca moi nhan vien lam trong [fromDate, toDate] (1 o trong lich = 1 ca) + cac tuan dang muon lich tuan khac
+function countScheduledShifts(schedules, fromDate, toDate) {
+  const counts = {};
+  const borrowedWeeks = new Map();
+  for (let time = Date.parse(`${fromDate}T00:00:00Z`); time <= Date.parse(`${toDate}T00:00:00Z`); time += 86400000) {
+    const dateKey = new Date(time).toISOString().slice(0, 10);
+    const { weekStart, schedule, sourceWeek, own } = resolveWeekSchedule(schedules, dateKey);
+    if (!schedule) continue;
+    if (!own) borrowedWeeks.set(weekStart, sourceWeek);
+    const weekdayIndex = (new Date(time).getUTCDay() + 6) % 7;
+    for (const entry of schedule.days?.[weekdayIndex] || []) {
+      if (entry?.staffId) counts[entry.staffId] = (counts[entry.staffId] || 0) + 1;
+    }
+  }
   return {
-    sellers: (result?.sellers || []).map(item => ({ id: item._id, orders: item.orders, name: item.name || '', avatar: item.avatar || '' })),
-    total: result?.total?.[0]?.count || 0,
-    withoutSeller: result?.withoutSeller?.[0]?.count || 0
+    counts,
+    borrowedWeeks: [...borrowedWeeks.entries()].map(([weekStart, sourceWeek]) => ({ weekStart, sourceWeek }))
   };
 }
 
-async function buildSaleStaffStats({ pages = [], fromDate, toDate, pageId = '', staffIds = [], debug = false, fresh = false }) {
+async function buildSaleStaffStats({ pages = [], fromDate, toDate, pageId = '', staffIds = [], shiftSchedules = {}, debug = false, fresh = false }) {
   const days = Math.round((Date.parse(`${toDate}T00:00:00Z`) - Date.parse(`${fromDate}T00:00:00Z`)) / 86400000) + 1;
   if (days < 1) throw new Error('Khoang ngay khong hop le');
   if (days > MAX_RANGE_DAYS) throw new Error(`Pancake chi cho xem toi da ${MAX_RANGE_DAYS} ngay moi lan`);
@@ -216,6 +266,7 @@ async function buildSaleStaffStats({ pages = [], fromDate, toDate, pageId = '', 
     const current = byUser.get(seller.id);
     if (current) {
       current.orders = seller.orders;
+      ORDER_TYPE_KEYS.forEach(key => { current[key] = seller[key]; });
       if (seller.avatar) current.avatar = seller.avatar;
       if (!current.name) current.name = seller.name;
       continue;
@@ -226,16 +277,20 @@ async function buildSaleStaffStats({ pages = [], fromDate, toDate, pageId = '', 
       avatar: seller.avatar,
       ...Object.fromEntries(Object.keys(SUM_FIELDS).map(field => [field, 0])),
       orders: seller.orders,
+      ...Object.fromEntries(ORDER_TYPE_KEYS.map(key => [key, seller[key]])),
       responseWeighted: 0,
       responseWeight: 0,
       pages: []
     });
   }
 
+  const { counts: shiftCounts, borrowedWeeks } = countScheduledShifts(shiftSchedules, fromDate, toDate);
   const rows = [...byUser.values()]
     .map(({ responseWeighted, responseWeight, ...row }) => ({
       ...row,
-      avgResponseSeconds: responseWeight > 0 ? responseWeighted / responseWeight : null
+      avgResponseSeconds: responseWeight > 0 ? responseWeighted / responseWeight : null,
+      shifts: shiftCounts[row.id] || 0,
+      ordersPerShift: shiftCounts[row.id] ? row.orders / shiftCounts[row.id] : null
     }))
     // Bo nhan vien khong co hoat dong nao trong khoang
     .filter(row => row.orders > 0 || Object.keys(SUM_FIELDS).some(field => row[field] > 0));
@@ -248,6 +303,9 @@ async function buildSaleStaffStats({ pages = [], fromDate, toDate, pageId = '', 
     rows: staffIds.length ? rows.filter(row => staffIds.includes(row.id)) : rows,
     allStaff: rows.map(row => ({ id: row.id, name: row.name })).sort((a, b) => a.name.localeCompare(b.name, 'vi')),
     staffIds,
+    hasShiftSchedule: Object.keys(shiftSchedules || {}).length > 0,
+    // Tuan trong khoang chua co lich rieng (dang dung tam lich tuan sourceWeek)
+    borrowedShiftWeeks: borrowedWeeks,
     posOrdersTotal: posOrders.total,
     posOrdersWithoutSeller: posOrders.withoutSeller,
     errors,
@@ -258,5 +316,8 @@ async function buildSaleStaffStats({ pages = [], fromDate, toDate, pageId = '', 
 module.exports = {
   MAX_RANGE_DAYS,
   buildSaleStaffStats,
+  countScheduledShifts,
+  mondayOf,
+  resolveWeekSchedule,
   summarizePageStats
 };
