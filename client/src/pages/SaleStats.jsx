@@ -86,34 +86,59 @@ function normalizeShiftLabel(value) {
   return String(value || '').replace(/\s+/g, '').replace(/H/g, 'h');
 }
 
+// Bo cot cua bang lich ca Excel cua sale (o "8- 12h" gop 4 cot) - dung khi chi copy phan ten, khong co dong khung gio
+const SHEET_COLUMN_SHIFTS = [
+  '8-12h', '8-12h', '8-12h', '8-12h', '8h30-13h',
+  '12h-16h30', '12h30-16h30', '13h30-17h30',
+  '17h30-21h30', '18h-22h', '18h30-22h30'
+];
+
 /**
- * Doc bang lich ca copy tu Excel (TSV): dong tieu de co cac khung gio (o gop nhu "8- 12h" trai nhieu cot -> dien tiep sang phai),
- * cac dong ngay bat dau bang T2..T7/CN. Tra { shifts, entries: [{ dayIndex, shift, name }] }.
+ * Doc bang lich ca copy tu Excel (TSV). 2 kieu:
+ * - Co dong tieu de khung gio (o gop nhu "8- 12h" trai nhieu cot -> dien tiep sang phai), cot dau la T2..CN.
+ * - Chi copy phan ten: moi dong la 1 ngay theo thu tu T2 -> CN, cot theo bo cot SHEET_COLUMN_SHIFTS.
+ * Neu o dau dong la T2..CN thi dung ngay do va bo cot dau. Tra { shifts, entries: [{ dayIndex, shift, name }] }.
  */
 function parsePastedSchedule(text) {
-  const rows = String(text || '').replace(/\r/g, '').split('\n').map(line => line.split('\t').map(cell => cell.trim()));
+  const lines = String(text || '').replace(/\r/g, '').split('\n');
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  const rows = lines.map(line => line.split('\t').map(cell => cell.trim()));
   const headerIndex = rows.findIndex(row => row.filter(cell => SHIFT_LABEL_RE.test(cell)).length >= 2);
-  if (headerIndex < 0) throw new Error('Khong thay dong khung gio (vd 8-12h, 8h30-13h). Hay copy ca dong tieu de khung gio.');
 
-  const columnShift = [];
-  let current = '';
-  rows[headerIndex].forEach((cell, index) => {
-    if (SHIFT_LABEL_RE.test(cell)) current = normalizeShiftLabel(cell);
-    columnShift[index] = current;
-  });
-  const shifts = [...new Set(columnShift.filter(Boolean))];
+  let columnShift = [];
+  let bodyRows = rows;
+  if (headerIndex >= 0) {
+    let current = '';
+    rows[headerIndex].forEach((cell, index) => {
+      if (SHIFT_LABEL_RE.test(cell)) current = normalizeShiftLabel(cell);
+      columnShift[index] = current;
+    });
+    bodyRows = rows.slice(headerIndex + 1);
+  }
 
   const entries = [];
-  rows.slice(headerIndex + 1).forEach(row => {
-    const dayIndex = DAY_KEYS[normalizeNameKey(row[0])];
-    if (dayIndex === undefined) return;
-    row.forEach((cell, index) => {
-      if (index === 0 || !columnShift[index] || !cell) return;
+  let dayCursor = 0;
+  bodyRows.forEach(row => {
+    const labelledDay = DAY_KEYS[normalizeNameKey(row[0])];
+    // Co dong tieu de thi chi lay dong co nhan ngay (bo dong ghi chu ben duoi bang)
+    if (headerIndex >= 0 && labelledDay === undefined) return;
+    if (headerIndex < 0 && labelledDay === undefined && !row.some(Boolean)) return;
+    const dayIndex = labelledDay ?? dayCursor;
+    dayCursor = dayIndex + 1;
+    if (dayIndex > 6) return;
+    const cells = labelledDay !== undefined ? row.slice(1) : row;
+    const shiftOf = index => (headerIndex >= 0 ? columnShift[index + (labelledDay !== undefined ? 1 : 0)] : SHEET_COLUMN_SHIFTS[index]);
+    cells.forEach((cell, index) => {
+      const shift = shiftOf(index);
+      if (!shift || !cell) return;
       cell.split(/[,/+;]/).map(name => name.trim()).filter(Boolean)
-        .forEach(name => entries.push({ dayIndex, shift: columnShift[index], name }));
+        .forEach(name => entries.push({ dayIndex, shift, name }));
     });
   });
-  if (!entries.length) throw new Error('Khong thay dong ngay nao (cot dau phai la T2, T3 ... CN).');
+  const shifts = headerIndex >= 0
+    ? [...new Set(columnShift.filter(Boolean))]
+    : [...new Set(SHEET_COLUMN_SHIFTS)];
+  if (!entries.length) throw new Error('Khong doc duoc ten nao. Copy cac dong lich (T2 -> CN) tu Excel roi dan lai.');
   return { shifts, entries };
 }
 
@@ -278,7 +303,7 @@ function ShiftScheduleEditor({ staff, onSaved }) {
       {showPaste && (
         <div className="sale-paste">
           <p className="listing-note">
-            Trong Excel boi den bang lich (gom dong khung gio 8-12h, 8h30-13h... va cac dong T2 → CN), Ctrl+C,
+            Trong Excel boi den 7 dong lich T2 → CN (chi phan ten, hoac ca dong khung gio + cot Thu), Ctrl+C,
             roi bam vao o duoi va Ctrl+V. Lich se dien vao tuan {formatShortDate(week)}–{formatShortDate(addDaysKey(week, 6))}, thay lich dang hien.
           </p>
           <textarea className="sale-paste-box" onPaste={handlePaste} placeholder="Bam vao day roi Ctrl+V" value="" readOnly />
@@ -386,7 +411,8 @@ function SaleStaffPicker({ report, onSaved }) {
   const save = async () => {
     setSaving(true);
     try {
-      await api('PUT', '/sale-stats/sale-staff', { staffIds: [...selected] });
+      const names = Object.fromEntries(staff.map(item => [item.id, item.name]));
+      await api('PUT', '/sale-stats/sale-staff', { staffIds: [...selected], names });
       toast.success(selected.size ? `Da luu ${selected.size} nhan vien sale` : 'Da bo loc: hien tat ca nhan vien');
       onSaved();
     } catch (error) {
@@ -584,7 +610,7 @@ export default function SaleStats() {
 
         {showShifts && isAdmin && (
           <ShiftScheduleEditor
-            staff={(report?.allStaff || []).filter(item => !report?.staffIds?.length || report.staffIds.includes(item.id))}
+            staff={report?.saleStaff?.length ? report.saleStaff : (report?.allStaff || [])}
             onSaved={() => loadReport()}
           />
         )}

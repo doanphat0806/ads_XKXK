@@ -60,6 +60,7 @@ const ConfigSchema = new mongoose.Schema({
   saleShiftSchedule: { type: mongoose.Schema.Types.Mixed, default: {} }, // ban cu: 1 lich lap lai
   saleShiftSchedules: { type: mongoose.Schema.Types.Mixed, default: {} }, // { [Thu 2 YYYY-MM-DD]: lich ca tuan }
   saleStaffAliases: { type: mongoose.Schema.Types.Mixed, default: {} }, // ten goi tat (bo dau) -> id nhan vien Pancake
+  saleStaffNames: { type: mongoose.Schema.Types.Mixed, default: {} }, // { [id nhan vien sale]: ten Pancake }
 
   updatedAt: { type: Date, default: Date.now }
 });

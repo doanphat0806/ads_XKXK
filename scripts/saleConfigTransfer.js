@@ -11,7 +11,7 @@ const fs = require('fs');
 const mongoose = require('mongoose');
 const Config = require('../models/Config');
 
-const FIELDS = ['pancakeStatsPages', 'saleStaffIds', 'saleShiftSchedule', 'saleShiftSchedules', 'saleStaffAliases', 'listingStaffNames'];
+const FIELDS = ['pancakeStatsPages', 'saleStaffIds', 'saleShiftSchedule', 'saleShiftSchedules', 'saleStaffAliases', 'saleStaffNames', 'listingStaffNames'];
 const [mode, file] = process.argv.slice(2);
 
 async function main() {

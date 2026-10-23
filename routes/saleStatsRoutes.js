@@ -133,16 +133,20 @@ router.put('/staff-aliases', async (req, res) => {
   }
 });
 
-// Body: { staffIds: [id Pancake] } - chi admin
+// Body: { staffIds: [id Pancake], names: { [id]: ten } } - chi admin.
+// Luu kem ten de lich ca van hien ten nhan vien ca khi ho khong co hoat dong trong khoang dang xem.
 router.put('/sale-staff', async (req, res) => {
   try {
     if (!requireAdminUser(req, res)) return;
     const staffIds = [...new Set((Array.isArray(req.body?.staffIds) ? req.body.staffIds : [])
       .map(id => String(id || '').trim())
       .filter(id => /^[\w-]{6,64}$/.test(id)))].slice(0, 500);
+    const inputNames = req.body?.names && typeof req.body.names === 'object' ? req.body.names : {};
+    const storedNames = (await getAppConfig({ fresh: true })).saleStaffNames || {};
+    const names = Object.fromEntries(staffIds.map(id => [id, String(inputNames[id] || storedNames[id] || '').trim().slice(0, 100)]));
     await Config.updateOne(
       { key: 'app' },
-      { $set: { saleStaffIds: staffIds, updatedAt: new Date() } },
+      { $set: { saleStaffIds: staffIds, saleStaffNames: names, updatedAt: new Date() } },
       { upsert: true }
     );
     clearAppConfigCache();
@@ -186,6 +190,10 @@ router.get('/staff', async (req, res) => {
       // response tho chi cho admin (de doi chieu ten truong khi Pancake doi format)
       debug: req.query.debug === '1' && isAdminUser(req.currentUser)
     });
+    // Danh sach nhan vien sale co ten (ke ca nguoi khong co hoat dong trong khoang) cho lich ca
+    const activeNames = Object.fromEntries((report.allStaff || []).map(item => [item.id, item.name]));
+    const storedNames = config.saleStaffNames || {};
+    report.saleStaff = getSaleStaffIds(config).map(id => ({ id, name: activeNames[id] || storedNames[id] || id.slice(0, 8) }));
     res.json(report);
   } catch (error) {
     res.status(400).json({ error: error.message });
