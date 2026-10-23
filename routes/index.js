@@ -11,6 +11,8 @@ function registerAllRoutes(app) {
   app.use('/api/facebook', require('./facebookRoutes'));
   app.use('/api/fb-profiles', require('./fbProfileRoutes'));
   app.use('/api/campaign-rules', require('./campaignRuleRoutes'));
+  app.use('/api/listing', require('./listingRoutes'));
+  app.use('/api/sale-stats', require('./saleStatsRoutes'));
 }
 
 module.exports = { registerAllRoutes };

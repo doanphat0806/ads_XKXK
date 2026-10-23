@@ -3761,7 +3761,7 @@ async function buildReturnSummaryPayload({ accountFilter, provider, fromDate, to
   const [orderRows, campaignRows] = await Promise.all([
     // Bo cac truong POS khong dung cho Tong hoan (items van can cho ti le hoan theo SP)
     timed('orders', Order.find(buildOrderQuery({ fromDate, toDate }))
-      .select('-customerName -totalPrice -rawData.ad_id -rawData.ads_source -rawData.page_id -rawData.post_id -rawData.marketer -rawData.total_price -rawData.cod -rawData.inserted_at -rawData.updated_at -rawData.pos_status_name')
+      .select('-customerName -totalPrice -rawData.ad_id -rawData.ads_source -rawData.page_id -rawData.post_id -rawData.marketer -rawData.seller_id -rawData.seller_name -rawData.seller_avatar -rawData.total_price -rawData.cod -rawData.inserted_at -rawData.updated_at -rawData.pos_status_name')
       .limit(200000)
       .lean()),
     timed('campaigns', accountIds.length ? Campaign.aggregate([

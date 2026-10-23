@@ -222,6 +222,10 @@ function normalizePosOrder(order = {}, shopId = '') {
       page_id: order.page_id || '',
       post_id: order.post_id || '',
       marketer: order.marketer?.name || '',
+      // Nhan vien chot don (Hieu qua Sale). id trung voi id nhan vien ben Pancake Pages; don chua gan seller thi lay nguoi tao.
+      seller_id: String(order.assigning_seller?.id || order.assigning_seller_id || order.creator?.id || ''),
+      seller_name: String(order.assigning_seller?.name || order.creator?.name || ''),
+      seller_avatar: String(order.assigning_seller?.avatar_url || order.creator?.avatar_url || ''),
       total_price: Number(order.total_price || 0) || 0,
       cod: Number(order.cod || 0) || 0,
       sheetColumns: {
@@ -567,7 +571,31 @@ async function getPosHourlySkuStats({ fromDate, toDate, fromHour = 0, toHour = 2
   return { counts, totalOrders, fromDate, toDate, fromHour, toHour };
 }
 
+// Tai lai don POS theo ngay tao trong [fromDate, toDate] (YYYY-MM-DD) va upsert, moi lan 1 tuan, tu moi ve cu.
+// Dung cho script bo sung truong moi vao don cu (vd seller_id). upsert ghi de vi updated_at bang ban dang luu.
+async function resyncPosOrdersRange(fromDate, toDate, onProgress) {
+  let cursor = addDays(toDate, 1);
+  let total = 0;
+  while (cursor > fromDate) {
+    const windowStart = [addDays(cursor, -POS_BACKFILL_WINDOW_DAYS), fromDate].sort().pop();
+    await fetchPosOrderPages({
+      startDateTime: vnDayStartUnix(windowStart),
+      endDateTime: vnDayStartUnix(cursor) - 1,
+      pageSize: POS_BACKFILL_PAGE_SIZE,
+      concurrency: POS_BACKFILL_CONCURRENCY,
+      onPage: async (items, shopId) => {
+        const { received } = await upsertPosOrders(items, shopId);
+        total += received;
+      }
+    });
+    cursor = windowStart;
+    if (onProgress) onProgress({ cursor, total });
+  }
+  return { total };
+}
+
 module.exports = {
+  resyncPosOrdersRange,
   normalizePosOrder,
   upsertPosOrders,
   syncRecentPosOrders,

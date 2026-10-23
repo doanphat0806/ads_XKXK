@@ -20,7 +20,9 @@ const FacebookAiInsights = React.lazy(() => import('./pages/FacebookAiInsights')
 const GoogleSheets = React.lazy(() => import('./pages/GoogleSheets'));
 const Inventory = React.lazy(() => import('./pages/Inventory'));
 const InventorySummary = React.lazy(() => import('./pages/InventorySummary'));
+const ListingPerformance = React.lazy(() => import('./pages/ListingPerformance'));
 const Logs = React.lazy(() => import('./pages/Logs'));
+const SaleStats = React.lazy(() => import('./pages/SaleStats'));
 const OderDashboard = React.lazy(() => import('./pages/OderDashboard'));
 const Orders = React.lazy(() => import('./pages/Orders'));
 const CreateCampaign = React.lazy(() => import('./pages/Pages'));
@@ -78,6 +80,10 @@ function AppContent() {
         return 'Đóng Deal Dừng Order';
       case '/data-purchase-orders':
         return 'DATA ĐẶT HÀNG';
+      case '/sale-stats':
+        return 'Hiệu quả Sale';
+      case '/listing-performance':
+        return 'Hiệu quả Listing';
       case '/logs':
         return 'Nhật ký';
       case '/inventory':
@@ -121,6 +127,8 @@ function AppContent() {
                   <Route path="/purchase-orders" element={<PurchaseOrders />} />
                   <Route path="/deal-stop-orders" element={<DealStopOrders />} />
                   <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
+                  <Route path="/listing-performance" element={<ListingPerformance />} />
+                  <Route path="/sale-stats" element={<SaleStats />} />
                   <Route path="/return-summary" element={<Navigate to="/oder-dashboard" replace />} />
                   <Route path="*" element={<Navigate to="/oder-dashboard" replace />} />
                 </>
@@ -130,6 +138,8 @@ function AppContent() {
                   <Route path="/deal-stop-orders" element={<DealStopOrders />} />
                   <Route path="/data-purchase-orders" element={<DataPurchaseOrders />} />
                   <Route path="/oder-dashboard" element={<OderDashboard />} />
+                  <Route path="/listing-performance" element={<ListingPerformance />} />
+                  <Route path="/sale-stats" element={<SaleStats />} />
                   <Route path="/return-summary" element={<Navigate to="/inventory" replace />} />
                   <Route path="/inventory" element={<Inventory />} />
                   <Route path="/inventory-summary" element={<InventorySummary />} />
@@ -140,6 +150,8 @@ function AppContent() {
                 <>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/oder-dashboard" element={<OderDashboard />} />
+                  <Route path="/listing-performance" element={<ListingPerformance />} />
+                  <Route path="/sale-stats" element={<SaleStats />} />
                   <Route path="/return-summary" element={isFacebook ? <ReturnSummary /> : <Navigate to="/" replace />} />
                   <Route path="/accounts" element={<Accounts />} />
                   <Route path="/campaigns" element={<Campaigns />} />

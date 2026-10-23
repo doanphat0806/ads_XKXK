@@ -54,6 +54,9 @@ const ConfigSchema = new mongoose.Schema({
   purchaseOrderDashboardCancellations: { type: mongoose.Schema.Types.Mixed, default: {} },
   purchaseOrderDashboardNotes: { type: mongoose.Schema.Types.Mixed, default: {} },
   dealStopOrderState: { type: mongoose.Schema.Types.Mixed, default: {} },
+  listingStaffNames: { type: mongoose.Schema.Types.Mixed, default: {} },
+  pancakeStatsPages: { type: mongoose.Schema.Types.Mixed, default: [] },
+  saleStaffIds: { type: [String], default: [] },
 
   updatedAt: { type: Date, default: Date.now }
 });

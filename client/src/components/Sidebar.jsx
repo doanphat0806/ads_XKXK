@@ -124,6 +124,12 @@ export default function Sidebar() {
           <NavLink to="/oder-dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dashboard Dat Hang">
             <span className="icon"><BarChart3 size={16} strokeWidth={2} /></span><span>Dashboard Đặt Hàng</span>
           </NavLink>
+          <NavLink to="/listing-performance" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Hieu qua Listing">
+            <span className="icon"><Users size={16} strokeWidth={2} /></span><span>Hiệu quả Listing</span>
+          </NavLink>
+          <NavLink to="/sale-stats" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Hieu qua Sale">
+            <span className="icon"><UserCog size={16} strokeWidth={2} /></span><span>Hiệu quả Sale</span>
+          </NavLink>
           {isFacebook && (
             <NavLink to="/return-summary" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Tong hoan">
               <span className="icon"><RotateCcw size={16} strokeWidth={2} /></span><span>Tổng hoàn</span>
