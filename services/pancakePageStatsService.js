@@ -285,10 +285,14 @@ async function buildSaleStaffStats({ pages = [], fromDate, toDate, pageId = '', 
   }
 
   const { counts: shiftCounts, borrowedWeeks } = countScheduledShifts(shiftSchedules, fromDate, toDate);
+  // T.le phan hoi nhu man Thong ke nhan vien cua Pancake: tin nhan cua nhan vien / tong tin nhan cua tat ca nhan vien
+  // (tinh tren moi nhan vien co hoat dong, truoc khi loc nhan vien sale) - doi chieu so lieu Pancake thi khop
+  const totalMessages = [...byUser.values()].reduce((sum, row) => sum + (row.messages || 0), 0);
   const rows = [...byUser.values()]
     .map(({ responseWeighted, responseWeight, ...row }) => ({
       ...row,
       avgResponseSeconds: responseWeight > 0 ? responseWeighted / responseWeight : null,
+      responseRate: totalMessages > 0 ? ((row.messages || 0) / totalMessages) * 100 : null,
       shifts: shiftCounts[row.id] || 0,
       ordersPerShift: shiftCounts[row.id] ? row.orders / shiftCounts[row.id] : null
     }))

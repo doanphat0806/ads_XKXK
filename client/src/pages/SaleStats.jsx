@@ -15,6 +15,7 @@ const BASE_COLUMNS = [
   { key: 'inboxSessions', label: 'Phiên t.lời t.nhắn' },
   { key: 'avgResponseSeconds', label: 'Th.gian ph.hồi TB', format: 'duration', lowerIsBetter: true },
   { key: 'phones', label: 'SĐT mang về' },
+  { key: 'responseRate', label: 'T.lệ phản hồi', format: 'pct' },
   { key: 'orders', label: 'Số đơn chốt' },
   { key: 'ordersSale', label: 'Đơn Sale' },
   { key: 'ordersSan', label: 'Đơn Sẵn' },
