@@ -23,7 +23,9 @@ async function main() {
   if (mode === 'export') {
     const config = await Config.findOne({ key: 'app' }).select(FIELDS.join(' ')).lean();
     const data = Object.fromEntries(FIELDS.map(field => [field, config?.[field] ?? null]));
-    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+    // Chi ghi ky tu ASCII (chu co dau -> \uXXXX): copy/dan qua clipboard hay terminal khong bi loi bang ma
+    const json = JSON.stringify(data, null, 2).replace(/[\u0080-￿]/g, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+    fs.writeFileSync(file, json);
     console.log(`Da xuat ${file}: ${(data.pancakeStatsPages || []).length} page, ${(data.saleStaffIds || []).length} nhan vien sale`);
     return;
   }
