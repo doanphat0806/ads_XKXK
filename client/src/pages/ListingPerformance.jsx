@@ -205,13 +205,17 @@ function MetricDelta({ current, previous, kind }) {
 function PersonTile({ title, letter, cells, weeks, isTotal = false }) {
   const [hoverIndex, setHoverIndex] = useState(null);
   const values = cells.map(cell => cell.orders);
-  const focusIndex = hoverIndex ?? values.length - 1;
+  // Doi khoang ngay (it tuan hon) ma chuot dang re o tuan cu -> hoverIndex vuot so tuan, phai kep lai neu khong trang trang
+  const safeHover = hoverIndex !== null && hoverIndex < values.length ? hoverIndex : null;
+  const focusIndex = safeHover ?? values.length - 1;
   const focus = cells[focusIndex];
   const delta = focusIndex > 0 ? formatDelta(values[focusIndex], values[focusIndex - 1]) : null;
-  const risk = riskLevel(focus.top1Share);
+  const risk = riskLevel(focus?.top1Share);
   const metrics = newCodeMetrics(focus);
   const prevMetrics = focusIndex > 0 ? newCodeMetrics(cells[focusIndex - 1]) : null;
   const ratio = value => (value === null ? '—' : value.toLocaleString('vi-VN', { maximumFractionDigits: 2, minimumFractionDigits: 2 }));
+
+  if (!focus || !weeks[focusIndex]) return null;
 
   return (
     <div className={`listing-tile ${isTotal ? 'is-total' : ''}`}>
@@ -231,7 +235,7 @@ function PersonTile({ title, letter, cells, weeks, isTotal = false }) {
           </span>
         )}
       </div>
-      <TileChart values={values} weeks={weeks} hoverIndex={hoverIndex} onHover={setHoverIndex} />
+      <TileChart values={values} weeks={weeks} hoverIndex={safeHover} onHover={setHoverIndex} />
       <div className="listing-tile-stats">
         <div>
           <span>Ty le don moi</span>
