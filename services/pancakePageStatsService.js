@@ -293,6 +293,8 @@ async function buildSaleStaffStats({ pages = [], fromDate, toDate, pageId = '', 
       ...row,
       avgResponseSeconds: responseWeight > 0 ? responseWeighted / responseWeight : null,
       responseRate: totalMessages > 0 ? ((row.messages || 0) / totalMessages) * 100 : null,
+      // T.le chot = so don chot / phien tra loi tin nhan (chua co phien thi khong tinh duoc)
+      closeRate: row.inboxSessions > 0 ? ((row.orders || 0) / row.inboxSessions) * 100 : null,
       shifts: shiftCounts[row.id] || 0,
       ordersPerShift: shiftCounts[row.id] ? row.orders / shiftCounts[row.id] : null
     }))

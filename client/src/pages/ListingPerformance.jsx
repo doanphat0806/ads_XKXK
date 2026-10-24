@@ -335,12 +335,12 @@ function NewCodeTable({ rows, weeks, totalCells }) {
   );
 }
 
-// Du ca bang chu cai A-Z, moi chu 1 o (chu cung ten da duoc server gop chung). Sap theo so don tuan cuoi.
+// Du ca bang chu cai A-Z, moi nguoi 1 o (chu cai / tien to ma team Z cung ten da duoc server gop chung). Sap theo so don tuan cuoi.
 function buildDisplayRows(report) {
   if (!report) return [];
   const lastIndex = report.weeks.length - 1;
   return report.rows
-    .map(row => ({ ...row, key: row.letter, name: row.name || 'Chua gan ten' }))
+    .map(row => ({ ...row, key: `${row.letter}|${row.name}`, name: row.name || 'Chua gan ten' }))
     .sort((a, b) => (b.weeks[lastIndex].orders - a.weeks[lastIndex].orders) || a.letter.localeCompare(b.letter));
 }
 
@@ -436,6 +436,7 @@ export default function ListingPerformance() {
         + (result.updated ? `, ${formatNumber(result.updated)} ma doi ngay)` : ')')
         + (result.fromCode ? ` · ${formatNumber(result.fromCode)} ma lay ngay tu ma` : '')
       );
+      if (result.teamError) toast.warn(`Khong doc duoc file ma team Z: ${result.teamError}`);
       loadReport();
     } catch (error) {
       toast.error(`Loi dong bo file ma: ${error.message}`);
@@ -491,7 +492,7 @@ export default function ListingPerformance() {
 
         {showStaff && (
           <div className="listing-staff">
-            <p className="listing-note">Moi chu cai dau ma (sau "MS") la 1 nguoi. Dat cung ten = gop chung 1 o (vd T va Z cung "Hiếu"). De trong = hien "Chua gan ten".</p>
+            <p className="listing-note">Moi chu cai dau ma (sau "MS") la 1 nguoi. Dat cung ten = gop chung 1 o (vd T va Z cung "Hiếu"). De trong = hien "Chua gan ten". Ma Z/T cua team Z (va ma Chị Linh) chia theo tab trong file ma team Z, khong theo ten o day.</p>
             <div className="listing-staff-grid">
               {LETTERS.map(letter => (
                 <label key={letter} className="listing-staff-item">
@@ -524,7 +525,7 @@ export default function ListingPerformance() {
         )}
         <p className="listing-note">
           Moi o 1 nguoi, thang do rieng, sap xep theo so don tuan cuoi. Re chuot vao diem de xem so lieu tuan do.
-          Don = so dong ma san pham trong don (1 ma tinh 1 lan/don), gom theo chu cai dau ma sau "MS". Don huy/xoa khong tinh.
+          Don = so dong ma san pham trong don (1 ma tinh 1 lan/don), gom theo chu cai dau ma sau "MS"; ma Z/T chia cho tung ban theo tab file ma team Z (ma khong co trong file thi theo 2 chu dau, vd ZZ → Khánh). Don huy/xoa khong tinh.
           Top1 share = % don den tu 1 ma ban chay nhat · &lt;15% thap · 15–25% trung binh · &gt;25% cao.
           Ty le don moi = % don den tu ma dang trong chinh tuan do · Ty le ma moi ra don = % ma moi co it nhat 1 don trong tuan dang ·
           Don/ma moi trung = so don tu ma moi chia so ma moi co don. Mui ten = so voi tuan truoc (voi ty le la chenh lech diem %).

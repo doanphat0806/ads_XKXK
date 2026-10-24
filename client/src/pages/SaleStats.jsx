@@ -17,6 +17,7 @@ const BASE_COLUMNS = [
   { key: 'phones', label: 'SĐT mang về' },
   { key: 'responseRate', label: 'T.lệ phản hồi', format: 'pct' },
   { key: 'orders', label: 'Số đơn chốt' },
+  { key: 'closeRate', label: 'T.lệ chốt', format: 'pct' },
   { key: 'ordersSale', label: 'Đơn Sale' },
   { key: 'ordersSan', label: 'Đơn Sẵn' },
   { key: 'ordersOrder', label: 'Đơn Order' },

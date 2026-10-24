@@ -13,6 +13,10 @@ const MAX_WEEKS = 26;
 // File Google Sheet "tim ma" cua moi nguoi (tab theo gid). Doi file/tab qua env neu can.
 const LISTING_CODE_SHEET_ID = process.env.LISTING_CODE_SHEET_ID || '1nE0BVs0Kkczjdsn9qZ1EdF80rZNQqHRctLkeR2q3i_s';
 const LISTING_CODE_SHEET_GID = String(process.env.LISTING_CODE_SHEET_GID || '852335313');
+// File ma team Z: moi tab 1 ban (ten tab = ten nguoi), giu cac tien to ZZ/ZY/TZ... -> chia ma Z/T ra tung ban
+const LISTING_TEAM_SHEET_ID = process.env.LISTING_TEAM_SHEET_ID || '1zcedD8153ERwAXpU6i4Ok_5_wM5coOWyaDY-4ObGHD8';
+// Tab khong phai cua 1 ban: Phoi1 (mau), P24+ (ma tat), Danh sach gmail
+const LISTING_TEAM_SKIP_TAB_RE = /^(phoi|p\d+|danh sach)/;
 const SHEET_TIMEOUT_MS = 60000;
 const LISTING_CODE_RE = /^(MS\s*)?[A-Z]{2}\s*\d{5,}$/i;
 
@@ -32,6 +36,29 @@ function canonicalListingCode(value) {
 function getListingLetter(code) {
   const first = String(code || '').charAt(0);
   return /^[A-Z]$/.test(first) ? first : '';
+}
+
+// So sanh ten khong phan biet hoa thuong / dang dau (ten tab Google co the la NFD)
+function staffNameKey(name) {
+  return String(name || '').normalize('NFC').trim().toLowerCase();
+}
+
+/**
+ * Ma co nguoi giu (tu file team Z) -> map ma -> ten; tien to 2 chu -> nguoi giu ma moi nhat cua tien to do
+ * (vd ZT: Ha giu toi 09, Trang giu tu 10 -> ma ZT khong co trong sheet tinh cho Trang).
+ */
+async function loadListingCodeOwners() {
+  const rows = await ListingNewCode.find({ owner: { $nin: ['', null] } }).select('code owner postedDate -_id').lean();
+  const codeOwner = new Map();
+  const latestByPrefix = new Map();
+  for (const row of rows) {
+    codeOwner.set(row.code, row.owner);
+    const prefix = row.code.slice(0, 2);
+    const current = latestByPrefix.get(prefix);
+    if (!current || row.postedDate > current.postedDate) latestByPrefix.set(prefix, row);
+  }
+  const prefixOwner = new Map([...latestByPrefix.entries()].map(([prefix, row]) => [prefix, row.owner]));
+  return { codeOwner, prefixOwner };
 }
 
 function addDays(dateKey, days) {
@@ -90,12 +117,25 @@ async function buildListingWeeklyReport({ fromDate, toDate, staffNames = {} } = 
   if (startDate < minStart) startDate = minStart;
   const weeks = buildListingWeeks(startDate, endDate);
   const names = { ...DEFAULT_LISTING_STAFF_NAMES, ...staffNames };
+  const { codeOwner, prefixOwner } = await loadListingCodeOwners();
 
-  const byLetter = new Map();
-  const getCell = (letter, weekIndex) => {
-    if (!byLetter.has(letter)) byLetter.set(letter, weeks.map(createWeekCell));
-    return byLetter.get(letter)[weekIndex];
+  // O = (nhan, ten): ma co nguoi giu -> ten do; nhan la chu cai neu chu cai do da la cua chinh nguoi do (KA cua Chi Linh -> K),
+  // khong thi la tien to 2 chu (ZZ cua Khanh). Ma khong ai giu -> theo chu cai dau nhu cu.
+  const buckets = new Map();
+  const getBucket = (label, name) => {
+    const key = `${label}|${staffNameKey(name)}`;
+    if (!buckets.has(key)) buckets.set(key, { label, name, cells: weeks.map(createWeekCell) });
+    return buckets.get(key);
   };
+  const resolveBucket = code => {
+    const letter = getListingLetter(code);
+    if (!letter) return null;
+    const owner = codeOwner.get(code) || prefixOwner.get(code.slice(0, 2));
+    if (!owner) return getBucket(letter, names[letter]);
+    const label = staffNameKey(names[letter]) === staffNameKey(owner) ? letter : code.slice(0, 2);
+    return getBucket(label, owner);
+  };
+  const getCell = (code, weekIndex) => resolveBucket(code)?.cells[weekIndex] || null;
   const orderedCodesByWeek = weeks.map(() => new Set());
 
   const query = buildOrderQuery({ fromDate: weeks[0].from, toDate: endDate });
@@ -113,9 +153,8 @@ async function buildListingWeeklyReport({ fromDate, toDate, staffNames = {} } = 
       if (code) codes.add(code);
     }
     for (const code of codes) {
-      const letter = getListingLetter(code);
-      if (!letter) continue;
-      const cell = getCell(letter, weekIndex);
+      const cell = getCell(code, weekIndex);
+      if (!cell) continue;
       cell.orders += 1;
       cell.skuCounts[code] = (cell.skuCounts[code] || 0) + 1;
       orderedCodesByWeek[weekIndex].add(code);
@@ -123,13 +162,13 @@ async function buildListingWeeklyReport({ fromDate, toDate, staffNames = {} } = 
   }
 
   const newCodes = await ListingNewCode.find({ postedDate: { $gte: weeks[0].from, $lte: endDate } })
-    .select('code letter postedDate')
+    .select('code postedDate')
     .lean();
   for (const row of newCodes) {
     const weekIndex = findWeekIndex(weeks, row.postedDate);
-    const letter = row.letter || getListingLetter(row.code);
-    if (weekIndex < 0 || !letter) continue;
-    const cell = getCell(letter, weekIndex);
+    if (weekIndex < 0) continue;
+    const cell = getCell(row.code, weekIndex);
+    if (!cell) continue;
     cell.newCodes += 1;
     if (orderedCodesByWeek[weekIndex].has(row.code)) {
       cell.newCodesWithOrders += 1;
@@ -139,20 +178,18 @@ async function buildListingWeeklyReport({ fromDate, toDate, staffNames = {} } = 
   }
 
   // Hien du ca bang chu cai A-Z, ke ca chu chua co don
-  for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
-    if (!byLetter.has(letter)) byLetter.set(letter, weeks.map(createWeekCell));
-  }
+  for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') getBucket(letter, names[letter]);
 
-  // Cac chu cai cung ten thi gop thanh 1 nguoi (vd T gop vao Hieu: Z,T)
+  // Cac o cung ten thi gop thanh 1 nguoi (vd T gop vao Hieu: Z,T; Khanh: TZ,ZZ,ZY...)
   const groups = new Map();
-  for (const [letter, cells] of byLetter.entries()) {
-    const name = String(names[letter] || '').trim();
-    const groupKey = name ? `name:${name.toLowerCase()}` : `letter:${letter}`;
+  for (const { label, name: rawName, cells } of buckets.values()) {
+    const name = String(rawName || '').normalize('NFC').trim();
+    const groupKey = name ? `name:${staffNameKey(name)}` : `letter:${label}`;
     if (!groups.has(groupKey)) {
       groups.set(groupKey, { letters: [], name, cells: weeks.map(createWeekCell) });
     }
     const group = groups.get(groupKey);
-    group.letters.push(letter);
+    if (!group.letters.includes(label)) group.letters.push(label);
     cells.forEach((cell, index) => {
       const target = group.cells[index];
       target.orders += cell.orders;
@@ -188,25 +225,31 @@ async function buildListingWeeklyReport({ fromDate, toDate, staffNames = {} } = 
   return { fromDate: startDate, toDate: endDate, weeks, rows, totals, newCodeCount: newCodes.length };
 }
 
+// owner chi ghi khi entry co truong owner (dong bo file team Z); upload Excel ma moi khong dong vao nguoi giu ma
 async function upsertListingNewCodes(entries = []) {
   const byCode = new Map();
   for (const entry of entries) {
     const code = canonicalListingCode(entry?.code);
     const postedDate = String(entry?.postedDate || '').trim();
     if (!code || !/^\d{4}-\d{2}-\d{2}$/.test(postedDate)) continue;
-    byCode.set(code, { code, letter: getListingLetter(code), postedDate });
+    const doc = { code, letter: getListingLetter(code), postedDate };
+    if (entry.owner !== undefined) doc.owner = String(entry.owner || '').normalize('NFC').trim();
+    byCode.set(code, doc);
   }
   const docs = [...byCode.values()];
   if (!docs.length) return { saved: 0, skipped: entries.length };
 
-  // File ma co >100k ma: chi ghi ma moi hoac doi ngay dang, khong ghi lai ca file moi lan dong bo
+  // File ma co >100k ma: chi ghi ma moi hoac doi ngay dang / doi nguoi giu, khong ghi lai ca file moi lan dong bo
   const existing = new Map();
   for (let index = 0; index < docs.length; index += 20000) {
     const chunk = docs.slice(index, index + 20000).map(doc => doc.code);
-    const found = await ListingNewCode.find({ code: { $in: chunk } }).select('code postedDate -_id').lean();
-    found.forEach(row => existing.set(row.code, row.postedDate));
+    const found = await ListingNewCode.find({ code: { $in: chunk } }).select('code postedDate owner -_id').lean();
+    found.forEach(row => existing.set(row.code, row));
   }
-  const changed = docs.filter(doc => existing.get(doc.code) !== doc.postedDate);
+  const changed = docs.filter(doc => {
+    const row = existing.get(doc.code);
+    return !row || row.postedDate !== doc.postedDate || (doc.owner !== undefined && (row.owner || '') !== doc.owner);
+  });
 
   const now = new Date();
   let inserted = 0;
@@ -324,9 +367,9 @@ function parseListingCodeRows(rows = []) {
 }
 
 // Moi tab trong file = ma cua 1 nguoi -> doc het cac tab trong 1 lan batchGet
-async function fetchListingSheetWithApi(accessToken) {
+async function fetchListingSheetWithApi(accessToken, sheetId) {
   const headers = { Authorization: `Bearer ${accessToken}` };
-  const base = `https://sheets.googleapis.com/v4/spreadsheets/${LISTING_CODE_SHEET_ID}`;
+  const base = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`;
   const meta = await axios.get(base, {
     headers,
     params: { fields: 'sheets.properties(sheetId,title)' },
@@ -355,8 +398,8 @@ async function fetchPublicText(url) {
 }
 
 // File share "Bat ky ai co link": trang htmlview liet ke ten + gid tung tab -> khong can ket noi Google van doc du tab
-async function listPublicListingTabs() {
-  const { status, text } = await fetchPublicText(`https://docs.google.com/spreadsheets/d/${LISTING_CODE_SHEET_ID}/htmlview`);
+async function listPublicListingTabs(sheetId) {
+  const { status, text } = await fetchPublicText(`https://docs.google.com/spreadsheets/d/${sheetId}/htmlview`);
   if (status !== 200) return [];
   const tabs = new Map();
   for (const match of text.matchAll(/items\.push\(\{name: "((?:[^"\\]|\\.)*)", pageUrl: "[^"]*", gid: "(\d+)"/g)) {
@@ -366,16 +409,16 @@ async function listPublicListingTabs() {
   return [...tabs.entries()].map(([gid, title]) => ({ gid, title }));
 }
 
-async function fetchListingSheetWithGviz() {
-  const tabs = await listPublicListingTabs();
-  if (!tabs.length) tabs.push({ gid: LISTING_CODE_SHEET_GID, title: `gid=${LISTING_CODE_SHEET_GID}` });
+async function fetchListingSheetWithGviz(sheetId, fallbackGid = '') {
+  const tabs = await listPublicListingTabs(sheetId);
+  if (!tabs.length && fallbackGid) tabs.push({ gid: fallbackGid, title: `gid=${fallbackGid}` });
 
   const results = [];
   // Doc 4 tab 1 luc cho nhanh ma khong spam Google
   for (let index = 0; index < tabs.length; index += 4) {
     const batch = await Promise.all(tabs.slice(index, index + 4).map(async tab => {
       const { status, text } = await fetchPublicText(
-        `https://docs.google.com/spreadsheets/d/${LISTING_CODE_SHEET_ID}/gviz/tq?tqx=out:csv&gid=${tab.gid}`
+        `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&gid=${tab.gid}`
       );
       if (status !== 200 || !text || text.trimStart().startsWith('<')) return null;
       return { title: tab.title, rows: parseCsvRows(text) };
@@ -388,47 +431,91 @@ async function fetchListingSheetWithGviz() {
   return results;
 }
 
-// Doc sheet ma -> luu vao ListingNewCode. Co token thi dung Sheets API; loi/khong co token thi thu link CSV cong khai.
-async function syncListingCodesFromSheet({ accessToken = '' } = {}) {
-  let tabs = null;
+// Doc tat ca tab cua 1 file. Co token thi dung Sheets API; loi/khong co token thi thu link CSV cong khai.
+async function fetchListingSheetTabs(sheetId, { accessToken = '', fallbackGid = '' } = {}) {
   let apiError = null;
   if (accessToken) {
     try {
-      tabs = await fetchListingSheetWithApi(accessToken);
+      return { tabs: await fetchListingSheetWithApi(accessToken, sheetId), source: 'google_api' };
     } catch (error) {
       apiError = error;
     }
   }
-  if (!tabs) {
+  try {
+    return { tabs: await fetchListingSheetWithGviz(sheetId, fallbackGid), source: 'csv' };
+  } catch (error) {
+    const apiMessage = apiError?.response?.data?.error?.message || apiError?.message;
+    throw new Error(apiMessage ? `${error.message} (Google API: ${apiMessage})` : error.message);
+  }
+}
+
+// Doc file ma chung + file ma team Z -> luu vao ListingNewCode. File team Z loi thi van luu file chung, giu nguoi giu ma cu.
+async function syncListingCodesFromSheet({ accessToken = '' } = {}) {
+  const main = await fetchListingSheetTabs(LISTING_CODE_SHEET_ID, { accessToken, fallbackGid: LISTING_CODE_SHEET_GID });
+  let team = null;
+  let teamError = '';
+  if (LISTING_TEAM_SHEET_ID && LISTING_TEAM_SHEET_ID !== LISTING_CODE_SHEET_ID) {
     try {
-      tabs = await fetchListingSheetWithGviz();
+      team = await fetchListingSheetTabs(LISTING_TEAM_SHEET_ID, { accessToken });
     } catch (error) {
-      const apiMessage = apiError?.response?.data?.error?.message || apiError?.message;
-      throw new Error(apiMessage ? `${error.message} (Google API: ${apiMessage})` : error.message);
+      teamError = error.message;
     }
   }
 
   // Moi tab co header rieng -> parse tung tab; 1 ma nam o nhieu tab thi lay ngay dang som nhat
   const byCode = new Map();
   let fromCode = 0;
-  const tabStats = tabs.map(tab => {
+  // Ma trung o nhieu tab team Z -> tinh cho ban dang ma gan nhat (ngay dang moi nhat); ngay dang van lay ngay som nhat
+  const latestOwner = new Map();
+  const addEntry = (entry, owner) => {
+    const existing = byCode.get(entry.code);
+    if (!existing || entry.postedDate < existing.postedDate) byCode.set(entry.code, { ...existing, ...entry });
+    if (owner === undefined) return;
+    const current = latestOwner.get(entry.code);
+    if (!current || entry.postedDate > current.postedDate) latestOwner.set(entry.code, { owner, postedDate: entry.postedDate });
+  };
+  const parseTabs = (tabs, getOwner) => tabs.map(tab => {
+    const owner = getOwner(tab);
+    if (owner === null) return { title: tab.title, codes: 0, skipped: true };
     const parsed = parseListingCodeRows(tab.rows);
     fromCode += parsed.fromCode;
-    for (const entry of parsed.codes) {
-      const existing = byCode.get(entry.code);
-      if (!existing || entry.postedDate < existing.postedDate) byCode.set(entry.code, entry);
-    }
+    parsed.codes.forEach(entry => addEntry(entry, owner));
     return { title: tab.title, codes: parsed.codes.length };
   });
+
+  const tabStats = parseTabs(main.tabs, () => undefined);
+  // File team Z: ten tab = nguoi giu ma; bo qua tab mau/ma tat/gmail
+  const teamTabStats = team
+    ? parseTabs(team.tabs, tab => {
+      const owner = String(tab.title || '').normalize('NFC').trim();
+      return owner && !LISTING_TEAM_SKIP_TAB_RE.test(normalizeHeaderText(owner)) ? owner : null;
+    })
+    : [];
+  for (const [code, { owner }] of latestOwner) byCode.get(code).owner = owner;
 
   const codes = [...byCode.values()];
   if (!codes.length) throw new Error('Khong tim thay ma nao dang "MS XX123456" trong file ma');
   const result = await upsertListingNewCodes(codes);
+
+  // Ma da bi xoa khoi file team Z -> bo nguoi giu, quay ve chia theo chu cai dau ma
+  let ownerCleared = 0;
+  if (team) {
+    const ownedCodes = codes.filter(entry => entry.owner).map(entry => entry.code);
+    const cleared = await ListingNewCode.updateMany(
+      { owner: { $nin: ['', null] }, code: { $nin: ownedCodes } },
+      { $set: { owner: '', updatedAt: new Date() } }
+    );
+    ownerCleared = cleared.modifiedCount || 0;
+  }
+
   return {
     ...result,
     fromCode,
-    tabs: tabStats,
-    source: apiError || !accessToken ? 'csv' : 'google_api'
+    tabs: [...tabStats, ...teamTabStats.filter(tab => !tab.skipped)],
+    teamTabs: teamTabStats,
+    teamError,
+    ownerCleared,
+    source: main.source
   };
 }
 
