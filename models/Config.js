@@ -55,6 +55,7 @@ const ConfigSchema = new mongoose.Schema({
   purchaseOrderDashboardNotes: { type: mongoose.Schema.Types.Mixed, default: {} },
   dealStopOrderState: { type: mongoose.Schema.Types.Mixed, default: {} },
   listingStaffNames: { type: mongoose.Schema.Types.Mixed, default: {} },
+  listingCodeSheetSync: { type: mongoose.Schema.Types.Mixed, default: null },
   pancakeStatsPages: { type: mongoose.Schema.Types.Mixed, default: [] },
   saleStaffIds: { type: [String], default: [] },
   saleShiftSchedule: { type: mongoose.Schema.Types.Mixed, default: {} }, // ban cu: 1 lich lap lai

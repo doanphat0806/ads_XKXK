@@ -7427,6 +7427,16 @@
     .listing-tile-week { font-size: 9.5px; fill: var(--muted); text-anchor: middle; }
     .listing-tile-hit { fill: transparent; cursor: crosshair; }
     .listing-tile-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 22px; font-size: 11.5px; color: var(--muted2); }
+    .listing-tile-label { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+    .listing-delta-note { font-weight: 500; color: var(--muted); }
+    .listing-tile-stats { display: grid; gap: 3px; margin: 2px 0 6px; font-size: 11.5px; color: var(--muted2); }
+    .listing-tile-stats > div { display: flex; align-items: baseline; gap: 6px; }
+    .listing-tile-stats > div > span:first-child { flex: 1; min-width: 0; }
+    .listing-tile-stats b { color: var(--txt); font-variant-numeric: tabular-nums; }
+    .listing-mini-delta { min-width: 58px; text-align: right; font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .listing-mini-delta.up { color: #0a8a3a; }
+    .listing-mini-delta.down { color: var(--r); }
+    .listing-mini-delta.flat { color: var(--muted); }
 
     /* ---------- Hieu qua Sale (thong ke nhan vien Pancake Pages) ---------- */
     .sale-toolbar { flex-wrap: wrap; gap: 10px; align-items: flex-start; }

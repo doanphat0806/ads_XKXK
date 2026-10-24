@@ -2,10 +2,13 @@
 
 const express = require('express');
 const Config = require('../models/Config');
+const User = require('../models/User');
 const { getAppConfig, clearAppConfigCache } = require('../services/configService');
+const { getGoogleOAuthConfig, getGoogleAccessTokenForUser } = require('../utils/googleOAuth');
 const {
   DEFAULT_LISTING_STAFF_NAMES,
   buildListingWeeklyReport,
+  syncListingCodesFromSheet,
   upsertListingNewCodes
 } = require('../services/listingService');
 
@@ -40,7 +43,7 @@ router.get('/weekly', async (req, res) => {
       toDate,
       staffNames: getStoredStaffNames(config)
     });
-    res.json(report);
+    res.json({ ...report, codeSheetSync: config.listingCodeSheetSync || null });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -80,6 +83,46 @@ router.post('/new-codes', async (req, res) => {
       return res.status(400).json({ error: `Toi da ${MAX_NEW_CODES_PER_UPLOAD} ma moi moi lan upload` });
     }
     res.json(await upsertListingNewCodes(codes));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Token Google: user hien tai truoc, khong co thi dung tai khoan admin (file ma la file chung). Khong co token -> doc CSV cong khai.
+async function getListingSheetAccessToken(req) {
+  const config = getGoogleOAuthConfig(req);
+  if (!config.clientId || !config.clientSecret) return '';
+  const admin = await User.findOne({ username: 'admin', active: true }).select('_id').lean();
+  const userIds = [req.currentUser?._id, admin?._id].filter(Boolean);
+  for (const userId of userIds) {
+    try {
+      const token = await getGoogleAccessTokenForUser(userId, config);
+      if (token) return token;
+    } catch {
+      // user chua ket noi Google -> thu nguoi tiep theo
+    }
+  }
+  return '';
+}
+
+// POST /api/listing/sync-sheet - doc file Google Sheet ma cua moi nguoi -> cap nhat ma dang theo tuan
+router.post('/sync-sheet', async (req, res) => {
+  try {
+    const result = await syncListingCodesFromSheet({ accessToken: await getListingSheetAccessToken(req) });
+    const syncMeta = {
+      at: new Date().toISOString(),
+      saved: result.saved,
+      inserted: result.inserted,
+      tabCount: result.tabs.length,
+      source: result.source
+    };
+    await Config.updateOne(
+      { key: 'app' },
+      { $set: { listingCodeSheetSync: syncMeta, updatedAt: new Date() } },
+      { upsert: true }
+    );
+    clearAppConfigCache();
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

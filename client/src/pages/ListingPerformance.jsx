@@ -171,6 +171,37 @@ function TileChart({ values, weeks, hoverIndex, onHover }) {
   );
 }
 
+const RISK_LABELS = { low: 'Thap', mid: 'Trung binh', high: 'Cao' };
+
+// Chi so ma moi cua 1 tuan: ty le don tu ma moi, ty le ma moi ra don, don tren moi ma moi trung
+function newCodeMetrics(cell) {
+  if (!cell) return null;
+  const newCodeOrders = cell.newCodeOrders || 0;
+  return {
+    newCodes: cell.newCodes || 0,
+    newOrderShare: cell.orders > 0 ? (newCodeOrders / cell.orders) * 100 : null,
+    hitRate: cell.newCodes > 0 ? (cell.newCodesWithOrders / cell.newCodes) * 100 : null,
+    ordersPerHit: cell.newCodesWithOrders > 0 ? newCodeOrders / cell.newCodesWithOrders : null
+  };
+}
+
+// Chenh lech so tuan truoc: kind 'pct' = diem %, 'count' = so ma, 'ratio' = so thap phan
+function MetricDelta({ current, previous, kind }) {
+  if (current === null || current === undefined || previous === null || previous === undefined) {
+    return <span className="listing-mini-delta" />;
+  }
+  const diff = current - previous;
+  const rounded = kind === 'count' ? Math.round(diff) : Math.round(diff * 100) / 100;
+  if (!rounded) return <span className="listing-mini-delta flat">=</span>;
+  const abs = Math.abs(rounded);
+  const text = kind === 'pct'
+    ? `${abs.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}%`
+    : kind === 'count'
+      ? `${formatNumber(abs)} ma`
+      : abs.toLocaleString('vi-VN', { maximumFractionDigits: 2 });
+  return <span className={`listing-mini-delta ${rounded > 0 ? 'up' : 'down'}`}>{rounded > 0 ? '▲' : '▼'}{text}</span>;
+}
+
 function PersonTile({ title, letter, cells, weeks, isTotal = false }) {
   const [hoverIndex, setHoverIndex] = useState(null);
   const values = cells.map(cell => cell.orders);
@@ -178,6 +209,9 @@ function PersonTile({ title, letter, cells, weeks, isTotal = false }) {
   const focus = cells[focusIndex];
   const delta = focusIndex > 0 ? formatDelta(values[focusIndex], values[focusIndex - 1]) : null;
   const risk = riskLevel(focus.top1Share);
+  const metrics = newCodeMetrics(focus);
+  const prevMetrics = focusIndex > 0 ? newCodeMetrics(cells[focusIndex - 1]) : null;
+  const ratio = value => (value === null ? '—' : value.toLocaleString('vi-VN', { maximumFractionDigits: 2, minimumFractionDigits: 2 }));
 
   return (
     <div className={`listing-tile ${isTotal ? 'is-total' : ''}`}>
@@ -188,23 +222,111 @@ function PersonTile({ title, letter, cells, weeks, isTotal = false }) {
         </div>
         <span className="listing-tile-when">{weeks[focusIndex].key} · {weeks[focusIndex].label}</span>
       </div>
+      <div className="listing-tile-label">Tong don tuan</div>
       <div className="listing-tile-meta">
         <span className="listing-tile-value">{formatNumber(focus.orders)}</span>
         {delta !== null && (
           <span className={`listing-delta ${delta >= 0 ? 'up' : 'down'}`}>
-            {delta >= 0 ? '▲' : '▼'} {formatPct(Math.abs(delta))}
+            {delta >= 0 ? '▲' : '▼'} {formatPct(Math.abs(delta))} <span className="listing-delta-note">so tuan truoc</span>
           </span>
         )}
       </div>
       <TileChart values={values} weeks={weeks} hoverIndex={hoverIndex} onHover={setHoverIndex} />
-      <div className="listing-tile-foot">
-        {focus.top1Share !== null && focus.top1Share !== undefined && (
-          <span className={`listing-risk ${risk}`}>Top1 {formatPct(focus.top1Share)}</span>
-        )}
-        {focus.newCodes > 0 && (
-          <span>Ma moi: <b>{formatNumber(focus.newCodesWithOrders)}/{formatNumber(focus.newCodes)}</b> ra don</span>
-        )}
+      <div className="listing-tile-stats">
+        <div>
+          <span>Ty le don moi</span>
+          <b>{formatPct(metrics.newOrderShare)}</b>
+          <MetricDelta current={metrics.newOrderShare} previous={prevMetrics?.newOrderShare} kind="pct" />
+        </div>
+        <div>
+          <span>Ma moi dang</span>
+          <b>{formatNumber(metrics.newCodes)}</b>
+          <MetricDelta current={metrics.newCodes} previous={prevMetrics?.newCodes} kind="count" />
+        </div>
+        <div>
+          <span>Ty le ma moi ra don</span>
+          <b>{formatPct(metrics.hitRate)}</b>
+          <MetricDelta current={metrics.hitRate} previous={prevMetrics?.hitRate} kind="pct" />
+        </div>
+        <div>
+          <span>Don/ma moi trung</span>
+          <b>{ratio(metrics.ordersPerHit)}</b>
+          <MetricDelta current={metrics.ordersPerHit} previous={prevMetrics?.ordersPerHit} kind="ratio" />
+        </div>
       </div>
+      {focus.top1Share !== null && focus.top1Share !== undefined && (
+        <div className="listing-tile-foot">
+          <span className={`listing-risk ${risk}`}>Top1 share: {formatPct(focus.top1Share)} · {RISK_LABELS[risk]}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Bang so ma dang moi tuan cua tung nguoi (ngay dang lay tu file ma / upload ma moi)
+function NewCodeTable({ rows, weeks, totalCells }) {
+  const lastIndex = weeks.length - 1;
+  const sumOf = cells => cells.reduce((sum, cell) => sum + cell.newCodes, 0);
+  const tableRows = rows
+    .map(row => ({ ...row, total: sumOf(row.weeks) }))
+    .filter(row => row.total > 0)
+    .sort((a, b) => (b.weeks[lastIndex].newCodes - a.weeks[lastIndex].newCodes) || (b.total - a.total));
+  const grandTotal = sumOf(totalCells);
+
+  if (!tableRows.length) {
+    return <p className="listing-note">Chua co ma dang nao trong khoang nay. Bam "Dong bo file ma" de doc file ma cua moi nguoi.</p>;
+  }
+
+  return (
+    <div className="tbl-wrap">
+      <table className="tbl listing-table">
+        <thead>
+          <tr>
+            <th>Nguoi</th>
+            {weeks.map((week, index) => (
+              <th key={week.key} className={index === lastIndex ? 'listing-last' : ''}>
+                {week.key}<div className="listing-week-label">{week.label}</div>
+              </th>
+            ))}
+            <th>Tong</th>
+            <th>TB/tuan</th>
+            <th>Ra don</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tableRows.map(row => {
+            const withOrders = row.weeks.reduce((sum, cell) => sum + cell.newCodesWithOrders, 0);
+            return (
+              <tr key={row.key}>
+                <td><div className="listing-name">{row.name}<span className="listing-letter">{row.letter}</span></div></td>
+                {row.weeks.map((cell, index) => (
+                  <td key={weeks[index].key} className={`listing-num ${index === lastIndex ? 'listing-last' : ''}`}>
+                    {cell.newCodes ? formatNumber(cell.newCodes) : '—'}
+                  </td>
+                ))}
+                <td className="listing-num"><b>{formatNumber(row.total)}</b></td>
+                <td className="listing-num">{formatNumber(Math.round((row.total / weeks.length) * 10) / 10)}</td>
+                <td className="listing-num">{formatPct((withOrders / row.total) * 100)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td><b>Toan shop</b></td>
+            {totalCells.map((cell, index) => (
+              <td key={weeks[index].key} className={`listing-num ${index === lastIndex ? 'listing-last' : ''}`}>
+                <b>{formatNumber(cell.newCodes)}</b>
+              </td>
+            ))}
+            <td className="listing-num"><b>{formatNumber(grandTotal)}</b></td>
+            <td className="listing-num">{formatNumber(Math.round((grandTotal / weeks.length) * 10) / 10)}</td>
+            <td className="listing-num">
+              {grandTotal ? formatPct((totalCells.reduce((sum, cell) => sum + cell.newCodesWithOrders, 0) / grandTotal) * 100) : '—'}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
     </div>
   );
 }
@@ -224,6 +346,7 @@ export default function ListingPerformance() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [syncingSheet, setSyncingSheet] = useState(false);
   const [showStaff, setShowStaff] = useState(false);
   const [staffNames, setStaffNames] = useState({});
   const [savingStaff, setSavingStaff] = useState(false);
@@ -299,6 +422,24 @@ export default function ListingPerformance() {
     }
   };
 
+  const syncSheet = async () => {
+    setSyncingSheet(true);
+    try {
+      const result = await api('POST', '/listing/sync-sheet');
+      const tabCount = result.tabs?.length || 0;
+      toast.success(
+        `Da doc ${formatNumber(result.saved)} ma tu ${formatNumber(tabCount)} tab (${formatNumber(result.inserted)} ma moi`
+        + (result.updated ? `, ${formatNumber(result.updated)} ma doi ngay)` : ')')
+        + (result.fromCode ? ` · ${formatNumber(result.fromCode)} ma lay ngay tu ma` : '')
+      );
+      loadReport();
+    } catch (error) {
+      toast.error(`Loi dong bo file ma: ${error.message}`);
+    } finally {
+      setSyncingSheet(false);
+    }
+  };
+
   const rows = useMemo(() => buildDisplayRows(report), [report]);
   const weeks = report?.weeks || [];
   const totalCells = useMemo(() => {
@@ -309,7 +450,8 @@ export default function ListingPerformance() {
         orders: report.totals[index] || 0,
         top1Share: null,
         newCodes: cells.reduce((sum, cell) => sum + cell.newCodes, 0),
-        newCodesWithOrders: cells.reduce((sum, cell) => sum + cell.newCodesWithOrders, 0)
+        newCodesWithOrders: cells.reduce((sum, cell) => sum + cell.newCodesWithOrders, 0),
+        newCodeOrders: cells.reduce((sum, cell) => sum + (cell.newCodeOrders || 0), 0)
       };
     });
   }, [report]);
@@ -330,6 +472,9 @@ export default function ListingPerformance() {
             />
             {report && <span className="listing-tile-when">{report.weeks.length} tuan · Thu 2 → CN</span>}
             <button className="btn btn-ghost btn-sm" onClick={loadReport} disabled={loading}>Tai lai</button>
+            <button className="btn btn-ghost btn-sm" onClick={syncSheet} disabled={syncingSheet}>
+              {syncingSheet ? 'Dang doc file ma...' : 'Dong bo file ma'}
+            </button>
             <button className="btn btn-ghost btn-sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
               {uploading ? 'Dang doc file...' : 'Upload ma moi'}
             </button>
@@ -377,8 +522,29 @@ export default function ListingPerformance() {
           Moi o 1 nguoi, thang do rieng, sap xep theo so don tuan cuoi. Re chuot vao diem de xem so lieu tuan do.
           Don = so dong ma san pham trong don (1 ma tinh 1 lan/don), gom theo chu cai dau ma sau "MS". Don huy/xoa khong tinh.
           Top1 share = % don den tu 1 ma ban chay nhat · &lt;15% thap · 15–25% trung binh · &gt;25% cao.
+          Ty le don moi = % don den tu ma dang trong chinh tuan do · Ty le ma moi ra don = % ma moi co it nhat 1 don trong tuan dang ·
+          Don/ma moi trung = so don tu ma moi chia so ma moi co don. Mui ten = so voi tuan truoc (voi ty le la chenh lech diem %).
         </p>
       </div>
+
+      {report && rows.length > 0 && (
+        <div className="card">
+          <div className="card-header listing-toolbar">
+            <div className="card-title">So ma dang moi tuan</div>
+            {report.codeSheetSync?.at && (
+              <span className="listing-tile-when">
+                Dong bo file ma luc {new Date(report.codeSheetSync.at).toLocaleString('vi-VN')}
+                {report.codeSheetSync.tabCount ? ` · ${report.codeSheetSync.tabCount} tab` : ''}
+              </span>
+            )}
+          </div>
+          <NewCodeTable rows={rows} weeks={weeks} totalCells={totalCells} />
+          <p className="listing-note">
+            Ma dang = ma co ngay dang trong tuan (Thu 2 → CN), gom theo chu cai dau ma. Khong co cot ngay thi lay ngay tu ma (vd DH<b>2608</b>478 = 26/08).
+            Ra don = % ma dang co it nhat 1 don ngay trong tuan dang.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
