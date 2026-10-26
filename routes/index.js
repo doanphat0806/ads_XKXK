@@ -13,6 +13,7 @@ function registerAllRoutes(app) {
   app.use('/api/campaign-rules', require('./campaignRuleRoutes'));
   app.use('/api/listing', require('./listingRoutes'));
   app.use('/api/sale-stats', require('./saleStatsRoutes'));
+  app.use('/api/campaigns', require('./campaignSnapshotRoutes'));
 }
 
 module.exports = { registerAllRoutes };

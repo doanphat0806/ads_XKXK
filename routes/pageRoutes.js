@@ -71,27 +71,6 @@ function getPostFetchError(error) {
   return { error: error.message };
 }
 
-function isPagePublishPermissionError(error) {
-  const apiError = error?.fbData?.error || error?.response?.data?.error || {};
-  const message = String(apiError.message || error?.message || '');
-  return Number(apiError.code) === 10 ||
-    message.includes('pages_manage_posts') ||
-    message.includes('requires the pages_manage_posts permission') ||
-    message.includes('No permission to operate on the page') ||
-    message.includes('does not have permission');
-}
-
-function getPagePublishError(error) {
-  if (isPagePublishPermissionError(error)) {
-    return {
-      error: 'Token/App chua co quyen dang bai len Page. Can pages_manage_posts va quyen thao tac tren fanpage.',
-      code: 'PAGE_PUBLISH_PERMISSION',
-      permission: 'pages_manage_posts'
-    };
-  }
-  return { error: error.message };
-}
-
 function setPostCache(key, value) {
   postCache.set(key, { value, createdAt: Date.now() });
   return value;

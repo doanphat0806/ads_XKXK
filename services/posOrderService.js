@@ -141,7 +141,7 @@ function getVnDateHour(insertedAt) {
   const ms = parsePosTime(insertedAt);
   if (!Number.isFinite(ms)) return null;
   const vn = new Date(ms + VN_OFFSET_MS);
-  return { dateKey: vn.toISOString().slice(0, 10), hour: vn.getUTCHours() };
+  return { dateKey: vn.toISOString().slice(0, 10), hour: vn.getUTCHours(), minute: vn.getUTCMinutes() };
 }
 
 function vnDayStartUnix(dateKey) {
@@ -540,22 +540,29 @@ async function fetchPosOrdersLive(fromDate, toDate) {
   return orders;
 }
 
-// Dem don theo SKU (giong /orders/sku-counts) nhung chi tinh don tao trong khung gio fromHour..toHour moi ngay.
+// Dem don theo SKU (giong /orders/sku-counts) nhung chi tinh don tao trong khung fromHour:fromMinute..toHour:toMinute moi ngay.
 // Da dong bo POS -> doc MongoDB; chua thi goi thang API POS.
-async function getPosHourlySkuStats({ fromDate, toDate, fromHour = 0, toHour = 23 }) {
-  const inHourRange = date => {
-    const hour = new Date(date.getTime() + VN_OFFSET_MS).getUTCHours();
-    return hour >= fromHour && hour <= toHour;
+async function getPosHourlySkuStats({ fromDate, toDate, fromHour = 0, toHour = 23, fromMinute = 0, toMinute = 59 }) {
+  const startMinute = fromHour * 60 + fromMinute;
+  const endMinute = toHour * 60 + toMinute;
+  const inMinuteRange = (hour, minute) => {
+    const dayMinute = hour * 60 + minute;
+    return dayMinute >= startMinute && dayMinute <= endMinute;
   };
+  const inHourRange = date => {
+    const vn = new Date(date.getTime() + VN_OFFSET_MS);
+    return inMinuteRange(vn.getUTCHours(), vn.getUTCMinutes());
+  };
+  const range = { fromDate, toDate, fromHour, toHour, fromMinute, toMinute };
 
   let rows;
   if (isPosRangeReady({ fromDate })) {
-    const cacheKey = `hourly-sku:${fromDate}:${toDate}:${fromHour}:${toHour}:${getOrderDataVersion({ fromDate })}`;
+    const cacheKey = `hourly-sku:${fromDate}:${toDate}:${startMinute}:${endMinute}:${getOrderDataVersion({ fromDate })}`;
     const cached = getOrderDerivedCache(cacheKey);
     if (cached) return cached;
     const docs = await Order.find(buildOrderQuery({ fromDate, toDate })).select('orderId status rawData.status rawData.status_name rawData.items createdAt').lean();
     const { counts, totalOrders } = buildOrderSkuStats(docs.filter(doc => inHourRange(new Date(doc.createdAt))));
-    return setOrderDerivedCache(cacheKey, { counts, totalOrders, fromDate, toDate, fromHour, toHour });
+    return setOrderDerivedCache(cacheKey, { counts, totalOrders, ...range });
   } else {
     const orders = await fetchPosOrdersLive(fromDate, toDate);
     rows = [];
@@ -563,12 +570,12 @@ async function getPosHourlySkuStats({ fromDate, toDate, fromHour = 0, toHour = 2
       if (POS_EXCLUDED_STATUSES.has(Number(order.status))) continue;
       const at = getVnDateHour(order.inserted_at);
       if (!at || at.dateKey < fromDate || at.dateKey > toDate) continue;
-      if (at.hour < fromHour || at.hour > toHour) continue;
+      if (!inMinuteRange(at.hour, at.minute)) continue;
       rows.push(normalizePosOrder(order));
     }
   }
   const { counts, totalOrders } = buildOrderSkuStats(rows);
-  return { counts, totalOrders, fromDate, toDate, fromHour, toHour };
+  return { counts, totalOrders, ...range };
 }
 
 // Tai lai don POS theo ngay tao trong [fromDate, toDate] (YYYY-MM-DD) va upsert, moi lan 1 tuan, tu moi ve cu.

@@ -2027,6 +2027,7 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
   }
   let count = 0;
   const seenByDate = new Map();
+  const upsertRows = [];
 
   for (const insight of insights) {
     const date = insight.date_start;
@@ -2060,9 +2061,11 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
     };
     if (adName) campaignUpdate.adName = adName;
 
-    await upsertDailyCampaign(account._id, insight.campaign_id, date, campaignUpdate);
+    upsertRows.push({ accountId: account._id, campaignId: insight.campaign_id, date, fields: campaignUpdate });
     count++;
   }
+  // Ghi truoc nhanh prune ben duoi (prune xoa camp khong co trong lan sync nay)
+  await bulkUpsertDailyCampaigns(upsertRows);
 
   if (options.prune === true && fromDate === toDate) {
     const seenCampaignIds = [...(seenByDate.get(fromDate) || new Set())];
@@ -2090,15 +2093,10 @@ async function syncAccountHistoricalData(account, fromDate, toDate, options = {}
 }
 
 let finalSpendSyncRunning = false;
-const syncHistoryJobs = new Map();
 const dataPurchaseOrderSyncJobs = new Map();
 const orderSheetSyncJobs = new Map();
 let activeDataPurchaseOrderSyncJobId = '';
 let activeOrderSheetSyncJobId = '';
-
-function createSyncHistoryJobId() {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
 
 function createDataPurchaseOrderSyncJobId() {
   return `data-po-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
@@ -2283,83 +2281,6 @@ function assertPastCampaignSyncRange(fromDate, toDate) {
     throw new Error('Chi dong bo thu cong cac ngay truoc hom nay. Du lieu hom nay duoc cap nhat rieng va se duoc chot tu dong cuoi ngay.');
   }
   return getDateKeysInRange(fromDate, toDate);
-}
-
-function setSyncHistoryJob(jobId, updates) {
-  const current = syncHistoryJobs.get(jobId);
-  if (!current) return null;
-  const next = { ...current, ...updates, updatedAt: new Date().toISOString() };
-  syncHistoryJobs.set(jobId, next);
-  return next;
-}
-
-async function runSyncHistoryJob(jobId, { fromDate, toDate, provider, accountId }) {
-  try {
-    const job = syncHistoryJobs.get(jobId);
-    if (!job) return;
-
-    const filter = {
-      _id: accountId,
-      ...(provider ? buildAccountProviderFilter(provider) : {})
-    };
-    if (job.ownerUserId) filter.ownerUserId = job.ownerUserId;
-    const account = await Account.findOne(filter);
-    if (!account) throw new Error('Khong tim thay tai khoan can dong bo');
-
-    const dates = assertPastCampaignSyncRange(fromDate, toDate);
-    setSyncHistoryJob(jobId, {
-      state: 'active',
-      accountName: account.name,
-      totalDays: dates.length,
-      currentDay: '',
-      message: 'Đang Đồng Bộ'
-    });
-
-    let syncedRows = 0;
-    const errors = [];
-
-    for (let index = 0; index < dates.length; index += 1) {
-      const dateKey = dates[index];
-      setSyncHistoryJob(jobId, {
-        currentDay: dateKey,
-        completedDays: index,
-        percent: Math.round((index / dates.length) * 100)
-      });
-
-      try {
-        const count = await syncAccountHistoricalData(account, dateKey, dateKey, { prune: true });
-        syncedRows += count;
-        await addLog(account._id, account.name, 'success', `Dong bo ngay ${dateKey}: ${count} camp`);
-      } catch (error) {
-        errors.push({ date: dateKey, error: error.message });
-        await addLog(account._id, account.name, 'error', `Loi dong bo ngay ${dateKey}: ${error.message}`);
-      }
-
-      if (index < dates.length - 1) {
-        await sleep(300);
-      }
-    }
-
-    setSyncHistoryJob(jobId, {
-      state: errors.length ? 'completed_with_errors' : 'completed',
-      completedDays: dates.length,
-      percent: 100,
-      syncedRows,
-      errors,
-      currentDay: '',
-      finishedAt: new Date().toISOString(),
-      message: errors.length ? 'Dong bo xong nhung co loi' : 'Dong bo xong'
-    });
-    setTimeout(() => syncHistoryJobs.delete(jobId), 60 * 60 * 1000);
-  } catch (error) {
-    setSyncHistoryJob(jobId, {
-      state: 'failed',
-      error: error.message,
-      finishedAt: new Date().toISOString(),
-      message: error.message
-    });
-    setTimeout(() => syncHistoryJobs.delete(jobId), 60 * 60 * 1000);
-  }
 }
 
 async function processCampaignSyncHistoryJob(data = {}, onProgress = null) {
@@ -2763,6 +2684,7 @@ async function importCampaignsFromCsvText(req, csvText = '', options = {}) {
     campaignRowsByKey.set(key, aggregate);
   }
 
+  const upsertRows = [];
   for (const aggregate of campaignRowsByKey.values()) {
     const costPerMessage = aggregate.costPerMessageWeight > 0
       ? aggregate.costPerMessageWeightedTotal / aggregate.costPerMessageWeight
@@ -2780,10 +2702,11 @@ async function importCampaignsFromCsvText(req, csvText = '', options = {}) {
     };
     if (aggregate.adName) campaignUpdate.adName = aggregate.adName;
 
-    await upsertDailyCampaign(aggregate.account._id, aggregate.campaignId, aggregate.date, campaignUpdate);
+    upsertRows.push({ accountId: aggregate.account._id, campaignId: aggregate.campaignId, date: aggregate.date, fields: campaignUpdate });
 
     imported += 1;
   }
+  await bulkUpsertDailyCampaigns(upsertRows);
 
   // Import CSV ghi camp qua upsertDailyCampaign -> phai tu clear MOT lan o cuoi,
   // neu khong danh sach camp se cu trong toi da 30s sau khi import.
@@ -3034,13 +2957,20 @@ app.get('/api/orders/hourly-sku-counts', async (req, res) => {
       const hour = parseInt(value, 10);
       return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : fallback;
     };
-    const fromHour = clampHour(req.query.fromHour, 0);
-    const toHour = clampHour(req.query.toHour, 23);
+    const clampMinute = (value, fallback) => {
+      const minute = parseInt(value, 10);
+      return Number.isInteger(minute) && minute >= 0 && minute <= 59 ? minute : fallback;
+    };
+    let from = { hour: clampHour(req.query.fromHour, 0), minute: clampMinute(req.query.fromMinute, 0) };
+    let to = { hour: clampHour(req.query.toHour, 23), minute: clampMinute(req.query.toMinute, 59) };
+    if (from.hour * 60 + from.minute > to.hour * 60 + to.minute) [from, to] = [to, from];
     const stats = await require('../services/posOrderService').getPosHourlySkuStats({
       fromDate,
       toDate,
-      fromHour: Math.min(fromHour, toHour),
-      toHour: Math.max(fromHour, toHour)
+      fromHour: from.hour,
+      toHour: to.hour,
+      fromMinute: from.minute,
+      toMinute: to.minute
     });
     res.json({ ok: true, ...stats });
   } catch (error) {
@@ -3407,15 +3337,6 @@ function buildSkuCpoByCode(codes = [], skuCounts = {}, campaignRows = []) {
   });
 
   return result;
-}
-
-function parseDealStopManualQty(value = '') {
-  const text = String(value || '').trim();
-  if (!text) return 0;
-  const match = text.match(/\d+(?:[.,]\d+)?/);
-  if (!match) return 0;
-  const parsed = Number(match[0].replace(',', '.'));
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 async function buildPurchasePlacedQtyByCode() {

@@ -1075,44 +1075,6 @@ function mapPurchaseOrderApiRow(row = {}, manualByOrderId = new Map()) {
   };
 }
 
-function buildPurchaseOrderSummaryFromGroups(groupedRows = [], statusByOrderId = new Map()) {
-  const statusCounts = {
-    ve_du: 0,
-    ve_thieu: 0,
-    sai_hang: 0,
-    ve_thua: 0,
-    that_lac: 0
-  };
-  let totalProductQuantity = 0;
-  let trackingCount = 0;
-
-  groupedRows.forEach(row => {
-    totalProductQuantity += parseQuantity(getFirstQuantityText(row.quantity, row.quantityFallback));
-    const manual = statusByOrderId.get(row.orderId);
-    if (
-      getCurrentTracking(row)
-      || toText(manual?.supplementalTrackingCode)
-    ) {
-      trackingCount += 1;
-    }
-    const status = normalizeStatus(manual?.status);
-    if (statusCounts[status] !== undefined) statusCounts[status] += 1;
-  });
-
-  return {
-    orderCount: groupedRows.length,
-    totalProductQuantity,
-    trackingCount,
-    receivedFull: statusCounts.ve_du,
-    missing: statusCounts.ve_thieu,
-    wrong: statusCounts.sai_hang,
-    extra: statusCounts.ve_thua,
-    lost: statusCounts.that_lac,
-    mvdRatio: groupedRows.length ? trackingCount / groupedRows.length : 0,
-    statusCounts
-  };
-}
-
 async function buildPurchaseOrderSummaryFromDatabase(sourceFilter) {
   const invalidTrackingValues = Array.from(INVALID_TRACKING_VALUES).map(value => String(value).toLowerCase());
   const hasTrackingExpression = field => ({

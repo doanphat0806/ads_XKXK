@@ -75,6 +75,7 @@ function createLegacyRuntime(app) {
   const ShopeeSocialOrder = require('../models/ShopeeSocialOrder');
   const ShopeeAffAccount = require('../models/ShopeeAffAccount');
   const ShopeeAffCommissionReceipt = require('../models/ShopeeAffCommissionReceipt');
+  const { recordCampaignSnapshot, ensureCampaignSnapshotIndexes } = require('./campaignSnapshotService');
 
   // Campaigns in this system are created with SubID2 embedded in the campaign name
   // (name = `{sub_id2}{18-char suffix}`) — used to attribute Shopee ad spend back to a
@@ -839,18 +840,18 @@ function createLegacyRuntime(app) {
     return { data: response.data, model: activeModel };
   }
   
-  async function upsertDailyCampaign(accountId, campaignId, date, fields = {}) {
+  function buildDailyCampaignUpsert(accountId, campaignId, date, fields = {}) {
     const dailyDate = normalizeCampaignDate(date);
     const normalizedCampaignId = String(campaignId || '').trim();
     if (!accountId || !normalizedCampaignId) {
       throw new Error('Thieu accountId hoac campaignId khi luu camp');
     }
-  
+
     const updateFields = { ...fields };
     delete updateFields.accountId;
     delete updateFields.campaignId;
     delete updateFields.date;
-  
+
     const filter = { accountId, campaignId: normalizedCampaignId, date: dailyDate };
     const update = {
       $set: {
@@ -863,7 +864,42 @@ function createLegacyRuntime(app) {
         campaignId: normalizedCampaignId
       }
     };
-  
+    return { filter, update };
+  }
+
+  const DAILY_CAMPAIGN_BULK_CHUNK_SIZE = 500;
+
+  // Ghi nhieu camp/ngay trong 1 lan goi Mongo thay vi findOneAndUpdate tung camp (sync 100 camp
+  // = 100 round-trip). rows: [{ accountId, campaignId, date, fields }]. Khong clear cache (giong
+  // upsertDailyCampaign), noi goi tu clear. Tra ve so dong da ghi.
+  async function bulkUpsertDailyCampaigns(rows = []) {
+    const ops = rows.map(row => {
+      const { filter, update } = buildDailyCampaignUpsert(row.accountId, row.campaignId, row.date, row.fields);
+      return { updateOne: { filter, update, upsert: true, setDefaultsOnInsert: true } };
+    });
+    for (const chunk of chunkArray(ops, DAILY_CAMPAIGN_BULK_CHUNK_SIZE)) {
+      try {
+        await Campaign.bulkWrite(chunk, { ordered: false });
+      } catch (error) {
+        // 2 luong cung upsert 1 camp moi -> ben kia da tao truoc (trung unique index).
+        // Ghi lai cac dong do khong upsert, giong nhanh 11000 cua upsertDailyCampaign.
+        const writeErrors = Array.isArray(error?.writeErrors) ? error.writeErrors : [];
+        const getCode = writeError => writeError?.code ?? writeError?.err?.code;
+        const getIndex = writeError => writeError?.index ?? writeError?.err?.index;
+        if (!writeErrors.length || !writeErrors.every(writeError => getCode(writeError) === 11000)) throw error;
+        const retryOps = writeErrors
+          .map(writeError => chunk[getIndex(writeError)])
+          .filter(Boolean)
+          .map(op => ({ updateOne: { ...op.updateOne, upsert: false } }));
+        if (retryOps.length) await Campaign.bulkWrite(retryOps, { ordered: false });
+      }
+    }
+    return ops.length;
+  }
+
+  async function upsertDailyCampaign(accountId, campaignId, date, fields = {}) {
+    const { filter, update } = buildDailyCampaignUpsert(accountId, campaignId, date, fields);
+
     // KHONG clear cache o day. Ham nay duoc goi trong vong lap, moi camp mot lan:
     // sync 100 camp = 100 lan xoa sach cache doc, nen cache 30s gan nhu khong bao
     // gio duoc dung. Moi luong goi ham nay deu tu clear MOT lan sau khi chay xong
@@ -1089,63 +1125,6 @@ function createLegacyRuntime(app) {
     }
   
     return { accountsWithSpend, spendCheckErrors, datePreset };
-  }
-  
-  async function fetchScheduledCampaignsByAccounts(token, accounts = [], options = {}) {
-    const includeAccountInfo = options.includeAccountInfo === true;
-    const existingCampaignIds = new Set(
-      [...(options.existingCampaignIds || [])]
-        .map(id => String(id || '').trim())
-        .filter(Boolean)
-    );
-    const batchSize = parseBoundedInt(options.batchSize, 20, 1, 50);
-    const batchConcurrency = parseBoundedInt(options.concurrency, 1, 1, 3);
-    const chunks = chunkArray(accounts.filter(Boolean), batchSize);
-    const chunkResults = await mapWithConcurrency(chunks, async (chunk) => {
-      const batch = chunk.map(account => {
-        const acctId = normalizeAdAccountId(account?.adAccountId || '');
-        if (!acctId) return null;
-        const params = new URLSearchParams({
-          fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time,start_time',
-          effective_status: JSON.stringify(['SCHEDULED']),
-          limit: '100'
-        });
-        return {
-          method: 'GET',
-          relative_url: `${acctId}/campaigns?${params.toString()}`
-        };
-      }).filter(Boolean);
-  
-      if (!batch.length) return { chunk, response: [] };
-      const response = await fbPost(token, '', { batch: JSON.stringify(batch) }, { retries: 1, rateLimitRetries: 1 });
-      return { chunk, response };
-    }, batchConcurrency);
-  
-    const items = [];
-    for (const result of chunkResults) {
-      if (result?.error) continue;
-  
-      const responses = Array.isArray(result.response) ? result.response : [];
-      result.chunk.forEach((account, index) => {
-        const item = responses[index] || {};
-        if (item.code < 200 || item.code >= 300) return;
-  
-        try {
-          const body = JSON.parse(item.body || '{}');
-          const campaigns = Array.isArray(body.data) ? body.data : [];
-          for (const campaign of campaigns) {
-            const campaignId = String(campaign?.id || '').trim();
-            if (!campaignId || existingCampaignIds.has(campaignId)) continue;
-            existingCampaignIds.add(campaignId);
-            items.push(mapLiveCampaignToReportRow(campaign, account, includeAccountInfo));
-          }
-        } catch {
-          // Ignore malformed batch rows and keep the fast path responsive.
-        }
-      });
-    }
-  
-    return items;
   }
   
   function getCopiedObjectId(response = {}, objectType) {
@@ -1753,15 +1732,6 @@ function createLegacyRuntime(app) {
     return parts.join(' | ');
   }
   
-  function getCampaignMessageStats(campaign) {
-    const spend = parseFloat(campaign.insights?.data?.[0]?.spend || 0);
-    const msgAction = getMetaMessageActionFromInsight(campaign.insights?.data?.[0] || {});
-    const messages = parseInt(msgAction?.value || 0, 10);
-    const costPerMessage = getMetaCostPerMessageFromInsight(campaign.insights?.data?.[0] || {});
-  
-    return { spend, messages, costPerMessage };
-  }
-  
   function getCampaignRuleStats(campaign) {
     const insight = campaign.insights?.data?.[0] || {};
     const spend = parseFloat(campaign.spend ?? insight.spend ?? 0);
@@ -1778,12 +1748,6 @@ function createLegacyRuntime(app) {
       .toUpperCase()
       .replace(/\s+/g, '')
       .trim();
-  }
-  
-  function hasScheduledCampaignStarted(campaign) {
-    if (!campaign?.scheduledStartTimeUtc) return false;
-    const startMs = new Date(campaign.scheduledStartTimeUtc).getTime();
-    return Number.isFinite(startMs) && startMs <= Date.now();
   }
   
   function getScheduledCampaignDateKey(campaign) {
@@ -2038,8 +2002,9 @@ function createLegacyRuntime(app) {
     };
   }
 
-  async function fetchAccountInsightsInRange(account, fromDate, toDate) {
-    const { fbToken } = await getEffectiveSecrets(account);
+  // knownFbToken: noi goi da co token thi truyen vao, khoi doc lai User/Config moi lan sync
+  async function fetchAccountInsightsInRange(account, fromDate, toDate, knownFbToken = '') {
+    const fbToken = knownFbToken || (await getEffectiveSecrets(account)).fbToken;
     if (!fbToken) throw new Error('Thieu Facebook Access Token');
 
     const acctId = account.adAccountId.startsWith('act_')
@@ -2060,8 +2025,8 @@ function createLegacyRuntime(app) {
     return items;
   }
 
-  async function fetchAccountAdNameMapInRange(account, fromDate, toDate) {
-    const { fbToken } = await getEffectiveSecrets(account);
+  async function fetchAccountAdNameMapInRange(account, fromDate, toDate, knownFbToken = '') {
+    const fbToken = knownFbToken || (await getEffectiveSecrets(account)).fbToken;
     if (!fbToken) throw new Error('Thieu Facebook Access Token');
 
     const acctId = account.adAccountId.startsWith('act_')
@@ -2091,7 +2056,48 @@ function createLegacyRuntime(app) {
 
     return { byDateCampaign, byCampaign };
   }
-  
+
+  // Ten ad lay bang Insights cap ad (call nang nhat moi lan sync) nhung hiem khi doi -> cache
+  // theo tai khoan. Gap camp dang chay chua co trong cache (camp moi) thi tai lai ngay.
+  const AD_NAME_CACHE_TTL_MS = 30 * 60 * 1000;
+  const adNameCacheByAccount = new Map();
+
+  async function getCachedAdNamesByDateCampaign(account, dateKey, fbToken, campaignIds = []) {
+    const cacheKey = String(account._id);
+    const cached = adNameCacheByAccount.get(cacheKey);
+    const sameDay = cached?.date === dateKey;
+    if (
+      sameDay &&
+      Date.now() - cached.at < AD_NAME_CACHE_TTL_MS &&
+      [...campaignIds].every(campaignId => cached.campaignIds.has(String(campaignId)))
+    ) {
+      return cached.byDateCampaign;
+    }
+    try {
+      const { byDateCampaign, byCampaign } = await fetchAccountAdNameMapInRange(account, dateKey, dateKey, fbToken);
+      adNameCacheByAccount.set(cacheKey, { date: dateKey, at: Date.now(), byDateCampaign, campaignIds: new Set(byCampaign.keys()) });
+      return byDateCampaign;
+    } catch (error) {
+      console.warn(`[campaigns:adnames] skip ${account?.name || account?._id} ${dateKey}: ${error.message}`);
+      return sameDay ? cached.byDateCampaign : new Map();
+    }
+  }
+
+  // Sync chay lien tuc (nhieu tai khoan, 1-2 phut/lan): moi tai khoan xong lai xoa cache doc
+  // -> cache dashboard gan nhu khong bao gio duoc dung. Gom cac lan xoa cua luong sync thanh
+  // 1 lan moi SYNC_CACHE_CLEAR_DELAY_MS. Thao tac cua nguoi dung (bat/tat, sua camp) van clear ngay.
+  const SYNC_CACHE_CLEAR_DELAY_MS = 10 * 1000;
+  let syncCacheClearTimer = null;
+
+  function scheduleCampaignReadCacheClear() {
+    if (syncCacheClearTimer) return;
+    syncCacheClearTimer = setTimeout(() => {
+      syncCacheClearTimer = null;
+      clearCampaignReadCache();
+    }, SYNC_CACHE_CLEAR_DELAY_MS);
+    syncCacheClearTimer.unref?.();
+  }
+
   async function fetchMetaCampaignMetricRowsForReport(accounts = [], fromDate, toDate, options = {}) {
     const includeAccountInfo = options.includeAccountInfo === true;
     const persist = options.persist === true;
@@ -2163,6 +2169,7 @@ function createLegacyRuntime(app) {
         }
   
         if (persist) {
+          const upsertRows = [];
           for (const dailyRow of dailyMetricRows) {
             const dailyDate = normalizeCampaignDate(dailyRow.insight.date_start || fromDate);
             const meta = campaignMetaById.get(dailyRow.campaignId) || {};
@@ -2181,8 +2188,9 @@ function createLegacyRuntime(app) {
               metaExtra: dailyRow.metrics.metaExtra
             };
             if (dailyRow.adName) campaignUpdate.adName = dailyRow.adName;
-            await upsertDailyCampaign(account._id, dailyRow.campaignId, dailyDate, campaignUpdate);
+            upsertRows.push({ accountId: account._id, campaignId: dailyRow.campaignId, date: dailyDate, fields: campaignUpdate });
           }
+          await bulkUpsertDailyCampaigns(upsertRows);
           // Ghi de len du lieu camp -> clear MOT lan cho ca tai khoan nay.
           if (dailyMetricRows.length) clearCampaignReadCache();
         }
@@ -2643,50 +2651,6 @@ function createLegacyRuntime(app) {
     return output;
   }
   
-  async function fetchScheduledNoSpendCampaignRowsForAccount(account, existingCampaignIds = new Set(), options = {}) {
-    const includeAccountInfo = options.includeAccountInfo === true;
-    const maxPages = Number.isFinite(options.maxPages) ? options.maxPages : 5;
-    const pageTimeoutMs = Number.isFinite(options.pageTimeoutMs) ? options.pageTimeoutMs : 15000;
-    const knownIds = new Set([...existingCampaignIds].map(id => String(id || '').trim()).filter(Boolean));
-    const acctId = normalizeAdAccountId(account?.adAccountId || '');
-    if (!acctId) return [];
-  
-    const { fbToken } = await getEffectiveSecrets(account);
-    if (!fbToken) return [];
-  
-    let items = [];
-    try {
-      const response = await fetchAllFbEdge(fbToken, `${acctId}/campaigns`, {
-        fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time,start_time',
-        effective_status: JSON.stringify(['SCHEDULED']),
-        limit: 100
-      }, {
-        maxPages,
-        pageTimeoutMs,
-        requestOptions: { retries: 2, rateLimitRetries: 2 }
-      });
-      items = response.items || [];
-    } catch {
-      const fallback = await fetchAllFbEdge(fbToken, `${acctId}/campaigns`, {
-        fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,created_time,start_time',
-        limit: 100
-      }, {
-        maxPages,
-        pageTimeoutMs,
-        requestOptions: { retries: 2, rateLimitRetries: 2 }
-      });
-      items = fallback.items || [];
-    }
-  
-    return items
-      .filter(campaign => {
-        const campaignId = String(campaign?.id || '').trim();
-        if (!campaignId || knownIds.has(campaignId)) return false;
-        return normalizeCampaignStatus(campaign.effective_status || campaign.status) === 'SCHEDULED';
-      })
-      .map(campaign => mapLiveCampaignToReportRow(campaign, account, includeAccountInfo));
-  }
-  
   async function getScheduledDuplicateCandidatesForAccount(account, dailyDate = todayStr()) {
     const storedCampaigns = await Campaign.find({ accountId: account._id, date: dailyDate }).lean();
     const existingCampaignIds = new Set(
@@ -2929,14 +2893,8 @@ function createLegacyRuntime(app) {
     let campaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
     const { fbToken } = await getEffectiveSecrets(account);
     if (fbToken) {
-      const insights = await fetchAccountInsightsInRange(account, today, today);
-      let adNamesByDateCampaign = new Map();
-      try {
-        const adNameMap = await fetchAccountAdNameMapInRange(account, today, today);
-        adNamesByDateCampaign = adNameMap.byDateCampaign;
-      } catch (error) {
-        console.warn(`[campaigns:adnames] skip ${account?.name || account?._id} ${today}: ${error.message}`);
-      }
+      const insights = await fetchAccountInsightsInRange(account, today, today, fbToken);
+      const insightsFetchedAt = new Date();
       const metricInsights = [];
       const campaignIds = new Set();
       for (const insight of insights) {
@@ -2953,12 +2911,17 @@ function createLegacyRuntime(app) {
         campaignIds.add(String(insight.campaign_id));
       }
   
-      const campaignMetaById = await fetchCampaignMetaMap(fbToken, [...campaignIds]);
-  
+      const [campaignMetaById, adNamesByDateCampaign] = await Promise.all([
+        fetchCampaignMetaMap(fbToken, [...campaignIds]),
+        getCachedAdNamesByDateCampaign(account, today, fbToken, campaignIds)
+      ]);
+      const existingById = new Map(campaigns.map(campaign => [String(campaign.campaignId || '').trim(), campaign]));
+      const upsertRows = [];
+
       for (const insight of metricInsights) {
         const campaignId = String(insight.campaign_id);
         const meta = campaignMetaById.get(campaignId) || {};
-        const existingCampaign = campaigns.find(campaign => String(campaign.campaignId || '').trim() === campaignId) || {};
+        const existingCampaign = existingById.get(campaignId) || {};
         const bidAmount = Number(meta.bidAmount || existingCampaign.bidAmount || 0);
         const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || '';
         const campaignUpdate = {
@@ -2976,15 +2939,18 @@ function createLegacyRuntime(app) {
           costPerMessage: 0
         };
         if (adName) campaignUpdate.adName = adName;
-  
-        await upsertDailyCampaign(account._id, campaignId, today, campaignUpdate);
+
+        upsertRows.push({ accountId: account._id, campaignId, date: today, fields: campaignUpdate });
       }
+      await bulkUpsertDailyCampaigns(upsertRows);
+      // Luu so luy ke luc nay de xem chi tieu theo phut (khong await: loi snapshot khong chan sync)
+      if (today === todayStr()) recordCampaignSnapshot({ account, date: today, at: insightsFetchedAt, insights: metricInsights });
       campaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
     }
   
     // Clear MOT lan sau khi da ghi xong ca luot sync (thay cho clear moi camp mot
-    // lan trong upsertDailyCampaign truoc day).
-    clearCampaignReadCache();
+    // lan trong upsertDailyCampaign truoc day); gom voi cac tai khoan khac dang sync.
+    scheduleCampaignReadCacheClear();
 
     const totalSpend = campaigns.reduce((sum, campaign) => sum + (campaign.spend || 0), 0);
     const totalMessages = campaigns.reduce((sum, campaign) => sum + (campaign.messages || 0), 0);
@@ -2998,14 +2964,8 @@ function createLegacyRuntime(app) {
     if (!fbToken) throw new Error('Thieu Facebook Access Token');
   
     const existingCampaigns = await Campaign.find({ accountId: account._id, date: today }).lean();
-    const todayInsights = await fetchAccountInsightsInRange(account, today, today);
-    let adNamesByDateCampaign = new Map();
-    try {
-      const adNameMap = await fetchAccountAdNameMapInRange(account, today, today);
-      adNamesByDateCampaign = adNameMap.byDateCampaign;
-    } catch (error) {
-      console.warn(`[campaigns:adnames] skip ${account?.name || account?._id} ${today}: ${error.message}`);
-    }
+    const todayInsights = await fetchAccountInsightsInRange(account, today, today, fbToken);
+    const insightsFetchedAt = new Date();
     const seenCampaignIds = new Set();
     const metricInsights = [];
   
@@ -3031,8 +2991,13 @@ function createLegacyRuntime(app) {
       ...seenCampaignIds,
       ...existingCampaigns.map(campaign => String(campaign.campaignId || '').trim()).filter(Boolean)
     ]);
-    const campaignMetaById = await fetchCampaignMetaMap(fbToken, [...allCampaignIds]);
-  
+    const [campaignMetaById, adNamesByDateCampaign] = await Promise.all([
+      fetchCampaignMetaMap(fbToken, [...allCampaignIds]),
+      getCachedAdNamesByDateCampaign(account, today, fbToken, seenCampaignIds)
+    ]);
+    const existingById = new Map(existingCampaigns.map(campaign => [String(campaign.campaignId || '').trim(), campaign]));
+    const upsertRows = [];
+
     let insightTotalSpend = 0;
     let insightTotalMessages = 0;
   
@@ -3044,10 +3009,10 @@ function createLegacyRuntime(app) {
       insightTotalSpend += spend;
       insightTotalMessages += messages;
       const meta = campaignMetaById.get(campaignId) || {};
-      const existingCampaign = existingCampaigns.find(campaign => String(campaign.campaignId || '').trim() === campaignId) || {};
+      const existingCampaign = existingById.get(campaignId) || {};
       const bidAmount = Number(meta.bidAmount || existingCampaign.bidAmount || 0);
       const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || '';
-  
+
       const campaignUpdate = {
         ...meta,
         bidAmount,
@@ -3071,9 +3036,9 @@ function createLegacyRuntime(app) {
         scheduledEndTimeDisplay: existingCampaign.scheduledEndTimeDisplay || ''
       };
       if (adName) campaignUpdate.adName = adName;
-  
-      await upsertDailyCampaign(account._id, campaignId, today, campaignUpdate);
-  
+
+      upsertRows.push({ accountId: account._id, campaignId, date: today, fields: campaignUpdate });
+
       campaigns.push({
         id: campaignId,
         name: insight.campaign_name || meta.name,
@@ -3111,7 +3076,7 @@ function createLegacyRuntime(app) {
       const meta = campaignMetaById.get(campaignId) || {};
       const bidAmount = Number(meta.bidAmount || storedCampaign.bidAmount || 0);
       const adName = adNamesByDateCampaign.get(`${today}:${campaignId}`) || storedCampaign.adName || '';
-      await upsertDailyCampaign(account._id, campaignId, today, {
+      upsertRows.push({ accountId: account._id, campaignId, date: today, fields: {
         ...meta,
         bidAmount,
         ...(adName ? { adName } : {}),
@@ -3128,8 +3093,8 @@ function createLegacyRuntime(app) {
         scheduledEndTime: storedCampaign.scheduledEndTime || '',
         scheduledEndTimeUtc: storedCampaign.scheduledEndTimeUtc,
         scheduledEndTimeDisplay: storedCampaign.scheduledEndTimeDisplay || ''
-      });
-  
+      } });
+
       campaigns.push({
         id: campaignId,
         name: meta.name || storedCampaign.name,
@@ -3159,9 +3124,13 @@ function createLegacyRuntime(app) {
         }
       });
     }
-  
-    // Luong Facebook: clear MOT lan sau khi ghi xong toan bo camp cua luot sync.
-    clearCampaignReadCache();
+    await bulkUpsertDailyCampaigns(upsertRows);
+
+    // Luu so luy ke luc nay de xem chi tieu theo phut (khong await: loi snapshot khong chan sync)
+    if (today === todayStr()) recordCampaignSnapshot({ account, date: today, at: insightsFetchedAt, insights: metricInsights });
+
+    // Luong Facebook: clear MOT lan sau khi ghi xong toan bo camp cua luot sync (gom voi tai khoan khac).
+    scheduleCampaignReadCacheClear();
 
     const totalSpend = insightTotalSpend;
 
@@ -3758,7 +3727,7 @@ function createLegacyRuntime(app) {
         lastChecked: new Date(),
         status: 'connected'
       });
-      clearCampaignReadCache();
+      scheduleCampaignReadCacheClear();
       return { ok: true };
     } catch (error) {
       if (!isMongoReady()) return { skipped: true, error: error.message };
@@ -3805,24 +3774,31 @@ function createLegacyRuntime(app) {
     todayCampaignSpendSyncRunning[options.provider] = true;
     try {
       const accounts = await Account.find(buildAccountProviderFilter(options.provider))
-        .select('_id ownerUserId name provider adAccountId fbToken geminiKey checkInterval')
+        .select('_id ownerUserId name provider adAccountId fbToken geminiKey checkInterval lastChecked')
         .lean();
       let synced = 0;
       let skipped = 0;
+      let fresh = 0;
       let failed = 0;
-  
+      // Tai khoan bat auto rule tu sync 1-2 phut/lan (runAutoControl cap nhat lastChecked);
+      // vua sync xong thi bo qua, tranh goi Facebook 2 lan cho cung 1 so lieu.
+      const freshWithinMs = options.intervalMs * 0.8;
+
       const results = await mapWithConcurrency(accounts, async (account) => {
         if (isShuttingDown) return { skipped: true };
+        const lastCheckedAt = account.lastChecked ? new Date(account.lastChecked).getTime() : 0;
+        if (Date.now() - lastCheckedAt < freshWithinMs) return { skipped: true, fresh: true };
         return syncTodayCampaignSpendForAccount(account);
       }, options.concurrency);
-  
+
       for (const result of results) {
         if (result?.ok) synced += 1;
+        else if (result?.fresh) fresh += 1;
         else if (result?.skipped) skipped += 1;
         else failed += 1;
       }
-  
-      console.log(`Today campaign spend sync ${options.provider} (${source}): accounts=${accounts.length}, concurrency=${options.concurrency}, synced=${synced}, skipped=${skipped}, failed=${failed}`);
+
+      console.log(`Today campaign spend sync ${options.provider} (${source}): accounts=${accounts.length}, concurrency=${options.concurrency}, synced=${synced}, fresh=${fresh}, skipped=${skipped}, failed=${failed}`);
     } catch (error) {
       if (!isShuttingDown) {
         console.error(`Today campaign spend sync ${options.provider} failed: ${error.message}`);
@@ -4043,6 +4019,7 @@ function createLegacyRuntime(app) {
       syncInventorySalePriceToSheet,
       buildAccountPayload,
       upsertDailyCampaign,
+      bulkUpsertDailyCampaigns,
       parseVietnamCampaignStart,
       parseVietnamCampaignEnd,
       campaignDateFromScheduledStart,
@@ -4245,7 +4222,8 @@ function createLegacyRuntime(app) {
       ShopeeAffCommissionReceipt.createIndexes(),
       Config.createIndexes(),
       ensureUserIndexes(),
-      FacebookToken.createIndexes()
+      FacebookToken.createIndexes(),
+      ensureCampaignSnapshotIndexes()
     ]);
     console.log('Application indexes ready');
   }

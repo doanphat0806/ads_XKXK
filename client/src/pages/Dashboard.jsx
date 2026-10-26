@@ -77,6 +77,19 @@ const CAMPAIGN_RETURN_STATS_FROM_DATE = '2026-02-22';
 const CPO_WARNING_THRESHOLD = 100000;
 const ORDER_REFRESH_MS = 10000;
 const HOURLY_REFRESH_MS = 2 * 60 * 1000;
+const FULL_DAY_HOURS = { fromHour: 0, toHour: 23, fromMinute: 0, toMinute: 59 };
+const pad2 = (value) => String(value).padStart(2, '0');
+const formatReportHours = ({ fromHour, toHour, fromMinute, toMinute }) => (
+  fromMinute === 0 && toMinute === 59
+    ? `${fromHour}h–${toHour}h59`
+    : `${pad2(fromHour)}:${pad2(fromMinute)}–${pad2(toHour)}:${pad2(toMinute)}`
+);
+const formatClockTime = (value) => {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime())
+    ? date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })
+    : '';
+};
 // Cot dang hien + phuong an dang chon: luu rieng tung MAY (nhieu nguoi dung chung 1 tai khoan khong de nhau).
 // Danh sach phuong an: luu tren server theo tai khoan (dung chung), localStorage chi la ban tam de hien ngay.
 const COLUMN_VIEW_PREFIX = 'dashboard:columnsView:';
@@ -541,16 +554,19 @@ export default function Dashboard() {
   const [sortDir, setSortDir] = useState('desc');
   const [currentPage, setCurrentPage] = useState(1);
   const [reportFromDate, setReportFromDate] = useState(() => todayString());
-  const [reportHours, setReportHours] = useState({ fromHour: 0, toHour: 23 });
+  const [reportHours, setReportHours] = useState(FULL_DAY_HOURS);
   const [hourlyData, setHourlyData] = useState(null);
   const [hourlyError, setHourlyError] = useState('');
+  const [minuteData, setMinuteData] = useState(null);
+  const [minuteError, setMinuteError] = useState('');
   const [hourlySkuStats, setHourlySkuStats] = useState(null);
   const [hourlySkuError, setHourlySkuError] = useState('');
-  const hourRangeActive = reportHours.fromHour !== 0 || reportHours.toHour !== 23;
+  const hourRangeActive = reportHours.fromHour !== 0 || reportHours.toHour !== 23 ||
+    reportHours.fromMinute !== 0 || reportHours.toMinute !== 59;
+  // Khung le phut (khong tron gio) -> Meta khong co breakdown, tinh tu snapshot luu sau moi lan sync
+  const minuteRangeActive = hourRangeActive && (reportHours.fromMinute !== 0 || reportHours.toMinute !== 59);
   const [reportToDate, setReportToDate] = useState(() => todayString());
-  const [localStats, setLocalStats] = useState({});
   const [localCampaigns, setLocalCampaigns] = useState([]);
-  const [statsLoading, setStatsLoading] = useState(false);
   const [campaignsLoading, setCampaignsLoading] = useState(false);
   const [skuCounts, setSkuCounts] = useState({});
   const [skuTotal, setSkuTotal] = useState(0);
@@ -711,52 +727,21 @@ export default function Dashboard() {
   const loadDashboardData = useCallback(async (from, to) => {
     const loadSeq = dashboardLoadSeqRef.current + 1;
     dashboardLoadSeqRef.current = loadSeq;
-    const statsUrl = `/stats?provider=${provider}&fromDate=${from}&toDate=${to}&includeOrders=false`;
+    // Chi tai danh sach camp: chi tieu/tin nhan/so camp tren the deu tinh tu danh sach nay
+    // (buildStatsFromCampaigns). Truoc day con goi /stats cho cung khoang ngay -> server
+    // aggregate lap lai cung du lieu; so tai khoan lay tu stats chung cua AppContext.
     const campaignsUrl = `/campaigns/today?provider=${provider}&fromDate=${from}&toDate=${to}`;
-    const cachedStats = readResponseCache(`GET:${statsUrl}`);
     const cachedCampaigns = readResponseCache(`GET:${campaignsUrl}`);
-    if (cachedStats) setLocalStats(cachedStats);
     if (cachedCampaigns) setLocalCampaigns(cachedCampaigns.map(keepCurrentSortStatus));
-
-    setStatsLoading(!cachedStats);
     setCampaignsLoading(!cachedCampaigns);
 
-    const applyCampaignRows = (data) => {
-      if (dashboardLoadSeqRef.current !== loadSeq) return;
-      const nextCampaigns = data.map(keepCurrentSortStatus);
-      setLocalCampaigns(nextCampaigns);
-      setLocalStats(currentStats => ({
-        ...currentStats,
-        ...buildStatsFromCampaigns(nextCampaigns, provider === 'shopee')
-      }));
-    };
-
     try {
-      const statsPromise = cachedApi('GET', statsUrl)
-        .then(data => {
-          if (dashboardLoadSeqRef.current === loadSeq) setLocalStats(data);
-        })
-        .catch(e => console.error('Failed to load dashboard stats', e))
-        .finally(() => {
-          if (dashboardLoadSeqRef.current === loadSeq) setStatsLoading(false);
-        });
-
-      const campaignsPromise = cachedApi('GET', campaignsUrl, null, { timeoutMs: 5 * 60 * 1000 })
-        .then(data => {
-          applyCampaignRows(data);
-        })
-        .catch(e => {
-          console.error('Failed to load dashboard campaigns', e);
-        })
-        .finally(() => {
-          if (dashboardLoadSeqRef.current === loadSeq) setCampaignsLoading(false);
-        });
-
-      await Promise.all([statsPromise, campaignsPromise]);
+      const data = await cachedApi('GET', campaignsUrl, null, { timeoutMs: 5 * 60 * 1000 });
+      if (dashboardLoadSeqRef.current === loadSeq) setLocalCampaigns(data.map(keepCurrentSortStatus));
     } catch (e) {
-      console.error('Failed to load dashboard data', e);
-      setStatsLoading(false);
-      setCampaignsLoading(false);
+      console.error('Failed to load dashboard campaigns', e);
+    } finally {
+      if (dashboardLoadSeqRef.current === loadSeq) setCampaignsLoading(false);
     }
   }, [provider]);
 
@@ -939,8 +924,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (!hourRangeActive || !showOrders) return undefined;
     let cancelled = false;
-    const { fromHour, toHour } = reportHours;
-    const load = () => api('GET', `/orders/hourly-sku-counts?fromDate=${reportFromDate}&toDate=${reportToDate}&fromHour=${fromHour}&toHour=${toHour}`, null, { timeoutMs: 5 * 60 * 1000 })
+    const { fromHour, toHour, fromMinute, toMinute } = reportHours;
+    const load = () => api('GET', `/orders/hourly-sku-counts?fromDate=${reportFromDate}&toDate=${reportToDate}&fromHour=${fromHour}&toHour=${toHour}&fromMinute=${fromMinute}&toMinute=${toMinute}`, null, { timeoutMs: 5 * 60 * 1000 })
       .then(data => { if (!cancelled) { setHourlySkuStats(data); setHourlySkuError(''); } })
       .catch(error => { if (!cancelled) setHourlySkuError(error?.message || 'Khong tai duoc don theo gio'); });
     load();
@@ -951,7 +936,8 @@ export default function Dashboard() {
   const hourlySkuReady = Boolean(
     hourRangeActive && hourlySkuStats &&
     hourlySkuStats.fromDate === reportFromDate && hourlySkuStats.toDate === reportToDate &&
-    hourlySkuStats.fromHour === reportHours.fromHour && hourlySkuStats.toHour === reportHours.toHour
+    hourlySkuStats.fromHour === reportHours.fromHour && hourlySkuStats.toHour === reportHours.toHour &&
+    (hourlySkuStats.fromMinute ?? 0) === reportHours.fromMinute && (hourlySkuStats.toMinute ?? 59) === reportHours.toMinute
   );
   const effectiveSkuCounts = useMemo(() => (
     hourlySkuReady ? (hourlySkuStats.counts || {}) : skuCounts
@@ -985,10 +971,19 @@ export default function Dashboard() {
     hourlyData && hourlyData.provider === provider &&
     hourlyData.fromDate === reportFromDate && hourlyData.toDate === reportToDate
   );
+  const minuteFromTime = `${pad2(reportHours.fromHour)}:${pad2(reportHours.fromMinute)}`;
+  const minuteToTime = `${pad2(reportHours.toHour)}:${pad2(reportHours.toMinute)}`;
+  const minuteDataReady = Boolean(
+    minuteData && minuteData.provider === provider &&
+    minuteData.fromDate === reportFromDate && minuteData.toDate === reportToDate &&
+    minuteData.fromTime === minuteFromTime && minuteData.toTime === minuteToTime
+  );
+  const rangeDataReady = minuteRangeActive ? minuteDataReady : hourlyDataReady;
+  const rangeError = minuteRangeActive ? minuteError : hourlyError;
 
   // Chi tai du lieu theo gio (Meta Insights breakdown theo gio) khi dang chon khung gio; tai lai dinh ky de gio hien tai cap nhat
   useEffect(() => {
-    if (!hourRangeActive) return undefined;
+    if (!hourRangeActive || minuteRangeActive) return undefined;
     let cancelled = false;
     setHourlyError('');
     const load = () => api('GET', `/campaigns/hourly-spend?provider=${provider}&fromDate=${reportFromDate}&toDate=${reportToDate}`, null, { timeoutMs: 5 * 60 * 1000 })
@@ -997,9 +992,44 @@ export default function Dashboard() {
     load();
     const interval = setInterval(() => { if (document.visibilityState !== 'hidden') load(); }, HOURLY_REFRESH_MS);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [hourRangeActive, provider, reportFromDate, reportToDate]);
+  }, [hourRangeActive, minuteRangeActive, provider, reportFromDate, reportToDate]);
+
+  // Khung le phut: chenh lech so luy ke giua 2 snapshot sync (do chi tiet = chu ky sync)
+  useEffect(() => {
+    if (!minuteRangeActive) return undefined;
+    let cancelled = false;
+    setMinuteError('');
+    const load = () => api('GET', `/campaigns/minute-spend?provider=${provider}&fromDate=${reportFromDate}&toDate=${reportToDate}&fromTime=${minuteFromTime}&toTime=${minuteToTime}`, null, { timeoutMs: 2 * 60 * 1000 })
+      .then(data => { if (!cancelled) { setMinuteData({ ...data, provider }); setMinuteError(''); } })
+      .catch(error => { if (!cancelled) setMinuteError(error?.message || 'Khong tai duoc so lieu theo phut'); });
+    load();
+    const interval = setInterval(() => { if (document.visibilityState !== 'hidden') load(); }, HOURLY_REFRESH_MS);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [minuteRangeActive, provider, reportFromDate, reportToDate, minuteFromTime, minuteToTime]);
+
   const hourAdjustedCampaigns = useMemo(() => {
-    if (!hourRangeActive || !hourlyDataReady) return localCampaigns;
+    if (!hourRangeActive || !rangeDataReady) return localCampaigns;
+    if (minuteRangeActive) {
+      return localCampaigns.map(campaign => {
+        const metrics = minuteData.byCampaign?.[String(campaign.campaignId)] || {};
+        const spend = Number(metrics.spend || 0);
+        const messages = Number(metrics.messages || 0);
+        return {
+          ...campaign,
+          spend,
+          clicks: Number(metrics.clicks || 0),
+          impressions: Number(metrics.impressions || 0),
+          linkClicks: Number(metrics.linkClicks || 0),
+          engagements: Number(metrics.engagements || 0),
+          messages,
+          costPerMessage: messages > 0 ? spend / messages : 0,
+          reach: 0,
+          reachUnavailable: true,
+          metaExtra: null,
+          metaOrders: Number(metrics.metaOrders || 0)
+        };
+      });
+    }
     const { fromHour, toHour } = reportHours;
     const sumRange = (row) => {
       if (!row) return 0;
@@ -1028,7 +1058,7 @@ export default function Dashboard() {
         metaOrders: sumRange(hourlyData.ordersByCampaign?.[id])
       };
     });
-  }, [localCampaigns, hourRangeActive, hourlyDataReady, hourlyData, reportHours]);
+  }, [localCampaigns, hourRangeActive, rangeDataReady, minuteRangeActive, minuteData, hourlyData, reportHours]);
 
   const filteredCampaigns = useMemo(() => {
     const search = deferredCampaignSearch.trim().toLowerCase();
@@ -1406,8 +1436,8 @@ export default function Dashboard() {
       <div className="stats-grid section-gap">
         <div className="stat g">
           <div className="stat-label">Tai khoan</div>
-          <div className="stat-value g" id="sAccounts">{localStats.totalAccounts ?? globalStats.totalAccounts ?? '-'}</div>
-          <div className="stat-sub">{localStats.connectedAccounts ?? globalStats.connectedAccounts ?? 0} ket noi</div>
+          <div className="stat-value g" id="sAccounts">{globalStats.totalAccounts ?? '-'}</div>
+          <div className="stat-sub">{globalStats.connectedAccounts ?? 0} ket noi</div>
         </div>
         <div className="stat b">
           <div className="stat-label">Camp dang chay</div>
@@ -1459,15 +1489,17 @@ export default function Dashboard() {
               toDate={reportToDate}
               fromHour={reportHours.fromHour}
               toHour={reportHours.toHour}
+              fromMinute={reportHours.fromMinute}
+              toMinute={reportHours.toMinute}
               showHours
               onChange={(from, to, hours) => {
                 setReportFromDate(from);
                 setReportToDate(to);
-                if (hours) setReportHours(hours);
+                if (hours) setReportHours({ ...FULL_DAY_HOURS, ...hours });
               }}
               centered
             />
-            <button className="btn btn-ghost btn-sm" onClick={reloadDashboardNow} disabled={statsLoading}>
+            <button className="btn btn-ghost btn-sm" onClick={reloadDashboardNow} disabled={campaignsLoading}>
               Reload
             </button>
             <input
@@ -1513,7 +1545,7 @@ export default function Dashboard() {
                 onClose={closeColumnModal}
               />
             )}
-            {(skuLoading || statsLoading || isSortPending) && <span className="spin" style={{ fontSize: '14px' }}>...</span>}
+            {(skuLoading || campaignsLoading || isSortPending) && <span className="spin" style={{ fontSize: '14px' }}>...</span>}
           </div>
         </div>
       </div>
@@ -1521,16 +1553,25 @@ export default function Dashboard() {
 
       {hourRangeActive && (
         <div className="hourly-table-note">
-          {hourlyError && !hourlyDataReady
-            ? <span style={{ color: 'var(--r)' }}>Không tải được số liệu theo giờ: {hourlyError}</span>
-            : hourlyDataReady
+          {rangeError && !rangeDataReady
+            ? <span style={{ color: 'var(--r)' }}>Không tải được số liệu theo {minuteRangeActive ? 'phút' : 'giờ'}: {rangeError}</span>
+            : rangeDataReady
             ? <span>
-                Đang tính <b>chi tiêu, click, hiển thị, tương tác, tin nhắn, đơn Meta{hourlySkuReady ? ', Tổng đơn (POS)' : ''}</b> trong khung <b>{reportHours.fromHour}h–{reportHours.toHour}h59</b>.
+                Đang tính <b>chi tiêu, click, hiển thị, tương tác, tin nhắn, đơn Meta{hourlySkuReady ? ', Tổng đơn (POS)' : ''}</b> trong khung <b>{formatReportHours(reportHours)}</b>.
                 {' '}Tiếp cận, tần suất, CPP không có theo giờ (hiện "-"){hourlySkuReady ? '' : '; Tổng đơn vẫn là cả ngày'}.
+                {minuteRangeActive && (
+                  <>
+                    {' '}Số theo phút tính từ các lần sync (sai số bằng chu kỳ sync, Meta báo trễ vài phút)
+                    {minuteData.lastSnapshotAt ? `, sync gần nhất ${formatClockTime(minuteData.lastSnapshotAt)}` : ''}.
+                    {minuteData.missingBaseline?.length > 0 && (
+                      <span style={{ color: 'var(--r)' }}> Thiếu dữ liệu sync trước mốc bắt đầu ở {minuteData.missingBaseline.length} tài khoản/ngày (chưa lưu hoặc server tắt) nên chi tiêu có thể bị tính dư.</span>
+                    )}
+                  </>
+                )}
                 {showOrders && hourlySkuError && !hourlySkuReady && <span style={{ color: 'var(--r)' }}> Không lấy được đơn theo giờ từ POS: {hourlySkuError}</span>}
               </span>
-            : <span>Đang tải số liệu khung {reportHours.fromHour}h–{reportHours.toHour}h59... bảng tạm hiện số cả ngày.</span>}
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReportHours({ fromHour: 0, toHour: 23 })}>Xem cả ngày</button>
+            : <span>Đang tải số liệu khung {formatReportHours(reportHours)}... bảng tạm hiện số cả ngày.</span>}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReportHours(FULL_DAY_HOURS)}>Xem cả ngày</button>
         </div>
       )}
 
