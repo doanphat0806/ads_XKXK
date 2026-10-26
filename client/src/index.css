@@ -3434,7 +3434,7 @@
       gap: 16px;
       flex-wrap: nowrap;
       justify-content: flex-start;
-      align-items: flex-start;
+      align-items: stretch;
     }
 
     .drp-calendar-wrap {
@@ -7108,6 +7108,9 @@
     .drp-hours select { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 0 10px; height: 36px; font-size: 13px; font-weight: 600; color: #0f172a; outline: none; cursor: pointer; }
     .drp-hours-reset { background: transparent; border: 0; color: #10b981; font-size: 12px; font-weight: 700; cursor: pointer; padding: 4px; }
     .drp-hours-reset:disabled { color: #94a3b8; cursor: default; }
+    /* Khung gio nam rieng 1 hang de chan khong bi chen chuc */
+    .drp-footer .drp-footer-range { flex: 1 1 auto; }
+    .drp-footer .drp-hours { order: 3; flex: 1 1 100%; }
 
     .hourly-table-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; padding: 8px 14px; border: 1px solid var(--o); border-radius: 10px; background: #fff8eb; font-size: 13px; color: var(--txt); }
 
