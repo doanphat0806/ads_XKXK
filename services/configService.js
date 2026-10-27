@@ -40,6 +40,39 @@ function getShopeeAutoMinSpendLimit(limits = {}) {
     : AUTO_PAUSE_SHOPEE_MIN_SPEND_LIMIT;
 }
 
+// Chot camp tieu thap theo nhieu bac: moi bac { time: 'HH:MM', limit } quet 1 lan/ngay
+const LOW_SPEND_CUTOFF_MAX_TIERS = 8;
+const LOW_SPEND_CUTOFF_TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+function normalizeLowSpendCutoffTiers(value) {
+  if (!Array.isArray(value)) return null;
+  const byTime = new Map();
+  for (const tier of value) {
+    const time = String(tier?.time || '').trim();
+    const limit = Number(tier?.limit || 0);
+    if (!LOW_SPEND_CUTOFF_TIME_REGEX.test(time) || !Number.isFinite(limit) || limit < 0) continue;
+    byTime.set(time, { time, limit });
+  }
+  return [...byTime.values()]
+    .sort((a, b) => a.time.localeCompare(b.time))
+    .slice(0, LOW_SPEND_CUTOFF_MAX_TIERS);
+}
+
+function resolveLowSpendCutoffTiers(globalConfig = {}, userConfig = {}) {
+  const userTiers = normalizeLowSpendCutoffTiers(userConfig.lowSpendCutoffTiers);
+  if (userTiers) return userTiers;
+  const globalTiers = normalizeLowSpendCutoffTiers(globalConfig.lowSpendCutoffTiers);
+  if (globalTiers) return globalTiers;
+  // Chua luu danh sach bac: them bac 9h duoi 2k + giu moc cu (lowSpendCutoffTime/Limit, mac dinh 11h duoi 10k)
+  return normalizeLowSpendCutoffTiers([
+    { time: '09:00', limit: 2000 },
+    {
+      time: pickDefinedValue(userConfig.lowSpendCutoffTime, globalConfig.lowSpendCutoffTime, '11:00'),
+      limit: pickDefinedValue(userConfig.lowSpendCutoffLimit, globalConfig.lowSpendCutoffLimit, 10000)
+    }
+  ]);
+}
+
 function mergeAutoConfig(globalConfig = {}, userConfig = {}) {
   const shopeeMinSpendLimit = pickDefinedValue(
     userConfig.autoPauseShopeeMinSpendLimit,
@@ -83,8 +116,7 @@ function mergeAutoConfig(globalConfig = {}, userConfig = {}) {
     autoPauseZeroOrderSpendLimitLifetime: pickDefinedValue(userConfig.autoPauseZeroOrderSpendLimitLifetime, globalConfig.autoPauseZeroOrderSpendLimitLifetime, AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
     autoPauseShopeeMinSpendLimit: getShopeeAutoMinSpendLimit({ autoPauseShopeeMinSpendLimit: shopeeMinSpendLimit }),
     autoPauseShopeeHhAdsPercent: pickDefinedValue(userConfig.autoPauseShopeeHhAdsPercent, globalConfig.autoPauseShopeeHhAdsPercent, AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT),
-    lowSpendCutoffTime: pickDefinedValue(userConfig.lowSpendCutoffTime, globalConfig.lowSpendCutoffTime, '11:00'),
-    lowSpendCutoffLimit: pickDefinedValue(userConfig.lowSpendCutoffLimit, globalConfig.lowSpendCutoffLimit, 10000)
+    lowSpendCutoffTiers: resolveLowSpendCutoffTiers(globalConfig, userConfig)
   };
 }
 
@@ -97,5 +129,7 @@ module.exports = {
   clearAppConfigCache,
   pickDefinedValue,
   getShopeeAutoMinSpendLimit,
+  LOW_SPEND_CUTOFF_MAX_TIERS,
+  normalizeLowSpendCutoffTiers,
   mergeAutoConfig
 };

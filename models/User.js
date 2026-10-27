@@ -56,6 +56,8 @@ const UserSchema = new mongoose.Schema({
   autoPauseShopeeHhAdsPercent: { type: Number },
   lowSpendCutoffTime: { type: String },
   lowSpendCutoffLimit: { type: Number },
+  // Cac bac chot tieu thap [{ time: 'HH:MM', limit }]; default undefined = chua luu -> dung bac mac dinh
+  lowSpendCutoffTiers: { type: [{ _id: false, time: String, limit: Number }], default: undefined },
   active: { type: Boolean, default: true },
   // Phuong an cot Dashboard dung chung trong tai khoan: { presets: [{ name, order, hidden }] } (cot dang hien luu theo may)
   dashboardColumns: { type: mongoose.Schema.Types.Mixed },

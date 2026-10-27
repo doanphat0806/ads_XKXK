@@ -93,7 +93,7 @@ async function getUserAutoConfig(userId) {
     'lifetimeFewMessageThreshold lifetimeFewMessageSpendLimit lifetimeCheapMessageCostLimit ' +
     'lifetimeCheapMessageSpendLimit lifetimeHighCostPerMessageLimit lifetimeHighCostSpendLimit ' +
     'lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseMultiOrderThreshold autoPauseMultiOrderThresholdLifetime autoPauseMultiOrderCpoLimit autoPauseMultiOrderCpoLimitLifetime ' +
-    'autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent lowSpendCutoffTime lowSpendCutoffLimit'
+    'autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent lowSpendCutoffTime lowSpendCutoffLimit lowSpendCutoffTiers'
   ).lean();
   return user || {};
 }

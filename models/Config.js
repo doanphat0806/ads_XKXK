@@ -53,6 +53,7 @@ const ConfigSchema = new mongoose.Schema({
   // Chot 1 lan/ngay luc lowSpendCutoffTime: tat camp tieu < lowSpendCutoffLimit va 0 TN (0 = tat rule)
   lowSpendCutoffTime: { type: String, default: '11:00' },
   lowSpendCutoffLimit: { type: Number, default: 10000 },
+  lowSpendCutoffTiers: { type: [{ _id: false, time: String, limit: Number }], default: undefined },
   dataPurchaseOrderMeta: { type: mongoose.Schema.Types.Mixed, default: {} },
   purchaseOrderDashboardCancellations: { type: mongoose.Schema.Types.Mixed, default: {} },
   purchaseOrderDashboardNotes: { type: mongoose.Schema.Types.Mixed, default: {} },

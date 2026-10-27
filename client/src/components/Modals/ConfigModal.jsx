@@ -149,8 +149,7 @@ export default function ConfigModal() {
     autoPauseZeroOrderSpendLimit: 60000,
     autoPauseZeroOrderSpendLimitLifetime: 60000,
     autoPauseShopeeMinSpendLimit: 50000,
-    lowSpendCutoffTime: '11:00',
-    lowSpendCutoffLimit: 10000
+    lowSpendCutoffTiers: [{ time: '09:00', limit: 2000 }, { time: '11:00', limit: 10000 }]
   });
 
   useEffect(() => {
@@ -188,8 +187,9 @@ export default function ConfigModal() {
         autoPauseZeroOrderSpendLimit: appConfig.autoPauseZeroOrderSpendLimit ?? 60000,
         autoPauseZeroOrderSpendLimitLifetime: appConfig.autoPauseZeroOrderSpendLimitLifetime ?? 60000,
         autoPauseShopeeMinSpendLimit: appConfig.autoPauseShopeeMinSpendLimit ?? 50000,
-        lowSpendCutoffTime: appConfig.lowSpendCutoffTime || '11:00',
-        lowSpendCutoffLimit: appConfig.lowSpendCutoffLimit ?? 10000
+        lowSpendCutoffTiers: Array.isArray(appConfig.lowSpendCutoffTiers)
+          ? appConfig.lowSpendCutoffTiers.map(tier => ({ time: tier.time || '', limit: tier.limit ?? 0 }))
+          : []
       });
     }
   }, [appConfig, isShopee]);
@@ -264,6 +264,18 @@ export default function ConfigModal() {
   };
 
   const setLimit = (key) => (e) => setAutoLimits(prev => ({ ...prev, [key]: e.target.value }));
+  const setCutoffTier = (index, key) => (e) => setAutoLimits(prev => ({
+    ...prev,
+    lowSpendCutoffTiers: prev.lowSpendCutoffTiers.map((tier, i) => (i === index ? { ...tier, [key]: e.target.value } : tier))
+  }));
+  const addCutoffTier = () => setAutoLimits(prev => ({
+    ...prev,
+    lowSpendCutoffTiers: [...prev.lowSpendCutoffTiers, { time: '', limit: '' }]
+  }));
+  const removeCutoffTier = (index) => setAutoLimits(prev => ({
+    ...prev,
+    lowSpendCutoffTiers: prev.lowSpendCutoffTiers.filter((_, i) => i !== index)
+  }));
   const numInput = (key, placeholder = '0') => (
     <input type="number" inputMode="numeric" min="0" placeholder={placeholder} value={autoLimits[key]} onChange={setLimit(key)} />
   );
@@ -341,8 +353,9 @@ export default function ConfigModal() {
     autoPauseShopeeMinSpendLimit: Number(autoLimits.autoPauseShopeeMinSpendLimit || 0),
     // Rule chot tieu thap chi co o Facebook; form Shopee khong gui de khoi ghi de
     ...(isShopee ? {} : {
-      lowSpendCutoffTime: String(autoLimits.lowSpendCutoffTime || '').trim(),
-      lowSpendCutoffLimit: Number(autoLimits.lowSpendCutoffLimit || 0)
+      lowSpendCutoffTiers: autoLimits.lowSpendCutoffTiers
+        .filter(tier => String(tier.time || '').trim())
+        .map(tier => ({ time: String(tier.time).trim(), limit: Number(tier.limit || 0) }))
     })
   }, 'Đã lưu giới hạn tự động');
 
@@ -438,15 +451,27 @@ export default function ConfigModal() {
                   <div>
                     <div className="cfg-block-title">Chốt camp tiêu thấp</div>
                     <div className="cfg-hint">
-                      Quét 1 lần/ngày lúc giờ này: camp đang chạy tiêu dưới mức tiền và 0 tin nhắn sẽ bị tắt (kể cả chưa tiêu đồng nào).
-                      Bỏ qua camp tạo trong ngày, camp có đơn, camp có quy tắc riêng. Để <b>0</b> = tắt điều kiện.
+                      Mỗi bậc quét 1 lần/ngày lúc giờ đó: camp đang chạy tiêu dưới mức tiền và 0 tin nhắn sẽ bị tắt (kể cả chưa tiêu đồng nào).
+                      Bỏ qua camp tạo trong ngày, camp có đơn, camp có quy tắc riêng. Để <b>0</b> = bỏ bậc đó.
                     </div>
                   </div>
-                  <div className="cfg-inline">
-                    <input type="text" inputMode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:mm" value={autoLimits.lowSpendCutoffTime} onChange={setLimit('lowSpendCutoffTime')} style={{ width: '80px', textAlign: 'center' }} />
-                    <input type="number" inputMode="numeric" min="0" placeholder="10000" value={autoLimits.lowSpendCutoffLimit} onChange={setLimit('lowSpendCutoffLimit')} style={{ width: '110px' }} />
-                    <button className="btn btn-p btn-sm" onClick={saveAutoLimits}>Lưu</button>
-                  </div>
+                  <button className="btn btn-p btn-sm" onClick={saveAutoLimits}>Lưu</button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' }}>
+                  {autoLimits.lowSpendCutoffTiers.map((tier, index) => (
+                    <div className="cfg-inline" key={index}>
+                      <span className="cfg-hint">Lúc</span>
+                      <input type="text" inputMode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:mm" value={tier.time} onChange={setCutoffTier(index, 'time')} style={{ width: '80px', textAlign: 'center' }} />
+                      <span className="cfg-hint">tiêu dưới</span>
+                      <input type="number" inputMode="numeric" min="0" placeholder="10000" value={tier.limit} onChange={setCutoffTier(index, 'limit')} style={{ width: '110px' }} />
+                      <button className="btn btn-ghost btn-sm" onClick={() => removeCutoffTier(index)} title="Xóa bậc">✕</button>
+                    </div>
+                  ))}
+                  {autoLimits.lowSpendCutoffTiers.length < 8 && (
+                    <div>
+                      <button className="btn btn-ghost btn-sm" onClick={addCutoffTier}>+ Thêm bậc</button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

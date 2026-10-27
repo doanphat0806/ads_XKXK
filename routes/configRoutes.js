@@ -11,7 +11,9 @@ const {
   getAppConfig,
   clearAppConfigCache,
   mergeAutoConfig,
-  getShopeeAutoMinSpendLimit
+  getShopeeAutoMinSpendLimit,
+  LOW_SPEND_CUTOFF_MAX_TIERS,
+  normalizeLowSpendCutoffTiers
 } = require('../services/configService');
 
 const router = express.Router();
@@ -25,7 +27,7 @@ router.get('/config', async (req, res) => {
       'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
       'dailyZeroMessageSpendLimit dailyOneMessageSpendLimit dailyFewMessageThreshold dailyFewMessageSpendLimit dailyCheapMessageCostLimit dailyCheapMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
       'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeOneMessageSpendLimit lifetimeFewMessageThreshold lifetimeFewMessageSpendLimit lifetimeCheapMessageCostLimit lifetimeCheapMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
-      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseMultiOrderThreshold autoPauseMultiOrderThresholdLifetime autoPauseMultiOrderCpoLimit autoPauseMultiOrderCpoLimitLifetime autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent lowSpendCutoffTime lowSpendCutoffLimit'
+      'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseMultiOrderThreshold autoPauseMultiOrderThresholdLifetime autoPauseMultiOrderCpoLimit autoPauseMultiOrderCpoLimitLifetime autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent lowSpendCutoffTime lowSpendCutoffLimit lowSpendCutoffTiers'
     ).lean();
     const autoConfig = mergeAutoConfig(config || {}, user || {});
 
@@ -133,15 +135,17 @@ router.put('/auto-limits', async (req, res) => {
       updatedAt: new Date()
     };
     // Gui kem moi luu (form Facebook); form Shopee khong gui -> giu gia tri cu
-    if (req.body.lowSpendCutoffTime !== undefined) {
-      const cutoffTime = String(req.body.lowSpendCutoffTime || '').trim();
-      if (!timeRegex.test(cutoffTime)) throw new Error('Gio chot tat camp tieu thap phai dang HH:MM');
-      limits.lowSpendCutoffTime = cutoffTime;
-    }
-    if (req.body.lowSpendCutoffLimit !== undefined) {
-      const cutoffLimit = Number(req.body.lowSpendCutoffLimit || 0);
-      if (!Number.isFinite(cutoffLimit) || cutoffLimit < 0) throw new Error('So tien chot tat camp tieu thap khong hop le');
-      limits.lowSpendCutoffLimit = cutoffLimit;
+    if (req.body.lowSpendCutoffTiers !== undefined) {
+      if (!Array.isArray(req.body.lowSpendCutoffTiers)) throw new Error('Danh sach bac chot tieu thap khong hop le');
+      if (req.body.lowSpendCutoffTiers.length > LOW_SPEND_CUTOFF_MAX_TIERS) {
+        throw new Error(`Toi da ${LOW_SPEND_CUTOFF_MAX_TIERS} bac chot tieu thap`);
+      }
+      for (const tier of req.body.lowSpendCutoffTiers) {
+        if (!timeRegex.test(String(tier?.time || '').trim())) throw new Error('Gio chot tat camp tieu thap phai dang HH:MM');
+        const cutoffLimit = Number(tier?.limit || 0);
+        if (!Number.isFinite(cutoffLimit) || cutoffLimit < 0) throw new Error('So tien chot tat camp tieu thap khong hop le');
+      }
+      limits.lowSpendCutoffTiers = normalizeLowSpendCutoffTiers(req.body.lowSpendCutoffTiers);
     }
 
     await User.findByIdAndUpdate(req.currentUser._id, { $set: limits }, { new: true });
