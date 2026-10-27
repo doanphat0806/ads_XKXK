@@ -3687,14 +3687,21 @@ function createLegacyRuntime(app) {
   }
 
   const AUTO_RUN_BUSY_RETRY_MS = 15 * 1000;
+  const AUTO_RUN_MONGO_RETRY_MS = 30 * 1000;
 
   async function startAccountScheduler(account) {
     const accountId = String(account._id);
     if (accountTimers[accountId]) clearTimeout(accountTimers[accountId]);
     accountSchedulerActive[accountId] = true;
-  
+
     const scheduleNext = async (delayMs = null) => {
-      if (!isMongoReady() || !accountSchedulerActive[accountId]) return;
+      if (isShuttingDown || !accountSchedulerActive[accountId]) return;
+      // Mongo mat ket noi chop nhoang: truoc day return luon -> chuoi hen gio dut, auto cua tai
+      // khoan chet im lang toi khi restart (26/10: 89/165 tai khoan ngung tat camp ~20 tieng).
+      if (!isMongoReady()) {
+        accountTimers[accountId] = setTimeout(() => scheduleNext(delayMs), AUTO_RUN_MONGO_RETRY_MS);
+        return;
+      }
       let intervalSeconds = 300;
       if (delayMs === null) {
         try {
