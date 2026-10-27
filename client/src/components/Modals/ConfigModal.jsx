@@ -270,6 +270,8 @@ export default function ConfigModal() {
       rows: [
         { label: '0 tin nhắn', hint: 'Tắt khi tiêu tới mức này', daily: 'dailyZero', lifetime: 'lifetimeZero', placeholder: '25000' },
         { label: '1 tin nhắn', hint: 'Tắt khi tiêu tới mức này', daily: 'dailyOne', lifetime: 'lifetimeOne', placeholder: '25000' },
+        { label: 'Ít TN — dưới số TN', hint: 'Vd 3 = camp chỉ có 0-2 TN; 0 = tắt điều kiện', daily: 'dailyFewThreshold', lifetime: 'lifetimeFewThreshold', placeholder: '3' },
+        { label: 'Ít TN — tiêu tới', hint: 'Tắt khi dưới số TN trên mà tiêu tới mức này (chưa có đơn)', daily: 'dailyFewSpend', lifetime: 'lifetimeFewSpend', placeholder: '30000' },
         { label: 'TN đắt — giá TN trên', hint: 'Ngưỡng giá để coi là TN đắt', daily: 'dailyHighCost', lifetime: 'lifetimeHighCost', placeholder: '20000' },
         { label: 'TN đắt — tiêu tới', hint: 'Tắt khi TN đắt và tiêu tới mức này', daily: 'dailyHighSpend', lifetime: 'lifetimeHighSpend', placeholder: '50000' },
         { label: 'TN rẻ — giá TN dưới', hint: 'Ngưỡng giá để coi là TN rẻ', daily: 'dailyCheapCost', lifetime: 'lifetimeCheapCost' },
@@ -306,8 +308,8 @@ export default function ConfigModal() {
   const saveAutoLimits = () => save('/auto-limits', {
     dailyZeroMessageSpendLimit: Number(autoLimits.dailyZero),
     dailyOneMessageSpendLimit: Number(autoLimits.dailyOne),
-    dailyFewMessageThreshold: 0,
-    dailyFewMessageSpendLimit: 0,
+    dailyFewMessageThreshold: Number(autoLimits.dailyFewThreshold || 0),
+    dailyFewMessageSpendLimit: Number(autoLimits.dailyFewSpend || 0),
     dailyCheapMessageCostLimit: Number(autoLimits.dailyCheapCost || 0),
     dailyCheapMessageSpendLimit: Number(autoLimits.dailyCheapSpend || 0),
     dailyHighCostPerMessageLimit: Number(autoLimits.dailyHighCost),

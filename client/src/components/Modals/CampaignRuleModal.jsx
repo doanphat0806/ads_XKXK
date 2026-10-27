@@ -10,6 +10,8 @@ const FB_LIMIT_GROUPS = [
     rows: [
       { label: '0 tin nhắn', hint: 'Tắt khi tiêu tới mức này', daily: 'dailyZeroMessageSpendLimit', lifetime: 'lifetimeZeroMessageSpendLimit' },
       { label: '1 tin nhắn', hint: 'Tắt khi tiêu tới mức này', daily: 'dailyOneMessageSpendLimit', lifetime: 'lifetimeOneMessageSpendLimit' },
+      { label: 'Ít TN — dưới số TN', hint: 'Vd 3 = camp chỉ có 0-2 TN', daily: 'dailyFewMessageThreshold', lifetime: 'lifetimeFewMessageThreshold', param: true },
+      { label: 'Ít TN — tiêu tới', hint: 'Tắt khi dưới số TN trên mà tiêu tới mức này', daily: 'dailyFewMessageSpendLimit', lifetime: 'lifetimeFewMessageSpendLimit' },
       { label: 'TN đắt — giá TN trên', hint: 'Ngưỡng giá để coi là TN đắt', daily: 'dailyHighCostPerMessageLimit', lifetime: 'lifetimeHighCostPerMessageLimit', param: true },
       { label: 'TN đắt — tiêu tới', hint: 'Tắt khi TN đắt và tiêu tới mức này', daily: 'dailyHighCostSpendLimit', lifetime: 'lifetimeHighCostSpendLimit' },
       { label: 'TN rẻ — giá TN dưới', hint: 'Ngưỡng giá để coi là TN rẻ', daily: 'dailyCheapMessageCostLimit', lifetime: 'lifetimeCheapMessageCostLimit', param: true },

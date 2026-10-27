@@ -6,6 +6,8 @@ const CAMPAIGN_RULE_LIMIT_KEYS = [
   // Facebook - theo tin nhan
   'dailyZeroMessageSpendLimit', 'lifetimeZeroMessageSpendLimit',
   'dailyOneMessageSpendLimit', 'lifetimeOneMessageSpendLimit',
+  'dailyFewMessageThreshold', 'lifetimeFewMessageThreshold',
+  'dailyFewMessageSpendLimit', 'lifetimeFewMessageSpendLimit',
   'dailyHighCostPerMessageLimit', 'lifetimeHighCostPerMessageLimit',
   'dailyHighCostSpendLimit', 'lifetimeHighCostSpendLimit',
   'dailyCheapMessageCostLimit', 'lifetimeCheapMessageCostLimit',
@@ -40,14 +42,12 @@ const DISABLE_WITH_ZERO_KEYS = [
   'autoPauseCpoLimit', 'autoPauseCpoLimitLifetime',
   'autoPauseMultiOrderCpoLimit', 'autoPauseMultiOrderCpoLimitLifetime',
   'dailyClickLimit', 'lifetimeClickLimit',
-  // Dieu kien "duoi N tin nhan" khong co trong bang quy tac rieng -> luon tat
-  'dailyFewMessageThreshold', 'lifetimeFewMessageThreshold',
   'dailyFewMessageSpendLimit', 'lifetimeFewMessageSpendLimit'
 ];
-// "Tham so" (gia TN dat/re, nguong nhieu don, chi tieu toi thieu Shopee) chi dinh nghia
-// dieu kien, tu no khong tat camp -> o trong thi van dung muc chung:
+// "Tham so" (gia TN dat/re, nguong nhieu don, nguong it TN, chi tieu toi thieu Shopee) chi dinh
+// nghia dieu kien, tu no khong tat camp -> o trong thi van dung muc chung:
 // dailyHighCostPerMessageLimit, dailyCheapMessageCostLimit, autoPauseMultiOrderThreshold,
-// autoPauseShopeeMinSpendLimit (va ban lifetime).
+// dailyFewMessageThreshold, autoPauseShopeeMinSpendLimit (va ban lifetime).
 
 // Chi giu key hop le co gia tri so >= 0; o de trong (null/'') = khong luu
 function normalizeCampaignRuleLimits(input) {

@@ -295,6 +295,14 @@ function createLegacyRuntime(app) {
   // Mac dinh 60s (truoc la 180s). Moi lan kiem tra goi Facebook 2-3 lan; neu Logs bao rate
   // limit thuong xuyen thi tang lai bang env AUTO_CHECK_MIN_INTERVAL_SECONDS
   const AUTO_CHECK_MIN_INTERVAL_SECONDS = parseBoundedInt(process.env.AUTO_CHECK_MIN_INTERVAL_SECONDS, 60, 60, 60 * 60);
+  // Khung nhanh (truoc 12:00) cua Facebook: nghi bao lau giua 2 luot (tinh tu luc luot truoc xong).
+  // 1 luot ~8s nen 15s = moi tai khoan ~23s keo so lieu 1 lan. Tai khoan bi 429 van tu nghi
+  // (markAccountRateLimited); 429 nhieu thi tang env AUTO_CHECK_FAST_INTERVAL_SECONDS.
+  const AUTO_CHECK_FAST_INTERVAL_SECONDS = parseBoundedInt(process.env.AUTO_CHECK_FAST_INTERVAL_SECONDS, 15, 10, 60 * 60);
+  // Log "Kiem tra" toi da 1 lan/phut moi tai khoan: khung nhanh chay ~23s/luot, ghi moi luot
+  // se lam collection logs (da ~14 trieu dong, khong TTL) phinh nhanh gap 3 lan.
+  const CHECK_LOG_MIN_INTERVAL_MS = 60 * 1000;
+  const lastCheckLogAt = new Map();
   // getReadCache, setReadCache, clearCampaignReadCache — imported from utils/cacheManager.js
   
   const FB_ACTIVE_CAMPAIGN_STATUSES = new Set([
@@ -1044,6 +1052,8 @@ function createLegacyRuntime(app) {
       FACEBOOK_DATA_FETCH_FAST_WINDOW_END
     );
     if (withinFastWindow) {
+      // Truoc 12:00 Facebook keo gan nhu lien tuc de tat camp lo som (khong dung checkInterval 60s)
+      if (account.provider !== 'shopee') return AUTO_CHECK_FAST_INTERVAL_SECONDS;
       return Math.max(Number(account.checkInterval || minInterval), minInterval);
     }
     // Ngoai khung nhanh: kiem tra moi 1-2 phut (truoc la 3-5 phut), ngau nhien lai moi
@@ -1395,13 +1405,33 @@ function createLegacyRuntime(app) {
     return 0;
   }
   
+  // Don trong ngay khong loc theo tai khoan -> moi tai khoan auto deu doc + dem lai cung 1 tap don.
+  // Dung chung 1 ket qua trong 10s (va 1 query cho cac luot chay cung luc). Khong dung
+  // getOrderDataVersion (tre toi 2 phut) vi rule "0 don" se tat nham camp vua co don.
+  const AUTO_SKU_COUNTS_TTL_MS = 10 * 1000;
+  const autoSkuCountsCache = new Map();
+
+  function loadTodayOrderSkuCounts(today) {
+    const cached = autoSkuCountsCache.get(today);
+    if (cached && Date.now() - cached.at < AUTO_SKU_COUNTS_TTL_MS) return cached.promise;
+    const promise = Order.find(buildOrderQuery({ fromDate: today, toDate: today }))
+      .select(ORDER_SKU_STATS_FIELDS)
+      .lean()
+      .then(orders => buildOrderSkuStats(orders).counts || {});
+    autoSkuCountsCache.clear();
+    autoSkuCountsCache.set(today, { at: Date.now(), promise });
+    promise.catch(() => {
+      if (autoSkuCountsCache.get(today)?.promise === promise) autoSkuCountsCache.delete(today);
+    });
+    return promise;
+  }
+
   async function getTodayOrderSkuCountsForAuto(account, dateKey = todayStr()) {
     if (normalizeProvider(account.provider) === 'shopee') return {};
 
     try {
       const today = normalizeCampaignDate(dateKey);
-      const orders = await Order.find(buildOrderQuery({ fromDate: today, toDate: today })).select(ORDER_SKU_STATS_FIELDS).lean();
-      return buildOrderSkuStats(orders).counts || {};
+      return await loadTodayOrderSkuCounts(today);
     } catch (error) {
       await addLog(
         account._id,
@@ -3155,19 +3185,22 @@ function createLegacyRuntime(app) {
       const { campaigns, totalSpend, totalMessages, unreadMessages } = isShopee
         ? await fetchShopeeAccountData(account, today)
         : await fetchAccountData(account, today);
-      const { fbToken, geminiKey } = await getEffectiveSecrets(account);
+      const { fbToken } = await getEffectiveSecrets(account);
   
       await Account.findByIdAndUpdate(account._id, {
         lastChecked: new Date(),
         status: 'connected'
       });
   
-      await addLog(
-        account._id,
-        account.name,
-        'info',
-        `Kiem tra: chi tieu ${formatAutoMoney(totalSpend)} | tin nhan camp: ${totalMessages} | inbox moi: ${unreadMessages}`
-      );
+      if (Date.now() - (lastCheckLogAt.get(String(account._id)) || 0) >= CHECK_LOG_MIN_INTERVAL_MS) {
+        lastCheckLogAt.set(String(account._id), Date.now());
+        await addLog(
+          account._id,
+          account.name,
+          'info',
+          `Kiem tra: chi tieu ${formatAutoMoney(totalSpend)} | tin nhan camp: ${totalMessages} | inbox moi: ${unreadMessages}`
+        );
+      }
   
       const config = await getAccountAutoConfig(account);
 
@@ -3261,29 +3294,7 @@ function createLegacyRuntime(app) {
         : [];
 
       await runScheduledDuplicatePauseForScope(account, config, today);
-  
-      if (geminiKey) {
-        try {
-          const todayCampaigns = await Campaign.find({ accountId: account._id, date: today });
-          const totalMsg = todayCampaigns.reduce((sum, campaign) => sum + campaign.messages, 0);
-          const avgCPM = totalMsg > 0 ? totalSpend / totalMsg : 0;
-  
-          const response = await requestGeminiGenerateContent({
-            apiKey: geminiKey,
-            maxTokens: 200,
-            messages: [{
-              role: 'user',
-              content: `Tai khoan "${account.name}": chi tieu ${totalSpend.toLocaleString()}d, tin nhan inbox: ${unreadMessages}, tong tin nhan camp: ${totalMsg}, CPM trung binh: ${avgCPM.toFixed(0)}d. Nen giu nguyen hay can luu y gi? 1 cau ngan gon.`
-            }]
-          });
-  
-          const aiMsg = extractGeminiText(response.data);
-          if (aiMsg) {
-            await addLog(account._id, account.name, 'ai', `Gemini: ${aiMsg}`);
-          }
-        } catch { }
-      }
-  
+
       // Chot chan them: luot chay vat qua 00:00 thi KHONG tat camp nao o luot nay. Du lieu luot
       // nay la cua ngay cu, tat luc nua dem se lam camp nam im ca ngay moi. Luot sau (1-3 phut)
       // se tinh lai theo spend + don hang cua ngay moi.
@@ -3407,7 +3418,7 @@ function createLegacyRuntime(app) {
           `Da bat lai ${campaignsToActivate.length} Shopee campaign co ROI > ${SHOPEE_REACTIVATE_ROI_PERCENT}%`
         );
       }
-  
+
     } catch (error) {
       if (!isMongoReady()) return;
   

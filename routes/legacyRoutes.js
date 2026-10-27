@@ -953,7 +953,9 @@ app.post('/api/campaigns/:campaignId/toggle', async (req, res) => {
       targetStatus: req.body.targetStatus,
       fromDate,
       toDate,
-      fetchLiveStatus: true
+      // Client da gui trang thai dich -> khoi GET trang thai tu Facebook truoc (bot 1 round-trip,
+      // nut bat/tat phan hoi nhanh hon). Khong co targetStatus thi van doc live de biet dao chieu.
+      fetchLiveStatus: !['ACTIVE', 'PAUSED'].includes(normalizeCampaignStatus(req.body.targetStatus))
     });
     clearCampaignReadCache();
 
