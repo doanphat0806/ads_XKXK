@@ -76,6 +76,7 @@ function createLegacyRuntime(app) {
   const ShopeeAffAccount = require('../models/ShopeeAffAccount');
   const ShopeeAffCommissionReceipt = require('../models/ShopeeAffCommissionReceipt');
   const { recordCampaignSnapshot, ensureCampaignSnapshotIndexes } = require('./campaignSnapshotService');
+  const { normalizeInventoryProductCode, extractInventoryProductCode, getCampaignSkuCandidates } = require('../utils/productCodeUtils');
 
   // Campaigns in this system are created with SubID2 embedded in the campaign name
   // (name = `{sub_id2}{18-char suffix}`) — used to attribute Shopee ad spend back to a
@@ -638,26 +639,6 @@ function createLegacyRuntime(app) {
   
   function normalizeBarcode(value) {
     return String(value || '').replace(/\s+/g, '').trim();
-  }
-  
-  function normalizeInventoryProductCode(value) {
-    return String(value || '').replace(/\s+/g, ' ').trim().toUpperCase();
-  }
-  
-  function extractInventoryProductCode(value) {
-    const raw = String(value || '')
-      .replace(/["']/g, ' ')
-      .replace(/,\s*/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!raw) return '';
-  
-    let tokens = raw.split(' ').filter(Boolean);
-    if (tokens[0] && String(tokens[0]).toUpperCase() === 'MS' && tokens[1] && /[A-Z]*\d/i.test(tokens[1])) {
-      tokens = tokens.slice(1);
-    }
-  
-    return normalizeInventoryProductCode(tokens[0] || '');
   }
   
   const INVENTORY_SIZE_SET = new Set(['S', 'M', 'L', 'XL', 'FZ']);
@@ -1376,31 +1357,6 @@ function createLegacyRuntime(app) {
     }
   
     return null;
-  }
-  
-  function getCampaignSkuCandidates(campaignName) {
-    const rawName = String(campaignName || '').toUpperCase().trim();
-    const compactName = rawName.replace(/\s+/g, '');
-    const firstNineChars = rawName.slice(0, 9).replace(/\s+/g, '');
-    const firstToken = rawName.split(/\s+/)[0]?.replace(/\s+/g, '') || '';
-    const tokenMatches = rawName.match(/[A-Z]{1,3}\d{5,}/g) || [];
-    const compactMatches = compactName.match(/[A-Z]{1,3}\d{5,}/g) || [];
-  
-    return [...new Set([
-      firstNineChars,
-      firstToken,
-      compactName,
-      ...tokenMatches,
-      ...compactMatches
-    ].filter(Boolean))]
-      .flatMap(code => {
-        const normalized = String(code).replace(/\s+/g, '');
-        if (!normalized) return [];
-        if (normalized.startsWith('MS')) {
-          return [normalized, normalized.slice(2)].filter(Boolean);
-        }
-        return [`MS${normalized}`, normalized];
-      });
   }
   
   function getOrderCountForCampaignName(campaignName, skuCounts = {}) {
