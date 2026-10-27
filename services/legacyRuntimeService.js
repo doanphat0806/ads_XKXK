@@ -3667,13 +3667,13 @@ function createLegacyRuntime(app) {
     delete accountRuns[String(accountId || '')];
   }
   
+  // Tra ve false neu bo qua vi tai khoan dang co luot khac chay (scheduler se thu lai som).
   async function runAutoControlSafely(account, source = 'auto', options = {}) {
     const accountId = String(account._id);
-    if (!isMongoReady()) return;
-    if (accountRuns[accountId]) return;
-    if (getAccountRateLimitDelayMs(accountId) > 0) return;
-  
-    tryStartAccountRun(accountId);
+    if (!isMongoReady()) return true;
+    if (getAccountRateLimitDelayMs(accountId) > 0) return true;
+    if (!tryStartAccountRun(accountId)) return false;
+
     try {
       await runAutoControl(account, options);
     } catch (error) {
@@ -3683,28 +3683,35 @@ function createLegacyRuntime(app) {
     } finally {
       finishAccountRun(accountId);
     }
+    return true;
   }
-  
+
+  const AUTO_RUN_BUSY_RETRY_MS = 15 * 1000;
+
   async function startAccountScheduler(account) {
     const accountId = String(account._id);
     if (accountTimers[accountId]) clearTimeout(accountTimers[accountId]);
     accountSchedulerActive[accountId] = true;
   
-    const scheduleNext = async () => {
+    const scheduleNext = async (delayMs = null) => {
       if (!isMongoReady() || !accountSchedulerActive[accountId]) return;
       let intervalSeconds = 300;
-      try {
-        intervalSeconds = await getAutoCheckIntervalSeconds(account);
-      } catch (error) {
-        if (!isShuttingDown) {
-          console.error(`Auto scheduler interval failed for ${account.name}: ${error.message}`);
+      if (delayMs === null) {
+        try {
+          intervalSeconds = await getAutoCheckIntervalSeconds(account);
+        } catch (error) {
+          if (!isShuttingDown) {
+            console.error(`Auto scheduler interval failed for ${account.name}: ${error.message}`);
+          }
         }
       }
       accountTimers[accountId] = setTimeout(async () => {
         if (!accountSchedulerActive[accountId]) return;
-        await runAutoControlSafely(account, 'Scheduled');
-        scheduleNext();
-      }, intervalSeconds * 1000);
+        const ran = await runAutoControlSafely(account, 'Scheduled');
+        // Trung luot khac (sync chi tieu, kiem tra tay) -> truoc day bo qua im lang va doi
+        // ca chu ky 1-2 phut nua moi xet rule, camp dang lo van chay. Thu lai sau it giay.
+        scheduleNext(ran ? null : AUTO_RUN_BUSY_RETRY_MS);
+      }, delayMs ?? intervalSeconds * 1000);
     };
   
     runAutoControlSafely(account, 'Initial');
@@ -3786,6 +3793,9 @@ function createLegacyRuntime(app) {
 
       const results = await mapWithConcurrency(accounts, async (account) => {
         if (isShuttingDown) return { skipped: true };
+        // Tai khoan dang chay auto: runAutoControl da tu sync. Sync o day giu khoa accountRuns
+        // -> luot auto trung gio bi bo qua, rule tat camp bi tre.
+        if (accountSchedulerActive[String(account._id)]) return { skipped: true, fresh: true };
         const lastCheckedAt = account.lastChecked ? new Date(account.lastChecked).getTime() : 0;
         if (Date.now() - lastCheckedAt < freshWithinMs) return { skipped: true, fresh: true };
         return syncTodayCampaignSpendForAccount(account);
