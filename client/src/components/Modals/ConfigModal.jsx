@@ -148,7 +148,9 @@ export default function ConfigModal() {
     autoPauseMultiOrderCpoLimitLifetime: 0,
     autoPauseZeroOrderSpendLimit: 60000,
     autoPauseZeroOrderSpendLimitLifetime: 60000,
-    autoPauseShopeeMinSpendLimit: 50000
+    autoPauseShopeeMinSpendLimit: 50000,
+    lowSpendCutoffTime: '11:00',
+    lowSpendCutoffLimit: 10000
   });
 
   useEffect(() => {
@@ -185,7 +187,9 @@ export default function ConfigModal() {
         autoPauseMultiOrderCpoLimitLifetime: appConfig.autoPauseMultiOrderCpoLimitLifetime ?? 0,
         autoPauseZeroOrderSpendLimit: appConfig.autoPauseZeroOrderSpendLimit ?? 60000,
         autoPauseZeroOrderSpendLimitLifetime: appConfig.autoPauseZeroOrderSpendLimitLifetime ?? 60000,
-        autoPauseShopeeMinSpendLimit: appConfig.autoPauseShopeeMinSpendLimit ?? 50000
+        autoPauseShopeeMinSpendLimit: appConfig.autoPauseShopeeMinSpendLimit ?? 50000,
+        lowSpendCutoffTime: appConfig.lowSpendCutoffTime || '11:00',
+        lowSpendCutoffLimit: appConfig.lowSpendCutoffLimit ?? 10000
       });
     }
   }, [appConfig, isShopee]);
@@ -334,7 +338,12 @@ export default function ConfigModal() {
     autoPauseMultiOrderCpoLimitLifetime: Number(autoLimits.autoPauseMultiOrderCpoLimitLifetime || 0),
     autoPauseZeroOrderSpendLimit: Number(autoLimits.autoPauseZeroOrderSpendLimit || 0),
     autoPauseZeroOrderSpendLimitLifetime: Number(autoLimits.autoPauseZeroOrderSpendLimitLifetime || 0),
-    autoPauseShopeeMinSpendLimit: Number(autoLimits.autoPauseShopeeMinSpendLimit || 0)
+    autoPauseShopeeMinSpendLimit: Number(autoLimits.autoPauseShopeeMinSpendLimit || 0),
+    // Rule chot tieu thap chi co o Facebook; form Shopee khong gui de khoi ghi de
+    ...(isShopee ? {} : {
+      lowSpendCutoffTime: String(autoLimits.lowSpendCutoffTime || '').trim(),
+      lowSpendCutoffLimit: Number(autoLimits.lowSpendCutoffLimit || 0)
+    })
   }, 'Đã lưu giới hạn tự động');
 
   const statusPill = (ok, okText = 'Đã lưu', noText = 'Chưa có') => (
@@ -422,6 +431,25 @@ export default function ConfigModal() {
                 </div>
               </div>
             </div>
+
+            {!isShopee && (
+              <div className="cfg-block">
+                <div className="cfg-block-head">
+                  <div>
+                    <div className="cfg-block-title">Chốt camp tiêu thấp</div>
+                    <div className="cfg-hint">
+                      Quét 1 lần/ngày lúc giờ này: camp đang chạy tiêu dưới mức tiền và 0 tin nhắn sẽ bị tắt (kể cả chưa tiêu đồng nào).
+                      Bỏ qua camp tạo trong ngày, camp có đơn, camp có quy tắc riêng. Để <b>0</b> = tắt điều kiện.
+                    </div>
+                  </div>
+                  <div className="cfg-inline">
+                    <input type="text" inputMode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:mm" value={autoLimits.lowSpendCutoffTime} onChange={setLimit('lowSpendCutoffTime')} style={{ width: '80px', textAlign: 'center' }} />
+                    <input type="number" inputMode="numeric" min="0" placeholder="10000" value={autoLimits.lowSpendCutoffLimit} onChange={setLimit('lowSpendCutoffLimit')} style={{ width: '110px' }} />
+                    <button className="btn btn-p btn-sm" onClick={saveAutoLimits}>Lưu</button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="cfg-block">
               <div className="cfg-block-title">Điều kiện tắt camp</div>

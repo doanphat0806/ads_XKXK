@@ -50,6 +50,9 @@ const ConfigSchema = new mongoose.Schema({
   autoPauseZeroOrderSpendLimitLifetime: { type: Number, default: 60000 },
   autoPauseShopeeMinSpendLimit: { type: Number, default: 50000 },
   autoPauseShopeeHhAdsPercent: { type: Number, default: 15 },
+  // Chot 1 lan/ngay luc lowSpendCutoffTime: tat camp tieu < lowSpendCutoffLimit va 0 TN (0 = tat rule)
+  lowSpendCutoffTime: { type: String, default: '11:00' },
+  lowSpendCutoffLimit: { type: Number, default: 10000 },
   dataPurchaseOrderMeta: { type: mongoose.Schema.Types.Mixed, default: {} },
   purchaseOrderDashboardCancellations: { type: mongoose.Schema.Types.Mixed, default: {} },
   purchaseOrderDashboardNotes: { type: mongoose.Schema.Types.Mixed, default: {} },

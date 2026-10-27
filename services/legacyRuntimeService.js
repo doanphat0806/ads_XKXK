@@ -454,7 +454,7 @@ function createLegacyRuntime(app) {
         'autoRuleStartTime autoRuleEndTime shopeeAutoRuleStartTime shopeeAutoRuleEndTime scheduledDuplicatePauseTime ' +
         'dailyZeroMessageSpendLimit dailyOneMessageSpendLimit dailyFewMessageThreshold dailyFewMessageSpendLimit dailyCheapMessageCostLimit dailyCheapMessageSpendLimit dailyHighCostPerMessageLimit dailyHighCostSpendLimit ' +
         'dailyClickLimit dailyCpcLimit lifetimeZeroMessageSpendLimit lifetimeOneMessageSpendLimit lifetimeFewMessageThreshold lifetimeFewMessageSpendLimit lifetimeCheapMessageCostLimit lifetimeCheapMessageSpendLimit lifetimeHighCostPerMessageLimit ' +
-        'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseMultiOrderThreshold autoPauseMultiOrderThresholdLifetime autoPauseMultiOrderCpoLimit autoPauseMultiOrderCpoLimitLifetime autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent'
+        'lifetimeHighCostSpendLimit lifetimeClickLimit lifetimeCpcLimit autoPauseCpoLimit autoPauseCpoLimitLifetime autoPauseMultiOrderThreshold autoPauseMultiOrderThresholdLifetime autoPauseMultiOrderCpoLimit autoPauseMultiOrderCpoLimitLifetime autoPauseZeroOrderSpendLimit autoPauseZeroOrderSpendLimitLifetime autoPauseShopeeMinSpendLimit autoPauseShopeeHhAdsPercent lowSpendCutoffTime lowSpendCutoffLimit'
       ).lean() : null
     ]);
     return mergeAutoConfig(globalConfig || {}, userConfig || {});
@@ -1044,6 +1044,12 @@ function createLegacyRuntime(app) {
   const FACEBOOK_DATA_FETCH_FAST_WINDOW_END = '12:00';
   // Gio bat dau ap rule tat camp Facebook moi ngay (truoc gio nay chi theo doi, khong tat)
   const FACEBOOK_AUTO_PAUSE_START_TIME = '02:00';
+  // Chot 1 lan/ngay luc config.lowSpendCutoffTime (mac dinh 11:00): camp dang chay ma toi gio do tieu
+  // < config.lowSpendCutoffLimit (mac dinh 10k, 0 = tat rule) va 0 tin nhan (ke ca chua tieu dong nao)
+  // -> tat. Bo qua camp tao trong ngay, camp co don, camp co quy tac rieng / bo qua auto.
+  // Chi quet trong 30 phut sau moc (server restart buoi chieu khong tat lai).
+  const FACEBOOK_LOW_SPEND_CUTOFF_WINDOW_MINUTES = 30;
+  const lowSpendCutoffDoneByAccount = new Map();
 
   async function getAutoCheckIntervalSeconds(account) {
     const minInterval = account.provider === 'shopee' ? 60 : AUTO_CHECK_MIN_INTERVAL_SECONDS;
@@ -3172,6 +3178,83 @@ function createLegacyRuntime(app) {
     };
   }
   
+  function isInLowSpendCutoffWindow(cutoffTime) {
+    const { hour, minute } = parseHourMinute(cutoffTime, '11:00');
+    const start = hour * 60 + minute;
+    const end = start + FACEBOOK_LOW_SPEND_CUTOFF_WINDOW_MINUTES;
+    const pad = value => String(value).padStart(2, '0');
+    return isWithinAutoRuleTimeWindow(
+      `${pad(hour)}:${pad(minute)}`,
+      `${pad(Math.floor(end / 60))}:${pad(end % 60)}`
+    );
+  }
+
+  // campaigns: so lieu hom nay tu fetchAccountData (camp chua tieu dong nao khong co trong do ->
+  // lay danh sach camp dang chay truc tiep tu Facebook). excludeIds: camp vua bi rule thuong tat.
+  async function runLowSpendCutoffForAccount({ account, fbToken, config, campaigns, today, campaignRulesById, skuCounts, excludeIds }) {
+    const accountKey = String(account._id);
+    const limit = Number(config?.lowSpendCutoffLimit || 0);
+    const cutoffTime = String(config?.lowSpendCutoffTime || '11:00');
+    if (!(limit > 0)) return;
+    if (lowSpendCutoffDoneByAccount.get(accountKey) === today) return;
+    if (!isInLowSpendCutoffWindow(cutoffTime)) return;
+
+    const acctId = normalizeAdAccountId(account.adAccountId || '');
+    if (!acctId || !fbToken) return;
+
+    const { items: activeCampaigns } = await fetchAllFbEdge(fbToken, `${acctId}/campaigns`, {
+      fields: 'id,name,created_time,effective_status',
+      effective_status: JSON.stringify(['ACTIVE']),
+      limit: 200
+    }, { maxPages: 20, requestOptions: { retries: 2, rateLimitRetries: 2 } });
+
+    const statsById = new Map(campaigns.map(campaign => [String(campaign.id || campaign.campaignId || ''), campaign]));
+    const targets = [];
+    for (const live of activeCampaigns) {
+      const campaignId = String(live.id || '');
+      if (!campaignId || excludeIds.has(campaignId)) continue;
+      const createdMs = new Date(live.created_time).getTime();
+      const createdDate = Number.isFinite(createdMs) ? new Date(createdMs + VN_OFFSET_MS).toISOString().slice(0, 10) : '';
+      if (createdDate === today) continue;
+      const rule = campaignRulesById.get(campaignId);
+      if (rule?.mode === 'skip' || rule?.mode === 'custom') continue;
+
+      const stats = statsById.get(campaignId) || {};
+      const name = live.name || stats.name || '';
+      const spend = Number(stats.spend || 0);
+      const messages = Number(stats.messages || 0);
+      if (messages > 0 || spend >= limit) continue;
+      if (getOrderCountForCampaignName(name, skuCounts || {}) > 0) continue;
+      targets.push({ campaignId, name, spend });
+    }
+
+    let paused = 0;
+    for (const target of targets) {
+      try {
+        await fbPost(fbToken, target.campaignId, { status: 'PAUSED' });
+        await Campaign.findOneAndUpdate(
+          { accountId: account._id, campaignId: target.campaignId, date: today },
+          { $set: { status: 'PAUSED', updatedAt: new Date() } }
+        );
+        paused += 1;
+        await addLog(
+          account._id,
+          account.name,
+          'warn',
+          `Auto pause Facebook: ${target.name || target.campaignId} | id=${target.campaignId} | reason=Chot ${cutoffTime}: tieu ${formatAutoMoney(target.spend)} < ${formatAutoMoney(limit)} va 0 tin nhan`
+        );
+      } catch (error) {
+        await addLog(account._id, account.name, 'error', `Loi tat camp chot ${cutoffTime} ${target.campaignId}: ${error.message}`);
+      }
+    }
+    // Danh dau xong ca khi vai camp loi: chot 1 lan/ngay, khong tat lai lien tuc ca buoi
+    lowSpendCutoffDoneByAccount.set(accountKey, today);
+    if (paused > 0) {
+      clearCampaignReadCache();
+      await addLog(account._id, account.name, 'warn', `Chot ${cutoffTime}: tat ${paused} camp tieu < ${formatAutoMoney(limit)} va 0 tin nhan`);
+    }
+  }
+
   async function runAutoControl(account, options = {}) {
     if (!isMongoReady()) return;
   
@@ -3377,6 +3460,25 @@ function createLegacyRuntime(app) {
             ? `Auto pause ${campaignsToPause.length} Shopee campaign theo rule`
             : `Tam dung ${campaignsToPause.length} chien dich theo rule moi`
         );
+      }
+
+      // skuCounts null = khong doc duoc don -> khong biet camp nao co don, de luot sau
+      if (!isShopee && !dateChangedDuringRun && skuCounts) {
+        try {
+          await runLowSpendCutoffForAccount({
+            account,
+            fbToken,
+            config,
+            campaigns,
+            today,
+            campaignRulesById,
+            skuCounts,
+            excludeIds: new Set(isBeforeFacebookPauseStart ? [] : campaignsToPause.map(item => String(item.campaign.id || item.campaign.campaignId || '')))
+          });
+        } catch (error) {
+          // Loi lay danh sach camp (429...) -> chua danh dau xong, luot sau trong khung 30 phut thu lai
+          await addLog(account._id, account.name, 'warn', `Chot tieu thap tam bo qua: ${error.message}`);
+        }
       }
   
       if (campaignsToActivate.length > 0) {

@@ -82,7 +82,9 @@ function mergeAutoConfig(globalConfig = {}, userConfig = {}) {
     autoPauseZeroOrderSpendLimit: pickDefinedValue(userConfig.autoPauseZeroOrderSpendLimit, globalConfig.autoPauseZeroOrderSpendLimit, AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
     autoPauseZeroOrderSpendLimitLifetime: pickDefinedValue(userConfig.autoPauseZeroOrderSpendLimitLifetime, globalConfig.autoPauseZeroOrderSpendLimitLifetime, AUTO_PAUSE_ZERO_ORDER_SPEND_LIMIT),
     autoPauseShopeeMinSpendLimit: getShopeeAutoMinSpendLimit({ autoPauseShopeeMinSpendLimit: shopeeMinSpendLimit }),
-    autoPauseShopeeHhAdsPercent: pickDefinedValue(userConfig.autoPauseShopeeHhAdsPercent, globalConfig.autoPauseShopeeHhAdsPercent, AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT)
+    autoPauseShopeeHhAdsPercent: pickDefinedValue(userConfig.autoPauseShopeeHhAdsPercent, globalConfig.autoPauseShopeeHhAdsPercent, AUTO_PAUSE_SHOPEE_HH_ADS_PERCENT),
+    lowSpendCutoffTime: pickDefinedValue(userConfig.lowSpendCutoffTime, globalConfig.lowSpendCutoffTime, '11:00'),
+    lowSpendCutoffLimit: pickDefinedValue(userConfig.lowSpendCutoffLimit, globalConfig.lowSpendCutoffLimit, 10000)
   };
 }
 
