@@ -3834,6 +3834,45 @@
       border-right: 1px solid #dfe9f2;
     }
 
+    /* Ghim camp: nut pin va dong duoc ghim */
+    .pin-campaign-btn {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      margin-top: 1px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 22px;
+      text-align: center;
+      padding: 0;
+      border-radius: 4px;
+      opacity: 0.18;
+      filter: grayscale(1);
+      transition: opacity 0.15s, filter 0.15s, background 0.15s;
+    }
+    .pin-campaign-btn:hover {
+      opacity: 0.7;
+      filter: grayscale(0);
+      background: rgba(24, 201, 200, 0.08);
+    }
+    .pin-campaign-btn.pinned {
+      opacity: 1;
+      filter: grayscale(0);
+    }
+
+    #dashCampTable tbody tr.pinned-campaign {
+      background: #e6fbf8 !important;
+      border-left: 3px solid #18c9c8;
+    }
+    #dashCampTable tbody tr.pinned-campaign:hover {
+      background: #d0f5f0 !important;
+    }
+    #dashCampTable tbody tr.pinned-campaign td:first-child {
+      padding-left: 6px;
+    }
+
     /* Cua so Tuy chinh cot (ColumnSettingsModal, render qua portal vao body) */
     .colset-overlay {
       position: fixed;

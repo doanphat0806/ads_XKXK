@@ -103,6 +103,8 @@ const LEGACY_COLUMN_KEYS = {
   presets: 'dashboard:columnPresets',
   activePreset: 'dashboard:activeColumnPreset'
 };
+// Ghim camp: luu danh sach campaignId duoc ghim theo tung user trong localStorage
+const PINNED_CAMPAIGNS_PREFIX = 'dashboard:pinnedCampaigns:';
 const DASHBOARD_COLUMNS = [
   { id: 'duplicateCount', label: 'Trùng', group: 'settings' },
   { id: 'createdTime', label: 'Ngày tạo', group: 'settings' },
@@ -290,10 +292,12 @@ const CampaignRow = React.memo(function CampaignRow({
   editingBudget,
   isSavingBudget,
   isShopee,
+  isPinned,
   onStartRename,
   onSaveRename,
   onCancelRename,
   onToggleStatus,
+  onTogglePin,
   onStartEditBudget,
   onSaveBudget,
   onCancelEditBudget,
@@ -450,24 +454,36 @@ const CampaignRow = React.memo(function CampaignRow({
   };
 
   return (
-    <tr>
+    <tr className={isPinned ? 'pinned-campaign' : undefined}>
       <td>
-        {isEditingCampaign ? (
-          <input
-            value={editingCampaignName}
-            autoFocus
-            disabled={isRenamingCampaign}
-            onChange={e => setEditingCampaignName(e.target.value.toUpperCase())}
-            onBlur={() => onSaveRename(campaign)}
-            onKeyDown={e => { if (e.key === 'Enter') onSaveRename(campaign); if (e.key === 'Escape') onCancelRename(); }}
-            style={{ width: '100%', minWidth: '120px', height: '28px', border: '1px solid var(--border2)', borderRadius: '4px', padding: '0 8px', fontWeight: 600, fontSize: '13px', color: 'var(--txt)', background: 'var(--s1)' }}
-          />
-        ) : (
-          <button type="button" onClick={() => onStartRename(campaign)} title="Click de sua ten camp" style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', textAlign: 'left', fontWeight: 600, fontSize: '13px', color: 'var(--txt)', cursor: 'text' }}>
-            {isRenamingCampaign ? '...' : toText(campaign.name)}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+          <button
+            type="button"
+            className={`pin-campaign-btn${isPinned ? ' pinned' : ''}`}
+            onClick={() => onTogglePin(campaign)}
+            title={isPinned ? 'Bo ghim camp' : 'Ghim camp len dau'}
+          >
+            📌
           </button>
-        )}
-        <div style={{ fontSize: '10px', color: 'var(--muted2)' }}>{campaign.campaignId}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {isEditingCampaign ? (
+              <input
+                value={editingCampaignName}
+                autoFocus
+                disabled={isRenamingCampaign}
+                onChange={e => setEditingCampaignName(e.target.value.toUpperCase())}
+                onBlur={() => onSaveRename(campaign)}
+                onKeyDown={e => { if (e.key === 'Enter') onSaveRename(campaign); if (e.key === 'Escape') onCancelRename(); }}
+                style={{ width: '100%', minWidth: '120px', height: '28px', border: '1px solid var(--border2)', borderRadius: '4px', padding: '0 8px', fontWeight: 600, fontSize: '13px', color: 'var(--txt)', background: 'var(--s1)' }}
+              />
+            ) : (
+              <button type="button" onClick={() => onStartRename(campaign)} title="Click de sua ten camp" style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', textAlign: 'left', fontWeight: 600, fontSize: '13px', color: 'var(--txt)', cursor: 'text' }}>
+                {isRenamingCampaign ? '...' : toText(campaign.name)}
+              </button>
+            )}
+            <div style={{ fontSize: '10px', color: 'var(--muted2)' }}>{campaign.campaignId}</div>
+          </div>
+        </div>
       </td>
       {visibleColumnIds.map(id => {
         if (cells[id]) return cells[id]();
@@ -582,6 +598,14 @@ export default function Dashboard() {
   const [savingBudgetId, setSavingBudgetId] = useState('');
   const [campaignSearch, setCampaignSearch] = useState('');
   const [disablingDuplicates, setDisablingDuplicates] = useState(false);
+  // Ghim camp: danh sach campaignId duoc ghim, luu rieng tung user trong localStorage
+  const [pinnedCampaignIds, setPinnedCampaignIds] = useState(() => {
+    if (!currentUser?.id) return new Set();
+    try {
+      const raw = localStorage.getItem(`${PINNED_CAMPAIGNS_PREFIX}${currentUser.id}`);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { return new Set(); }
+  });
   const [exportingExcel, setExportingExcel] = useState(false);
   // Cot dang hien / phuong an dang chon: rieng tung may (localStorage theo user).
   // Danh sach phuong an: chung cho ca tai khoan, luu tren server tung phuong an mot.
@@ -1118,6 +1142,21 @@ export default function Dashboard() {
     });
   }, [filteredCampaigns, getOrderCountForCampaign, getReturnStatsForCampaign, showOrders, visibleExtraColumns]);
 
+  const pinnedUserId = currentUser?.id ? String(currentUser.id) : '';
+  const togglePinCampaign = useCallback((campaign) => {
+    const id = String(campaign.campaignId || '');
+    if (!id) return;
+    setPinnedCampaignIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      if (pinnedUserId) {
+        try { localStorage.setItem(`${PINNED_CAMPAIGNS_PREFIX}${pinnedUserId}`, JSON.stringify([...next])); } catch {}
+      }
+      return next;
+    });
+  }, [pinnedUserId]);
+
   const processedCampaigns = useMemo(() => {
     const duplicateCounts = enrichedCampaigns.reduce((counts, campaign) => {
       const key = normalizeCampaignDuplicateKey(campaign);
@@ -1132,6 +1171,10 @@ export default function Dashboard() {
     });
 
     return [...campaignsWithDuplicates].sort((a, b) => {
+      // Camp ghim luon nam tren cung
+      const pinA = pinnedCampaignIds.has(String(a.campaignId)) ? 1 : 0;
+      const pinB = pinnedCampaignIds.has(String(b.campaignId)) ? 1 : 0;
+      if (pinA !== pinB) return pinB - pinA;
       const dir = sortDir === 'asc' ? 1 : -1;
       const statusA = isCampaignActiveStatus(a.sortStatus || a.status) ? 1 : 0;
       const statusB = isCampaignActiveStatus(b.sortStatus || b.status) ? 1 : 0;
@@ -1156,7 +1199,7 @@ export default function Dashboard() {
       }
       return b.spend - a.spend;
     });
-  }, [enrichedCampaigns, sortField, sortDir, isShopee]);
+  }, [enrichedCampaigns, sortField, sortDir, isShopee, pinnedCampaignIds]);
 
   const totalPages = Math.max(1, Math.ceil(processedCampaigns.length / DASHBOARD_CAMPAIGNS_PER_PAGE));
   const pageCampaigns = useMemo(() => {
@@ -1611,10 +1654,12 @@ export default function Dashboard() {
                       editingBudget={editingBudget}
                       isSavingBudget={isSavingBudget}
                       isShopee={isShopee}
+                      isPinned={pinnedCampaignIds.has(campaignId)}
                       onStartRename={startRenameCampaign}
                       onSaveRename={saveRenameCampaign}
                       onCancelRename={cancelRenameCampaign}
                       onToggleStatus={toggleCampaignStatus}
+                      onTogglePin={togglePinCampaign}
                       onStartEditBudget={startEditBudget}
                       onSaveBudget={saveBudget}
                       onCancelEditBudget={cancelEditBudget}
