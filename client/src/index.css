@@ -7539,3 +7539,241 @@
     .sale-paste-unmatched .listing-note { flex-basis: 100%; margin: 0; }
     .sale-paste-unmatched label { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
     .sale-paste-unmatched select { height: 28px; border: 1px solid var(--border2); border-radius: 6px; }
+
+
+    /* SMIT Ads Manager Style (Trình quản lý quảng cáo) */
+    .ads-manager-header {
+      background: #0d6e52;
+      padding: 12px 18px 0;
+      border-radius: 12px 12px 0 0;
+      color: #fff;
+      margin-bottom: 0;
+      box-shadow: 0 2px 8px rgba(13, 110, 82, 0.2);
+    }
+    .ads-manager-top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .ads-manager-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .ads-manager-badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .ads-manager-tabs {
+      display: flex;
+      gap: 4px;
+      align-items: flex-end;
+      overflow-x: auto;
+    }
+    .ads-manager-tab {
+      padding: 9px 18px;
+      font-size: 13px;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.85);
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      border-radius: 8px 8px 0 0;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .ads-manager-tab:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .ads-manager-tab.active {
+      background: var(--s1, #fff);
+      color: #0d6e52;
+      font-weight: 700;
+      box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.08);
+    }
+    .ads-manager-toolbar {
+      background: var(--s1, #fff);
+      border: 1px solid var(--border);
+      border-top: none;
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .ads-manager-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--s1, #fff);
+      color: var(--txt);
+      cursor: pointer;
+      transition: all 0.15s;
+      height: 32px;
+      white-space: nowrap;
+    }
+    .ads-manager-btn:hover {
+      background: var(--s2, #f8fafc);
+      border-color: var(--border2);
+    }
+    .ads-manager-btn.primary {
+      background: #0d6e52;
+      color: #fff;
+      border-color: #0d6e52;
+    }
+    .ads-manager-btn.primary:hover {
+      background: #0a5640;
+    }
+    .campaign-name-cell {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .campaign-name-title {
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--txt);
+    }
+    .campaign-id-sub {
+      font-size: 10.5px;
+      color: var(--muted2);
+      font-family: var(--mono);
+    }
+    .account-name-cell {
+      font-weight: 600;
+      font-size: 12.5px;
+      color: var(--txt);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .delivery-cell {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .delivery-cell.active {
+      color: #10b981;
+      font-weight: 600;
+    }
+    .delivery-cell.paused {
+      color: var(--muted2);
+    }
+    .delivery-col-header {
+      color: #10b981 !important;
+    }
+
+    /* SMIT iOS Green Toggle */
+    .smit-tgl {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      cursor: pointer;
+      vertical-align: middle;
+      margin: 0;
+      flex-shrink: 0;
+    }
+    .smit-tgl input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+    .smit-tgl .tgl-track {
+      position: absolute;
+      inset: 0;
+      background: #e2e8f0;
+      border: 1px solid #cbd5e1;
+      border-radius: 20px;
+      transition: background-color 0.2s, border-color 0.2s;
+    }
+    .smit-tgl .tgl-thumb {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      top: 1px;
+      left: 1px;
+      background: #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .smit-tgl input:checked ~ .tgl-track {
+      background: #10b981 !important;
+      border-color: #10b981 !important;
+    }
+    .smit-tgl input:checked ~ .tgl-thumb {
+      background: #ffffff !important;
+      transform: translateX(16px) !important;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25) !important;
+    }
+    .smit-row-checkbox {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      accent-color: #0d6e52;
+      border-radius: 4px;
+    }
+    .ads-manager-table thead th {
+      background: #f8fafc;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: none;
+      letter-spacing: 0;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 10px 12px;
+      white-space: nowrap;
+    }
+    .ads-manager-table tbody td {
+      padding: 8px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: middle;
+      font-size: 13px;
+    }
+    .ads-manager-table tbody tr:hover {
+      background: #f8fafc;
+    }
+    .ads-manager-table tfoot td {
+      background: #f8fafc;
+      padding: 10px 12px;
+      border-top: 2px solid #e2e8f0;
+      font-weight: 700;
+      font-size: 12px;
+      color: var(--txt);
+    }
+    .ads-manager-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 18px;
+      background: var(--s1, #fff);
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted2);
+    }

@@ -270,8 +270,8 @@ app.post('/api/accounts/auto-discover', async (req, res) => {
         sources,
         sourceErrors,
         message: provider === 'shopee'
-          ? `Tim thay ${allAdAccounts.length} tai khoan nhung khong co tai khoan Shopee nao bat dau bang XK lien sau la so (vi du: XK11).`
-          : `Tim thay ${allAdAccounts.length} tai khoan nhung tat ca deu thuoc nhom Shopee (ten bat dau bang XK lien sau la so).`
+          ? `Tim thay ${allAdAccounts.length} tai khoan nhung khong co tai khoan Shopee nao bat dau bang Ahihi.`
+          : `Tim thay ${allAdAccounts.length} tai khoan nhung tat ca deu thuoc nhom Shopee (ten bat dau bang Ahihi).`
       });
     }
 
