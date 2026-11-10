@@ -25,8 +25,9 @@ module.exports = {
   CAMPAIGN_DUPLICATE_COPY_STATUS: 'PAUSED',
   FB_RATE_LIMIT_BACKOFF_MS: parseBoundedInt(process.env.FB_RATE_LIMIT_BACKOFF_MS, 60000, 5000, 300000),
   FB_RATE_LIMIT_RETRIES: parseBoundedInt(process.env.FB_RATE_LIMIT_RETRIES, 3, 1, 10),
-  // Allows account names with the special "Ahihi" prefix.
-  SHOPEE_AD_ACCOUNT_NAME_PATTERN: /^Ahihi.*$/i,
+  // Role Shopee nhan ca 2 kieu ten: "XK" + so trong khoang (cho phep hau to, vd "XK11 P", "XK11-B")
+  // va ten bat dau bang "Ahihi". Truoc day doi sang chi "Ahihi" lam role Shopee khong nhan TK XK nua.
+  SHOPEE_AD_ACCOUNT_NAME_PATTERN: /^(XK(1[1-3]|2[1-9]|[3-9]\d)|Ahihi).*$/i,
   FACEBOOK_GRAPH_API_VERSION: process.env.FB_GRAPH_API_VERSION || 'v24.0',
   FINAL_SPEND_CRON: process.env.FINAL_SPEND_CRON || '20 0 * * *',
   FINAL_SPEND_TIMEZONE: process.env.FINAL_SPEND_TIMEZONE || 'Asia/Ho_Chi_Minh',

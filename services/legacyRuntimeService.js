@@ -237,10 +237,10 @@ function createLegacyRuntime(app) {
   
   function getAccountProviderNameError(provider, name) {
     if (provider === 'shopee' && !isShopeeAdAccountName(name)) {
-      return 'Tai khoan Shopee chi cho phep ten bat dau bang Ahihi.';
+      return 'Tai khoan Shopee chi cho phep ten bat dau bang XK lien sau la so (vi du: XK11) hoac Ahihi.';
     }
     if (provider === 'facebook' && isShopeeAdAccountName(name)) {
-      return 'Tai khoan bat dau bang Ahihi chi duoc them vao role Shopee.';
+      return 'Tai khoan bat dau bang XK lien sau la so (vi du: XK11) hoac Ahihi chi duoc them vao role Shopee.';
     }
     return '';
   }
