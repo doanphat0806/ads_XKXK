@@ -8,7 +8,6 @@ const ModalContainer = React.lazy(() => import('./components/ModalContainer'));
 const Sidebar = React.lazy(() => import('./components/Sidebar'));
 const Topbar = React.lazy(() => import('./components/Topbar'));
 const ToastLayer = React.lazy(() => import('./components/ToastLayer'));
-const Accounts = React.lazy(() => import('./pages/Accounts'));
 const Campaigns = React.lazy(() => import('./pages/Campaigns'));
 const CloneCampaigns = React.lazy(() => import('./pages/CloneCampaigns'));
 const CreaterPage = React.lazy(() => import('./pages/CreaterPage'));
@@ -153,7 +152,7 @@ function AppContent() {
                   <Route path="/listing-performance" element={<ListingPerformance />} />
                   <Route path="/sale-stats" element={<SaleStats />} />
                   <Route path="/return-summary" element={isFacebook ? <ReturnSummary /> : <Navigate to="/" replace />} />
-                  <Route path="/accounts" element={<Accounts />} />
+                  <Route path="/accounts" element={<Navigate to="/campaigns?tab=accounts" replace />} />
                   <Route path="/campaigns" element={<Campaigns />} />
                   <Route path="/clone-campaigns" element={<CloneCampaigns />} />
                   <Route path="/ai-insights" element={isFacebook ? <FacebookAiInsights /> : <Navigate to="/" replace />} />

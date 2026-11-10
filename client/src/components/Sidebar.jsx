@@ -23,7 +23,7 @@ import {
 import { useAppContext } from '../contexts/AppContext';
 
 export default function Sidebar() {
-  const { stats, allAccounts, openModal, provider, currentUser } = useAppContext();
+  const { stats, openModal, provider, currentUser } = useAppContext();
   const location = useLocation();
   const isOder = provider === 'oder';
   const isKho = provider === 'kho';
@@ -80,13 +80,6 @@ export default function Sidebar() {
         <>
           <NavLink to="/" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dashboard" end>
             <span className="icon"><LayoutDashboard size={16} strokeWidth={2} /></span><span>Dashboard</span>
-          </NavLink>
-
-          <NavLink to="/accounts" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Tai khoan">
-            <span className="icon"><Users size={16} strokeWidth={2} /></span><span>Tai khoan</span>
-            {allAccounts.length > 0 && (
-              <span className="badge-mini" id="navAccBadge">{allAccounts.length}</span>
-            )}
           </NavLink>
 
           <NavLink to="/create-campaign" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Len Camp">

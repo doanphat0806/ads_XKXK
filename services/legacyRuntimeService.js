@@ -14,6 +14,7 @@ const { registerShopeeSocialAccountsRoutes } = require('../routes/shopeeSocialAc
 const { registerShopeeSocialCommissionReceiptsRoutes } = require('../routes/shopeeSocialCommissionReceiptsRoutes');
 const { authenticateApiRequest } = require('../middleware/auth');
 const { setNewAccountSyncHandler } = require('./newAccountSyncService');
+const { markAccountsQueued } = require('./accountSyncProgressService');
 const { parseBoundedInt } = require('../utils/number');
 const { applyCampaignRuleLimits } = require('../utils/campaignRuleLimits');
 const {
@@ -4204,6 +4205,7 @@ function createLegacyRuntime(app) {
       if (account.ownerUserId) payload.ownerUserId = account.ownerUserId;
 
       await addLog(account._id, account.name, 'info', `Tai khoan moi: tu dong dong bo du lieu ${fromDate} -> ${toDate}`);
+      markAccountsQueued([account._id], { fromDate, toDate, totalDays: payload.totalDays, source: 'new-account' });
 
       if (campaignSyncQueue) {
         try {
@@ -4219,7 +4221,6 @@ function createLegacyRuntime(app) {
         .then(async () => {
           if (!isMongoReady()) return;
           const result = await legacyRoutesRuntime.processCampaignSyncHistoryJob(payload);
-          scheduleCampaignReadCacheClear();
           console.log(`[new-account-sync] ${account.name}: ${result.syncedRows} dong, ${result.errors.length} loi`);
         })
         .catch(error => console.error(`[new-account-sync] ${account.name}: ${error.message}`));

@@ -9,7 +9,7 @@ const mongoose = require('mongoose');
 const Account = require('../models/Account');
 const { withUserFilter } = require('../services/userService');
 const { getAdObjects, getAccountFbToken, normalizeAdAccountId, updateAdObjectStatus } = require('../services/adObjectService');
-const { fbGet, fbPost } = require('../utils/fbApi');
+const { fbGet, fbPost, mapWithConcurrency } = require('../utils/fbApi');
 const { clearCampaignReadCache } = require('../utils/cacheManager');
 const { todayStr } = require('../utils/timeUtils');
 const { buildAccountProviderFilter } = require('../lib/normalizers');
@@ -92,6 +92,73 @@ router.post('/children', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ---- Thanh toan TKQC: nguong thanh toan / tong chi tieu / so du (lay tu Facebook) ----
+// Facebook tra so tien theo don vi nho nhat cua tien te (USD = cent), VND/JPY... khong co phan le.
+const ZERO_DECIMAL_CURRENCIES = new Set(['VND', 'JPY', 'KRW', 'CLP', 'COP', 'CRC', 'HUF', 'ISK', 'IDR', 'PYG', 'TWD', 'UGX']);
+const BILLING_CACHE_MS = 5 * 60 * 1000;
+const billingCache = new Map(); // accountId -> { at, data }
+
+function toMajorAmount(value, currency) {
+  if (value === undefined || value === null || value === '') return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return ZERO_DECIMAL_CURRENCIES.has(String(currency || '').toUpperCase()) ? num : num / 100;
+}
+
+async function fetchAccountBilling(account) {
+  const fbToken = await getAccountFbToken(account);
+  if (!fbToken) throw new Error('Thieu Facebook Access Token');
+  const actId = normalizeAdAccountId(account.adAccountId);
+  // Luu y: Graph API (v21+) da bo truong adspaymentcycle nen khong lay duoc nguong thanh toan
+  const info = await fbGet(fbToken, actId, {
+    fields: 'currency,amount_spent,balance,spend_cap,account_status,is_prepay_account'
+  }, { retries: 1, rateLimitRetries: 1 });
+  const currency = info?.currency || '';
+  const spendCap = toMajorAmount(info?.spend_cap, currency);
+  return {
+    currency,
+    isPrepay: Boolean(info?.is_prepay_account),
+    amountSpent: toMajorAmount(info?.amount_spent, currency), // tong chi tieu tron doi TK
+    balance: toMajorAmount(info?.balance, currency), // so du chua thanh toan
+    spendCap: spendCap && spendCap > 0 ? spendCap : null, // gioi han chi tieu TK (0 = khong gioi han)
+    accountStatus: info?.account_status ?? null
+  };
+}
+
+// GET /api/ads-manager/account-billing?provider=facebook&refresh=1
+router.get('/account-billing', async (req, res) => {
+  try {
+    const provider = String(req.query.provider || '').trim();
+    const refresh = req.query.refresh === '1';
+    const filter = withUserFilter(req, provider ? buildAccountProviderFilter(provider) : {});
+    const accounts = await Account.find(filter).select('_id adAccountId fbToken ownerUserId').lean();
+    const now = Date.now();
+    const billing = {};
+
+    await mapWithConcurrency(accounts, async account => {
+      const key = String(account._id);
+      const cached = billingCache.get(key);
+      if (!refresh && cached && now - cached.at < BILLING_CACHE_MS) {
+        billing[key] = cached.data;
+        return;
+      }
+      try {
+        const data = await fetchAccountBilling(account);
+        billingCache.set(key, { at: Date.now(), data });
+        billing[key] = data;
+      } catch (error) {
+        // Loi thi tra du lieu cu (neu co) kem thong bao loi
+        billing[key] = { ...(cached?.data || {}), error: error.message };
+      }
+    }, 4);
+
+    res.json({ billing });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 // POST /api/ads-manager/status { accountId, objectId, status: 'ACTIVE' | 'PAUSED' } - bat/tat nhom QC hoac quang cao
 router.post('/status', async (req, res) => {

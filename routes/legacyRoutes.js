@@ -4,6 +4,7 @@ const registerPageRoutes = require('./pageRoutes');
 const { getDealStopRows } = require('../services/dealStopRowsService');
 const { trackJob } = require('../utils/perfMonitor');
 const { scheduleNewAccountHistorySync } = require('../services/newAccountSyncService');
+const { setAccountSyncProgress, markAccountsQueued } = require('../services/accountSyncProgressService');
 const { buildMetaExtraGroupFields, buildMetaExtraProjectField, compactMetaExtraRows } = require('../utils/metaExtraMetrics');
 
 function registerLegacyRoutes(app, deps = {}) {
@@ -2370,11 +2371,18 @@ async function processCampaignSyncHistoryJob(data = {}, onProgress = null) {
       throw new Error('Tai khoan dong bo khong hop le');
     }
     filter._id = accountId;
+  } else if (Array.isArray(data.accountIds) && data.accountIds.length) {
+    const ids = data.accountIds.map(String).filter(id => mongoose.Types.ObjectId.isValid(id));
+    if (!ids.length) throw new Error('Tai khoan dong bo khong hop le');
+    filter._id = { $in: ids };
   }
   const accounts = await Account.find(filter).sort('name');
   if (!accounts.length) throw new Error('Khong tim thay tai khoan can dong bo');
 
   const dates = assertPastCampaignSyncRange(fromDate, toDate);
+  const syncSource = data.source || 'manual';
+  // Tien do tung TK cho tab "Tai khoan quang cao"
+  markAccountsQueued(accounts.map(account => account._id), { fromDate, toDate, totalDays: dates.length, source: syncSource });
   // chunkDays > 1 (vd dong bo tron doi TK moi): moi lan goi Facebook lay ca khoi ngay, khong prune.
   // Mac dinh 1 = tung ngay + prune nhu dong bo thu cong.
   const chunkDays = Math.max(1, Math.min(90, parseInt(data.chunkDays, 10) || 1));
@@ -2412,9 +2420,23 @@ async function processCampaignSyncHistoryJob(data = {}, onProgress = null) {
   for (let accountIndex = 0; accountIndex < accounts.length; accountIndex += 1) {
     const account = accounts[accountIndex];
     let accountCompletedDays = 0;
+    let accountErrorCount = 0;
+    let accountLastError = '';
     for (const range of ranges) {
       const isSingleDay = range.from === range.to;
       const rangeLabel = isSingleDay ? `ngay ${range.from}` : `${range.from} -> ${range.to}`;
+      setAccountSyncProgress(account._id, {
+        state: 'active',
+        fromDate,
+        toDate,
+        totalDays: dates.length,
+        completedDays: accountCompletedDays,
+        percent: Math.floor((accountCompletedDays / Math.max(1, dates.length)) * 100),
+        currentDay: isSingleDay ? range.from : `${range.from}..${range.to}`,
+        errorCount: accountErrorCount,
+        lastError: accountLastError,
+        source: syncSource
+      });
       if (onProgress) {
         await onProgress({
           ...baseProgress,
@@ -2436,6 +2458,8 @@ async function processCampaignSyncHistoryJob(data = {}, onProgress = null) {
       } catch (error) {
         errors.push({ accountId: String(account._id), accountName: account.name, date: isSingleDay ? range.from : `${range.from}..${range.to}`, error: error.message });
         await addLog(account._id, account.name, 'error', `Loi dong bo ${rangeLabel}: ${error.message}`);
+        accountErrorCount += 1;
+        accountLastError = error.message;
       }
       accountCompletedDays += range.size;
 
@@ -2444,6 +2468,16 @@ async function processCampaignSyncHistoryJob(data = {}, onProgress = null) {
         await sleep(CAMPAIGN_SYNC_DAY_DELAY_MS);
       }
     }
+    setAccountSyncProgress(account._id, {
+      state: accountErrorCount ? 'completed_with_errors' : 'completed',
+      completedDays: dates.length,
+      percent: 100,
+      currentDay: '',
+      errorCount: accountErrorCount,
+      lastError: accountLastError
+    });
+    // Bao cao doc cache: xoa de so lieu moi dong bo hien ngay
+    clearCampaignReadCache();
   }
 
   const result = {
@@ -2559,11 +2593,30 @@ app.post('/api/campaigns/sync-history', async (req, res) => {
       toDate,
       provider: normalizeProvider(provider),
       ownerUserId: req.currentUser._id,
-      totalDays: dates.length
+      totalDays: dates.length,
+      source: 'manual'
     };
-    if (accountId) payload.accountId = accountId;
+    if (accountId) {
+      payload.accountId = accountId;
+    } else if (Array.isArray(req.body.accountIds) && req.body.accountIds.length) {
+      const ids = req.body.accountIds.map(String).filter(id => mongoose.Types.ObjectId.isValid(id));
+      if (!ids.length) return res.status(400).json({ error: 'Tai khoan dong bo khong hop le' });
+      payload.accountIds = ids;
+    }
+
+    // Danh dau "dang cho" cho tung TK ngay luc bam, de tab Tai khoan hien thanh % luon
+    const markQueuedNow = async () => {
+      const filter = withUserFilter(req, payload.provider ? buildAccountProviderFilter(payload.provider) : {});
+      if (payload.accountId) filter._id = payload.accountId;
+      else if (payload.accountIds) filter._id = { $in: payload.accountIds };
+      const ids = (await Account.find(filter).select('_id').lean()).map(account => account._id);
+      if (!ids.length) throw new Error('Khong tim thay tai khoan can dong bo');
+      markAccountsQueued(ids, { fromDate, toDate, totalDays: dates.length, source: 'manual' });
+      return ids.length;
+    };
 
     if (campaignSyncQueue && req.body?.queue === true) {
+      const totalAccounts = await markQueuedNow();
       const job = await campaignSyncQueue.add('sync-history', payload);
       startCampaignSyncWorker();
 
@@ -2573,8 +2626,18 @@ app.post('/api/campaigns/sync-history', async (req, res) => {
         queue: CAMPAIGN_SYNC_QUEUE_NAME,
         jobId: String(job.id),
         statusUrl: `/api/campaigns/sync-history/${job.id}`,
+        totalAccounts,
         message: 'Dang dong bo trong nen'
       });
+    }
+
+    // Khong co Redis: background=true -> tra ve ngay, chay ngam; tien do xem qua /api/account-sync/progress
+    if (req.body?.background === true) {
+      const totalAccounts = await markQueuedNow();
+      processCampaignSyncHistoryJob(payload)
+        .then(result => console.log(`[sync-history] background xong: ${result.syncedRows} dong, ${result.errors.length} loi`))
+        .catch(error => console.error(`[sync-history] background loi: ${error.message}`));
+      return res.status(202).json({ ok: true, queued: false, background: true, totalAccounts, message: 'Dang dong bo trong nen' });
     }
 
     const result = await processCampaignSyncHistoryJob(payload);

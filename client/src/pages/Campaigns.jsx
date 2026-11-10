@@ -20,7 +20,11 @@ import {
   Upload,
   FileSpreadsheet,
   Flag,
-  Plus
+  Plus,
+  Eye,
+  Timer,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 
 const ACTIVE_CAMPAIGN_STATUSES = new Set([
@@ -50,6 +54,64 @@ function offsetDateString(dateKey, days) {
 
 function yesterdayString() {
   return offsetDateString(todayString(), -1);
+}
+
+function formatMoneyWithCurrency(value, currency) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '-';
+  if (!currency || currency === 'VND') return formatVND(Number(value));
+  return `${Number(value).toLocaleString('vi-VN', { maximumFractionDigits: 2 })} ${currency}`;
+}
+
+// 2 o: tong chi tieu tron doi TK, so du chua thanh toan (lay tu Facebook)
+function AccountBillingCells({ item }) {
+  const { currency, amountSpent, balance, spendCap, error } = item || {};
+  const failed = error && amountSpent === undefined;
+  return (
+    <>
+      <td className="text-right" style={{ fontWeight: 600 }} title={error ? `Lỗi: ${error}` : (spendCap ? `Giới hạn chi tiêu TK: ${formatMoneyWithCurrency(spendCap, currency)}` : '')}>
+        {failed ? <span style={{ color: 'var(--r)' }}>Lỗi</span> : formatMoneyWithCurrency(amountSpent, currency)}
+      </td>
+      <td className="text-right" style={{ fontWeight: 600 }} title={error ? `Lỗi: ${error}` : ''}>
+        {failed ? <span style={{ color: 'var(--r)' }}>Lỗi</span> : formatMoneyWithCurrency(balance, currency)}
+      </td>
+    </>
+  );
+}
+
+// Thanh % dong bo lich su cua 1 TK (dong bo tay / tu dong khi them TK moi)
+function AccountSyncBar({ item }) {
+  if (!item) return null;
+  const percent = Math.max(0, Math.min(100, Number(item.percent) || 0));
+  const isQueued = item.state === 'queued';
+  const isDone = item.state === 'completed' || item.state === 'completed_with_errors';
+  const hasErrors = Number(item.errorCount) > 0;
+  const label = isQueued
+    ? 'Đang chờ đồng bộ'
+    : isDone
+      ? (hasErrors ? `Xong, ${item.errorCount} lỗi` : 'Đồng bộ xong')
+      : `Đang đồng bộ ${item.currentDay ? `(${String(item.currentDay).replace('..', ' → ')})` : ''}`;
+  const color = hasErrors ? 'var(--r, #dc2626)' : isDone ? 'var(--g, #16a34a)' : '#0d6e52';
+  const title = [
+    item.source === 'new-account' ? 'Tự đồng bộ khi thêm tài khoản' : 'Đồng bộ tay',
+    item.fromDate && item.toDate ? `${item.fromDate} → ${item.toDate}` : '',
+    `${item.completedDays || 0}/${item.totalDays || 0} ngày`,
+    item.lastError ? `Lỗi gần nhất: ${item.lastError}` : ''
+  ].filter(Boolean).join('\n');
+
+  return (
+    <div className="account-sync-bar" title={title}>
+      <div className="account-sync-bar-head">
+        <span>{label}</span>
+        <span>{percent}%</span>
+      </div>
+      <div className="account-sync-bar-track">
+        <div
+          className={`account-sync-bar-fill ${!isDone && !isQueued ? 'running' : ''}`}
+          style={{ width: `${isQueued ? 0 : percent}%`, background: color }}
+        />
+      </div>
+    </div>
+  );
 }
 
 function getCampaignAccount(campaign, accounts = []) {
@@ -182,7 +244,15 @@ export default function Campaigns() {
   const { provider, allAccounts, currentUser, loadAccounts, openModal } = useAppContext();
   
   // Tab state: 'campaigns' (default) | 'accounts' | 'adsets' | 'ads' | 'posts'
-  const [activeTab, setActiveTab] = useState('campaigns');
+  // ?tab=accounts (vd link /accounts cu chuyen sang day) -> mo san tab Tai khoan quang cao
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const tab = new URLSearchParams(window.location.search).get('tab');
+      return ['accounts', 'campaigns', 'adsets', 'ads', 'posts'].includes(tab) ? tab : 'campaigns';
+    } catch {
+      return 'campaigns';
+    }
+  });
 
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -225,7 +295,8 @@ export default function Campaigns() {
   const [syncFromDate, setSyncFromDate] = useState(yesterdayString());
   const [syncToDate, setSyncToDate] = useState(yesterdayString());
   const [syncing, setSyncing] = useState(false);
-  const [syncJob, setSyncJob] = useState(null);
+  // Tien do dong bo lich su theo tung TK: { [accountId]: { state, percent, completedDays, totalDays, currentDay, ... } }
+  const [accountSyncProgress, setAccountSyncProgress] = useState({});
   const [exporting, setExporting] = useState(false);
   const [importingCsv, setImportingCsv] = useState(false);
   const [lastToggleLog, setLastToggleLog] = useState('');
@@ -505,68 +576,85 @@ export default function Campaigns() {
     }
   };
 
-  // Sync historical data
+  // Dong bo ngay da chot: chon TK thi dong bo cac TK do, khong chon thi tat ca. Chay ngam tren server,
+  // tien do tung TK hien o thanh % trong bang "Tai khoan quang cao".
   const handleSyncHistoryQueued = async () => {
     if (syncToDate >= todayString()) {
       toast.error('Chỉ được chọn các ngày trước hôm nay');
       return;
     }
+    const accountIds = Array.from(selectedAccountIds);
     setSyncing(true);
-    setSyncJob(null);
     try {
-      // Server: co Redis -> xep hang (tra jobId de theo doi); khong co -> dong bo luon roi tra ket qua
       const result = await api('POST', '/campaigns/sync-history', {
         fromDate: syncFromDate,
         toDate: syncToDate,
         provider,
-        queue: true
-      }, { timeoutMs: 30 * 60 * 1000 });
-      if (result?.jobId) {
-        toast.info('Bắt đầu đồng bộ trong nền...');
-        pollSyncJob(result.jobId);
-      } else {
-        setSyncJob({ ...result, percent: 100 });
-        if (result?.errors?.length) {
-          toast.warn(`Đồng bộ xong nhưng có ${result.errors.length} lỗi (${result.completedDays || 0}/${result.totalDays || 0} ngày)`);
-        } else {
-          toast.success(`Đồng bộ hoàn tất (${result?.completedDays || 0}/${result?.totalDays || 0} ngày)`);
-        }
-        setSyncing(false);
-        await loadCampaigns(true);
-      }
+        ...(accountIds.length ? { accountIds } : {}),
+        queue: true,
+        background: true
+      });
+      toast.info(`Bắt đầu đồng bộ ${result?.totalAccounts || accountIds.length || ''} tài khoản trong nền`.replace('  ', ' '));
+      await refreshAccountSyncProgress();
     } catch (e) {
       toast.error('Lỗi đồng bộ: ' + e.message);
+    } finally {
       setSyncing(false);
     }
   };
 
-  const pollSyncJob = (jobId) => {
-    const timer = setInterval(async () => {
-      try {
-        const response = await api('GET', `/campaigns/sync-history/${jobId}`);
-        const res = response?.job || response || {};
-        setSyncJob(res);
-        if (res.state === 'completed' || res.state === 'completed_with_errors') {
-          clearInterval(timer);
-          setSyncing(false);
-          if (res.state === 'completed_with_errors') {
-            toast.warn(`Đồng bộ xong nhưng có ${res.errors?.length || 0} lỗi (${res.completedDays || 0}/${res.totalDays || 0} ngày)`);
-          } else {
-            toast.success(`Đồng bộ hoàn tất (${res.completedDays || 0}/${res.totalDays || 0} ngày)`);
-          }
-          await loadCampaigns(true);
-        } else if (res.state === 'failed') {
-          clearInterval(timer);
-          setSyncing(false);
-          toast.error('Đồng bộ thất bại: ' + (res.error || 'Lỗi không xác định'));
-        }
-      } catch (err) {
-        clearInterval(timer);
-        setSyncing(false);
-        toast.error('Không theo dõi được tiến trình đồng bộ: ' + err.message);
-      }
-    }, 2500);
-  };
+  // Doc tien do dong bo tung TK (ca dong bo tay lan tu dong khi them TK moi)
+  const prevSyncStatesRef = useRef({});
+  const refreshAccountSyncProgress = useCallback(async () => {
+    try {
+      const result = await api('GET', `/account-sync/progress?provider=${encodeURIComponent(provider || '')}`);
+      const next = result?.progress || {};
+      // TK vua chay xong -> tai lai so lieu tai khoan
+      const prev = prevSyncStatesRef.current;
+      const justFinished = Object.entries(next).some(([id, item]) =>
+        ['completed', 'completed_with_errors'].includes(item.state) && ['active', 'queued'].includes(prev[id]));
+      prevSyncStatesRef.current = Object.fromEntries(Object.entries(next).map(([id, item]) => [id, item.state]));
+      setAccountSyncProgress(next);
+      if (justFinished && loadAccounts) loadAccounts();
+    } catch {
+      // bo qua loi poll, lan sau thu lai
+    }
+  }, [provider, loadAccounts]);
+
+  // Nguong thanh toan / tong chi tieu / so du cua tung TK (lay tu Facebook, server cache 5 phut)
+  const [accountBilling, setAccountBilling] = useState({});
+  const [billingLoading, setBillingLoading] = useState(false);
+  const loadAccountBilling = useCallback(async (refresh = false) => {
+    setBillingLoading(true);
+    try {
+      const result = await api('GET', `/ads-manager/account-billing?provider=${encodeURIComponent(provider || '')}${refresh ? '&refresh=1' : ''}`);
+      setAccountBilling(result?.billing || {});
+    } catch (e) {
+      toast.error('Lỗi tải ngưỡng / số dư: ' + e.message);
+    } finally {
+      setBillingLoading(false);
+    }
+  }, [provider]);
+
+  useEffect(() => {
+    if (activeTab !== 'accounts') return undefined;
+    loadAccountBilling(false);
+    const timer = setInterval(() => loadAccountBilling(false), 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [activeTab, loadAccountBilling]);
+
+  const hasRunningAccountSync = useMemo(
+    () => Object.values(accountSyncProgress).some(item => item.state === 'active' || item.state === 'queued'),
+    [accountSyncProgress]
+  );
+
+  useEffect(() => {
+    if (activeTab !== 'accounts') return undefined;
+    refreshAccountSyncProgress();
+    // Dang co TK dong bo: 3s/lan; khong co: 15s/lan (de bat duoc TK moi them tu dong bo)
+    const timer = setInterval(refreshAccountSyncProgress, hasRunningAccountSync ? 3000 : 15000);
+    return () => clearInterval(timer);
+  }, [activeTab, hasRunningAccountSync, refreshAccountSyncProgress]);
 
   // Export spending CSV
   const handleExportSpending = async () => {
@@ -754,6 +842,18 @@ export default function Campaigns() {
       return acc;
     }, { spend: 0, metaOrders: 0, orderCount: 0, messages: 0, activeCampaigns: 0, totalCampaigns: 0 });
   }, [filteredAccounts]);
+
+  const billingTotals = useMemo(() => {
+    const totals = { amountSpent: 0, balance: 0 };
+    for (const acc of filteredAccounts) {
+      const item = accountBilling[acc._id];
+      // Chi cong don TK tien VND de tong khong bi lech don vi
+      if (!item || (item.currency && item.currency !== 'VND')) continue;
+      totals.amountSpent += Number(item.amountSpent) || 0;
+      totals.balance += Number(item.balance) || 0;
+    }
+    return totals;
+  }, [accountBilling, filteredAccounts]);
 
   const avgAccountCostPerMessage = accountsSummaryTotals.messages > 0
     ? accountsSummaryTotals.spend / accountsSummaryTotals.messages
@@ -1364,6 +1464,7 @@ export default function Campaigns() {
             className="ads-manager-btn"
             onClick={() => {
               if (activeTab === 'accounts' && loadAccounts) loadAccounts();
+              if (activeTab === 'accounts') loadAccountBilling(true);
               if (['adsets', 'ads', 'posts'].includes(activeTab)) setChildrenReloadToken(token => token + 1);
               else reloadCampaignsNow(true);
             }}
@@ -1474,8 +1575,8 @@ export default function Campaigns() {
             <span>Tải xuống</span>
           </button>
 
-          {/* Sync & CSV Tool Drawer Toggle (in campaigns tab) */}
-          {activeTab === 'campaigns' && (
+          {/* Sync & CSV Tool Drawer Toggle (chi o tab Tai khoan quang cao) */}
+          {activeTab === 'accounts' && (
             <button
               type="button"
               className={`ads-manager-btn ${showSyncTools ? 'primary' : ''}`}
@@ -1587,7 +1688,7 @@ export default function Campaigns() {
       </div>
 
       {/* Collapsible Sync History & CSV Tools Panel */}
-      {activeTab === 'campaigns' && showSyncTools && (
+      {activeTab === 'accounts' && showSyncTools && (
         <div className="card" style={{ margin: '0', borderRadius: 0, borderTop: 'none', background: 'var(--s2, #f8fafc)', padding: '14px 18px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
             <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--txt)' }}>Công cụ đồng bộ ngày đã chốt & Import CSV</span>
@@ -1613,8 +1714,13 @@ export default function Campaigns() {
               onClick={handleSyncHistoryQueued}
               disabled={syncing || syncToDate >= todayString()}
               style={{ height: '34px' }}
+              title={selectedAccountIds.size ? 'Đồng bộ các tài khoản đang tick' : 'Không tick tài khoản nào = đồng bộ tất cả'}
             >
-              {syncing ? 'Đang đồng bộ...' : 'Đồng bộ ngày đã chốt'}
+              {syncing
+                ? 'Đang gửi...'
+                : selectedAccountIds.size
+                  ? `Đồng bộ ${selectedAccountIds.size} tài khoản đã chọn`
+                  : 'Đồng bộ tất cả tài khoản'}
             </button>
             <label
               className="btn btn-ghost btn-sm"
@@ -1644,17 +1750,9 @@ export default function Campaigns() {
               {exporting ? 'Đang xuất...' : 'Tải báo cáo CSV'}
             </button>
           </div>
-          {syncJob && (
-            <div style={{ marginTop: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--muted2)', marginBottom: '4px' }}>
-                <span>{syncJob.message || 'Đang đồng bộ'}</span>
-                <span>{syncJob.completedDays || 0}/{syncJob.totalDays || 0} ngày ({syncJob.percent || 0}%)</span>
-              </div>
-              <div className="pbar">
-                <div className="pbar-fill" style={{ width: `${syncJob.percent || 0}%`, background: syncJob.state === 'failed' ? 'var(--r)' : 'var(--g)' }}></div>
-              </div>
-            </div>
-          )}
+          <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--muted2)' }}>
+            Tiến độ từng tài khoản hiện ở thanh % dưới tên tài khoản trong bảng.
+          </div>
         </div>
       )}
 
@@ -1738,7 +1836,13 @@ export default function Campaigns() {
                     >
                       Số tiền đã chi tiêu {sortField === 'spend' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                     </th>
-                    <th className="text-center" style={{ width: '120px' }}>Thao tác</th>
+                    <th className="text-right" style={{ width: '140px' }} title="Tổng chi tiêu trọn đời tài khoản (Facebook)">
+                      Tổng chi tiêu {billingLoading ? <span className="spin">⟳</span> : null}
+                    </th>
+                    <th className="text-right" style={{ width: '150px' }} title="Số tiền đã tiêu nhưng chưa thanh toán (Facebook)">
+                      Số dư
+                    </th>
+                    <th className="text-center" style={{ width: '140px' }}>Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1787,6 +1891,7 @@ export default function Campaigns() {
                                   {acc.provider === 'shopee' ? 'Shopee' : 'Facebook'}
                                 </span>
                               </div>
+                              <AccountSyncBar item={accountSyncProgress[acc._id]} />
                             </div>
                           </div>
                         </td>
@@ -1858,44 +1963,47 @@ export default function Campaigns() {
                           {acc.spend > 0 ? formatVND(acc.spend) : '0 ₫'}
                         </td>
 
+                        {/* Tổng chi tiêu / Số dư (Facebook) */}
+                        <AccountBillingCells item={accountBilling[acc._id]} />
+
                         {/* Thao tác */}
                         <td className="text-center">
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <div className="account-row-actions">
                             <button
                               type="button"
-                              className="btn btn-ghost btn-sm btn-icon"
+                              className="account-action-btn"
                               title="Xem chiến dịch tài khoản này"
+                              aria-label="Xem chiến dịch"
                               onClick={() => viewAccountCampaigns(acc._id)}
-                              style={{ height: '26px', width: '26px', padding: 0 }}
                             >
-                              👁
+                              <Eye size={14} />
                             </button>
                             <button
                               type="button"
-                              className="btn btn-ghost btn-sm btn-icon"
+                              className="account-action-btn"
                               title="Cấu hình Automation"
+                              aria-label="Cấu hình Automation"
                               onClick={() => openModal && openModal('AUTOMATION', acc)}
-                              style={{ height: '26px', width: '26px', padding: 0 }}
                             >
-                              ⏱
+                              <Timer size={14} />
                             </button>
                             <button
                               type="button"
-                              className="btn btn-ghost btn-sm btn-icon"
+                              className="account-action-btn"
                               title="Sửa tài khoản"
+                              aria-label="Sửa tài khoản"
                               onClick={() => openModal && openModal('ACCOUNT', acc)}
-                              style={{ height: '26px', width: '26px', padding: 0 }}
                             >
-                              ✏️
+                              <Pencil size={14} />
                             </button>
                             <button
                               type="button"
-                              className="btn btn-ghost btn-sm btn-icon"
+                              className="account-action-btn danger"
                               title="Xóa tài khoản"
+                              aria-label="Xóa tài khoản"
                               onClick={() => deleteSingleAccount(acc._id, acc.name)}
-                              style={{ height: '26px', width: '26px', padding: 0, color: 'var(--r)' }}
                             >
-                              🗑
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         </td>
@@ -1929,6 +2037,12 @@ export default function Campaigns() {
                       </td>
                       <td className="text-right" style={{ fontWeight: 700, color: 'var(--txt)' }}>
                         {formatVND(accountsSummaryTotals.spend)}
+                      </td>
+                      <td className="text-right" style={{ fontWeight: 700 }}>
+                        {billingTotals.amountSpent > 0 ? formatVND(billingTotals.amountSpent) : '-'}
+                      </td>
+                      <td className="text-right" style={{ fontWeight: 700 }}>
+                        {billingTotals.balance > 0 ? formatVND(billingTotals.balance) : '-'}
                       </td>
                       <td></td>
                     </tr>
