@@ -2070,11 +2070,11 @@ export default function Campaigns() {
               level={activeTab}
               selectedCampaigns={selectedCampaignsAll}
               campaignNameById={campaignNameById}
+              accountId={filterAcc}
               fromDate={filterFromDate}
               toDate={filterToDate}
               searchTerm={searchTerm}
               reloadToken={childrenReloadToken}
-              onBackToCampaigns={() => setActiveTab('campaigns')}
             />
           )}
         </div>

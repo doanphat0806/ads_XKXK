@@ -1,12 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { api, formatVND, formatNumber } from '../lib/api';
 
 // Tab Nhom quang cao / Quang cao / Bai viet cua trang Chien dich.
-// Lay tu Facebook cho cac camp dang tick chon o tab Chien dich, chi so theo khoang ngay dang chon.
+// Khong tick camp nao -> hien tat ca (cua tai khoan dang loc neu co); co tick -> chi cua cac camp do.
+// Doc tu database (server tu dong bo tu Facebook khi du lieu cu), chi so theo khoang ngay dang chon.
 // Bai viet = gom cac quang cao dung chung 1 bai (effective_object_story_id).
 
-const MAX_CAMPAIGNS = 100;
+// Hien tung dot de bang khong qua nang khi co hang nghin dong
+const RENDER_STEP = 500;
+// Server dang lam moi ngam tu Facebook -> doi bay nhieu roi lay lai so moi
+const REFRESH_FOLLOW_UP_MS = 8000;
 
 const DELIVERY_LABELS = {
   ACTIVE: 'Đang phân phối',
@@ -81,18 +85,20 @@ export default function AdsManagerChildren({
   level,
   selectedCampaigns,
   campaignNameById,
+  accountId: filterAccountId = '',
   fromDate,
   toDate,
   searchTerm,
-  reloadToken,
-  onBackToCampaigns
+  reloadToken
 }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
   const [togglingId, setTogglingId] = useState('');
   const [sortField, setSortField] = useState('spend');
   const [sortDir, setSortDir] = useState('desc');
+  const [renderLimit, setRenderLimit] = useState(RENDER_STEP);
   const text = LEVEL_TEXT[level];
   const apiLevel = level === 'adsets' ? 'adset' : 'ad';
 
@@ -101,34 +107,58 @@ export default function AdsManagerChildren({
     campaignId: String(campaign.campaignId || '')
   })).filter(item => item.accountId && item.campaignId), [selectedCampaigns]);
   const itemsKey = useMemo(() => items.map(item => `${item.accountId}:${item.campaignId}`).sort().join(','), [items]);
-  const tooMany = items.length > MAX_CAMPAIGNS;
+  const showAll = items.length === 0;
+
+  // Lan dau mount khong tinh la bam "tai lai"
+  const lastReloadTokenRef = useRef(reloadToken);
 
   useEffect(() => {
-    if (!items.length || tooMany) {
-      setRows([]);
-      setErrors([]);
-      return undefined;
-    }
     let cancelled = false;
-    setLoading(true);
-    api('POST', '/ads-manager/children', { level: apiLevel, fromDate, toDate, items }, { timeoutMs: 3 * 60 * 1000 })
-      .then(result => {
-        if (cancelled) return;
-        setRows(Array.isArray(result?.rows) ? result.rows : []);
-        setErrors(Array.isArray(result?.errors) ? result.errors : []);
-      })
-      .catch(error => {
-        if (cancelled) return;
-        setRows([]);
-        setErrors([{ accountName: '', error: error.message }]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
+    let followUpTimer = null;
+    // Bam nut tai lai -> bat server lay moi tu Facebook; con lai doc tu DB
+    const forceRefresh = lastReloadTokenRef.current !== reloadToken;
+    lastReloadTokenRef.current = reloadToken;
+
+    const load = (refresh, showLoader) => {
+      if (showLoader) setLoading(true);
+      return api('POST', '/ads-manager/children', { level: apiLevel, fromDate, toDate, items, accountId: showAll ? filterAccountId : '', refresh }, { timeoutMs: 3 * 60 * 1000 })
+        .then(result => {
+          if (cancelled) return;
+          setRows(Array.isArray(result?.rows) ? result.rows : []);
+          setErrors(Array.isArray(result?.errors) ? result.errors : []);
+          setRefreshing(Boolean(result?.refreshing));
+          // Server dang lam moi ngam -> lay lai 1 lan sau vai giay (khong hien loading)
+          if (result?.refreshing && showLoader) {
+            followUpTimer = window.setTimeout(() => { load(false, false); }, REFRESH_FOLLOW_UP_MS);
+          }
+        })
+        .catch(error => {
+          if (cancelled) return;
+          if (showLoader) setRows([]);
+          setErrors([{ accountName: '', error: error.message }]);
+          setRefreshing(false);
+        })
+        .finally(() => {
+          if (!cancelled && showLoader) setLoading(false);
+        });
+    };
+    load(forceRefresh, true);
+    return () => {
+      cancelled = true;
+      if (followUpTimer) window.clearTimeout(followUpTimer);
+    };
     // itemsKey dai dien cho items (tranh goi lai khi chi doi tham chieu mang)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiLevel, itemsKey, fromDate, toDate, reloadToken, tooMany]);
+  }, [apiLevel, itemsKey, filterAccountId, fromDate, toDate, reloadToken]);
+
+  useEffect(() => {
+    setRenderLimit(RENDER_STEP);
+  }, [apiLevel, itemsKey, filterAccountId, fromDate, toDate, searchTerm, sortField, sortDir]);
+
+  const campaignNameOf = useCallback(
+    (row) => row.campaignName || campaignNameById.get(row.campaignId) || '',
+    [campaignNameById]
+  );
 
   const toggleStatus = useCallback(async (row) => {
     if (togglingId) return;
@@ -165,7 +195,7 @@ export default function AdsManagerChildren({
     if (query) {
       list = list.filter(row => [
         row.name, row.id, row.storyId, row.adsetName, row.body,
-        campaignNameById.get(row.campaignId), row.accountId?.name
+        campaignNameOf(row), row.accountId?.name
       ].some(value => String(value || '').toLowerCase().includes(query)));
     }
     const dir = sortDir === 'asc' ? 1 : -1;
@@ -175,32 +205,10 @@ export default function AdsManagerChildren({
       if (sortField === 'budget') return dir * ((a.dailyBudget || a.lifetimeBudget || 0) - (b.dailyBudget || b.lifetimeBudget || 0));
       return dir * (Number(a[sortField] || 0) - Number(b[sortField] || 0));
     });
-  }, [rows, level, searchTerm, campaignNameById, sortField, sortDir]);
+  }, [rows, level, searchTerm, campaignNameOf, sortField, sortDir]);
+  const shownRows = useMemo(() => viewRows.slice(0, renderLimit), [viewRows, renderLimit]);
 
   const totals = useMemo(() => sumMetrics(viewRows), [viewRows]);
-
-  if (!items.length) {
-    return (
-      <div className="empty" style={{ padding: '60px 20px', textAlign: 'center' }}>
-        <div className="ei" style={{ fontSize: '32px' }}>{text.icon}</div>
-        <h3 style={{ marginTop: '12px', fontSize: '16px', fontWeight: 700 }}>{text.title}</h3>
-        <p style={{ color: 'var(--muted2)', marginTop: '6px', fontSize: '13px' }}>
-          Tick chọn 1 hoặc nhiều camp ở tab Chiến dịch để xem {text.unit} của các camp đó.
-        </p>
-        <button type="button" className="ads-manager-btn primary" onClick={onBackToCampaigns} style={{ marginTop: '16px' }}>
-          Về danh sách Chiến dịch
-        </button>
-      </div>
-    );
-  }
-
-  if (tooMany) {
-    return (
-      <div className="empty" style={{ padding: '60px 20px' }}>
-        <p>Đang chọn {formatNumber(items.length)} camp. Chỉ xem được tối đa {MAX_CAMPAIGNS} camp một lần, hãy bỏ bớt.</p>
-      </div>
-    );
-  }
 
   const header = (field, label, className, style) => (
     <th className={className} style={{ cursor: 'pointer', userSelect: 'none', ...style }} onClick={() => handleSort(field)}>
@@ -262,7 +270,7 @@ export default function AdsManagerChildren({
   };
   const campaignCell = (row) => (
     <td>
-      <div style={{ fontWeight: 600 }}>{campaignNameById.get(row.campaignId) || '-'}</div>
+      <div style={{ fontWeight: 600 }}>{campaignNameOf(row) || '-'}</div>
       <div className="campaign-id-sub">{row.accountId?.name || ''}</div>
     </td>
   );
@@ -283,7 +291,7 @@ export default function AdsManagerChildren({
           </tr>
         </thead>
         <tbody>
-          {viewRows.map((row, index) => (
+          {shownRows.map((row, index) => (
             <tr key={row.id}>
               <td className="text-center" style={{ color: 'var(--muted2)' }}>{index + 1}</td>
               <td>
@@ -335,7 +343,7 @@ export default function AdsManagerChildren({
           </tr>
         </thead>
         <tbody>
-          {viewRows.map((row, index) => (
+          {shownRows.map((row, index) => (
             <tr key={row.id}>
               <td className="text-center" style={{ color: 'var(--muted2)' }}>{index + 1}</td>
               <td>
@@ -387,7 +395,7 @@ export default function AdsManagerChildren({
           </tr>
         </thead>
         <tbody>
-          {viewRows.map((row, index) => (
+          {shownRows.map((row, index) => (
             <tr key={row.id}>
               <td className="text-center" style={{ color: 'var(--muted2)' }}>{index + 1}</td>
               <td>
@@ -429,8 +437,10 @@ export default function AdsManagerChildren({
   return (
     <>
       <div style={{ padding: '8px 4px 10px', fontSize: '12px', color: 'var(--muted2)' }}>
-        {text.title} của <b style={{ color: 'var(--txt)' }}>{formatNumber(items.length)}</b> chiến dịch đã chọn. Số liệu lấy trực tiếp từ Facebook theo ngày đang chọn.
-        {loading && <span className="spin" style={{ marginLeft: '8px' }}>⟳</span>}
+        {showAll
+          ? <>Tất cả {text.unit}{filterAccountId ? ' của tài khoản đang lọc' : ''} (tick camp ở tab Chiến dịch để xem riêng).</>
+          : <>{text.title} của <b style={{ color: 'var(--txt)' }}>{formatNumber(items.length)}</b> chiến dịch đã chọn.</>} Số liệu lưu trong hệ thống, tự cập nhật từ Facebook (hôm nay ~5 phút/lần); bấm ⟳ để lấy mới ngay.
+        {(loading || refreshing) && <span className="spin" style={{ marginLeft: '8px' }} title="Đang cập nhật từ Facebook">⟳</span>}
       </div>
       {errors.length > 0 && (
         <div style={{ padding: '8px 12px', marginBottom: '8px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.08)', color: 'var(--r)', fontSize: '12px' }}>
@@ -440,10 +450,23 @@ export default function AdsManagerChildren({
         </div>
       )}
       {loading && rows.length === 0 ? (
-        <div className="empty"><span className="spin">⟳</span><p style={{ marginTop: '10px' }}>Đang tải {text.unit} từ Facebook...</p></div>
+        <div className="empty"><span className="spin">⟳</span><p style={{ marginTop: '10px' }}>Đang tải {text.unit}... (lần đầu lấy từ Facebook có thể mất vài giây)</p></div>
       ) : viewRows.length === 0 ? (
         <div className="empty"><div className="ei">{text.icon}</div><p>Không có {text.unit}</p></div>
-      ) : table}
+      ) : (
+        <>
+          {table}
+          {viewRows.length > shownRows.length && (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', padding: '12px', fontSize: '12px', color: 'var(--muted2)' }}>
+              <span>Đang hiện {formatNumber(shownRows.length)} / {formatNumber(viewRows.length)} {text.unit}</span>
+              <button type="button" className="ads-manager-btn" onClick={() => setRenderLimit(limit => limit + RENDER_STEP)}>
+                Hiện thêm {formatNumber(Math.min(RENDER_STEP, viewRows.length - shownRows.length))}
+              </button>
+              <button type="button" className="ads-manager-btn" onClick={() => setRenderLimit(viewRows.length)}>Hiện tất cả</button>
+            </div>
+          )}
+        </>
+      )}
     </>
   );
 }
