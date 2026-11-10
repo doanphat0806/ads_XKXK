@@ -40,7 +40,7 @@ export default function AdsSpendLedgerStatus({ ledger }) {
       <span>
         Chi phí ads đã lưu vào database
         {ledger.lastSyncAt ? ` · cập nhật lúc ${formatTime(ledger.lastSyncAt)}` : ''}
-        {ledger.running ? ' · đang cập nhật…' : ''}
+        {ledger.running || ledger.syncing ? ' · đang cập nhật…' : ''}
       </span>
     </div>
   );

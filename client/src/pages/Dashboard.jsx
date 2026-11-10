@@ -4,6 +4,7 @@ import { formatVND, formatNumber, todayString, dateTimeString, api, cachedApi, r
 import DateRangePicker from '../components/DateRangePicker';
 import { toast } from 'react-toastify';
 import { loadXlsx } from '../utils/loadXlsx';
+import { getCampaignOrderCount, findCampaignSkuKeys } from '../utils/campaignSku';
 import ColumnSettingsModal from '../components/ColumnSettingsModal';
 import ColumnPresetMenu from '../components/ColumnPresetMenu';
 import { useVisibleInterval } from '../hooks/useVisibleInterval';
@@ -31,16 +32,6 @@ const formatDateTime = (value) => {
 const normalizeCampaignDuplicateKey = (campaign) => {
   const name = String(campaign.name || '').toUpperCase().replace(/\s+/g, '').trim();
   return name;
-};
-
-const getCampaignSkuCandidates = (campaignName) => {
-  const rawName = String(campaignName || '').toUpperCase().trim();
-  const compactName = rawName.replace(/\s+/g, '');
-  const firstNineChars = rawName.slice(0, 9).replace(/\s+/g, '');
-  const firstToken = rawName.split(/\s+/)[0]?.replace(/\s+/g, '') || '';
-
-  return [...new Set([firstNineChars, firstToken, compactName].filter(Boolean))]
-    .map(code => `MS${code}`);
 };
 
 const keepCurrentSortStatus = (campaign) => ({
@@ -973,20 +964,21 @@ export default function Dashboard() {
 
   const getOrderCountForCampaign = useCallback((campaignName) => {
     if (!campaignName || !hasSkuCounts) return 0;
-    for (const skuKey of getCampaignSkuCandidates(campaignName)) {
-      const count = Number(effectiveSkuCounts[skuKey] || 0);
-      if (count > 0) return count;
-    }
-    return 0;
+    return getCampaignOrderCount(campaignName, effectiveSkuCounts);
   }, [effectiveSkuCounts, hasSkuCounts]);
 
   const getReturnStatsForCampaign = useCallback((campaignName) => {
     if (!campaignName || !hasReturnStatsBySku) return EMPTY_RETURN_STATS;
-    for (const skuKey of getCampaignSkuCandidates(campaignName)) {
-      const stats = returnStatsBySku[skuKey];
-      if (stats) return toReturnStats(stats);
-    }
-    return EMPTY_RETURN_STATS;
+    const keys = findCampaignSkuKeys(campaignName, key => Boolean(returnStatsBySku[key]));
+    if (!keys.length) return EMPTY_RETURN_STATS;
+    if (keys.length === 1) return toReturnStats(returnStatsBySku[keys[0]]);
+    // Camp nhieu ma -> cong don ti le hoan cua cac ma
+    const merged = keys.map(key => toReturnStats(returnStatsBySku[key])).reduce((acc, stats) => ({
+      returned: acc.returned + Number(stats.returned || 0),
+      returning: acc.returning + Number(stats.returning || 0),
+      received: acc.received + Number(stats.received || 0)
+    }), { returned: 0, returning: 0, received: 0 });
+    return toReturnStats([merged.returned, merged.returning, merged.received]);
   }, [returnStatsBySku, hasReturnStatsBySku]);
 
   // Dang chon khung gio (khac ca ngay) -> chi tieu/click/hien thi/don Meta cua camp chi tinh trong khung gio do.

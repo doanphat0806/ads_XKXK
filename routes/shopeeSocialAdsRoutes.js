@@ -104,9 +104,16 @@ function registerShopeeSocialAdsRoutes(app, deps = {}) {
 
       const ledgerStatus = getShopeeAdSpendLedgerStatus();
       if (!ledgerStatus.ready) {
-        // So cai dang chep toan bo lan dau -> doc tam tu Campaign, khong bat trang doi
-        const campaigns = await readFromCampaigns(req, fromDate, toDate);
-        return res.json({ campaigns, fromDate, toDate, source: 'campaigns', ledger: ledgerStatus });
+        // Vua restart (chua nap trang thai) hoac dang chep: user DA CO chi phi trong DB thi van doc
+        // tu DB - de chi phi tung acc Shopee (ca TKQC da xoa) khong bi hut sau restart.
+        // Chi khi chua tung luu dong nao moi doc tam tu Campaign.
+        const hasLedgerRows = await ShopeeAdSpend.exists({ ownerUserId: req.currentUser._id });
+        if (!hasLedgerRows) {
+          const campaigns = await readFromCampaigns(req, fromDate, toDate);
+          return res.json({ campaigns, fromDate, toDate, source: 'campaigns', ledger: ledgerStatus });
+        }
+        const campaigns = await readFromLedger(req, fromDate, toDate);
+        return res.json({ campaigns, fromDate, toDate, source: 'ledger', ledger: { ...ledgerStatus, ready: true, syncing: true } });
       }
 
       await Promise.race([

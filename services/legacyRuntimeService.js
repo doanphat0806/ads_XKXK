@@ -12,6 +12,7 @@ const { registerShopeeSocialAdsRoutes } = require('../routes/shopeeSocialAdsRout
 const { registerShopeeSocialOrdersRoutes } = require('../routes/shopeeSocialOrdersRoutes');
 const { registerShopeeSocialAccountsRoutes } = require('../routes/shopeeSocialAccountsRoutes');
 const { registerShopeeSocialCommissionReceiptsRoutes } = require('../routes/shopeeSocialCommissionReceiptsRoutes');
+const { registerShopeeSocialSettingsRoutes } = require('../routes/shopeeSocialSettingsRoutes');
 const { authenticateApiRequest } = require('../middleware/auth');
 const { setNewAccountSyncHandler } = require('./newAccountSyncService');
 const { markAccountsQueued } = require('./accountSyncProgressService');
@@ -77,8 +78,9 @@ function createLegacyRuntime(app) {
   const ShopeeSocialOrder = require('../models/ShopeeSocialOrder');
   const ShopeeAffAccount = require('../models/ShopeeAffAccount');
   const ShopeeAffCommissionReceipt = require('../models/ShopeeAffCommissionReceipt');
+  const ShopeeSocialSetting = require('../models/ShopeeSocialSetting');
   const { recordCampaignSnapshot, ensureCampaignSnapshotIndexes } = require('./campaignSnapshotService');
-  const { normalizeInventoryProductCode, extractInventoryProductCode, getCampaignSkuCandidates } = require('../utils/productCodeUtils');
+  const { normalizeInventoryProductCode, extractInventoryProductCode, getCampaignSkuCandidates, getCampaignOrderCount } = require('../utils/productCodeUtils');
 
   // Campaigns in this system are created with SubID2 embedded in the campaign name
   // (name = `{sub_id2}{18-char suffix}`) — used to attribute Shopee ad spend back to a
@@ -1365,11 +1367,7 @@ function createLegacyRuntime(app) {
   }
   
   function getOrderCountForCampaignName(campaignName, skuCounts = {}) {
-    for (const skuKey of getCampaignSkuCandidates(campaignName)) {
-      const count = Number(skuCounts[skuKey] || 0);
-      if (count > 0) return count;
-    }
-    return 0;
+    return getCampaignOrderCount(campaignName, skuCounts);
   }
   
   // Don trong ngay khong loc theo tai khoan -> moi tai khoan auto deu doc + dem lai cung 1 tap don.
@@ -4386,6 +4384,7 @@ function createLegacyRuntime(app) {
       ShopeeSocialOrder.createIndexes(),
       ShopeeAffAccount.createIndexes(),
       ShopeeAffCommissionReceipt.createIndexes(),
+      ShopeeSocialSetting.createIndexes(),
       Config.createIndexes(),
       ensureUserIndexes(),
       FacebookToken.createIndexes(),
@@ -4435,6 +4434,10 @@ function createLegacyRuntime(app) {
 
   registerShopeeSocialCommissionReceiptsRoutes(app, {
     ShopeeAffCommissionReceipt
+  });
+
+  registerShopeeSocialSettingsRoutes(app, {
+    ShopeeSocialSetting
   });
 
   // Ban dau quy tac rieng khoa theo Account._id (unique accountId+campaignId); nay khoa

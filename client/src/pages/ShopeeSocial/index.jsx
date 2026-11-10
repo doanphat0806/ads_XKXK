@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 
 import { parseOrdersFile, parseClickReportFile } from './parseFile';
@@ -8,6 +8,7 @@ import {
 } from './calculations';
 import { downloadTextFile, rowsToCsv, buildTaxRateMap } from './utils';
 import { loadState, saveState, clearState } from './storage';
+import { fetchShopeeSocialSettings, saveShopeeSocialSettings, deleteShopeeSocialSettings } from './settingsApi';
 import { fetchAdsSpend, fetchAdsSpendStatus } from './adsSpendApi';
 import AdsSpendLedgerStatus from './components/AdsSpendLedgerStatus';
 import { importOrdersToServer, fetchSavedOrders, deleteSavedOrders } from './ordersApi';
@@ -121,21 +122,43 @@ export default function ShopeeSocial() {
     }
   }
 
+  // JSON cai dat da luu len server gan nhat -> chi PUT khi thuc su thay doi
+  const lastSavedSettingsRef = useRef(null);
+
   useEffect(() => {
     let cancelled = false;
     const local = loadState();
+    // Cai dat tu server (uu tien); chua co tren server thi lay localStorage cu va day len
+    let settings = null;
 
     function restoreFrom(sourceOrders, opts = {}) {
       if (cancelled) return;
       setOrders(sourceOrders);
-      setFileName(opts.fileName || local?.fileName || '');
-      setDefaultCpc(local?.defaultCpc || 0);
-      setCpcBySubId(local?.cpcBySubId || {});
-      setClicksBySubId(local?.clicksBySubId || {});
+      setFileName(opts.fileName || settings?.fileName || local?.fileName || '');
       setFilters({ ...DEFAULT_FILTERS, ...dateRangeOf(sourceOrders) });
     }
 
     (async () => {
+      try {
+        settings = await fetchShopeeSocialSettings();
+        if (settings) {
+          lastSavedSettingsRef.current = JSON.stringify({
+            defaultCpc: Number(settings.defaultCpc || 0),
+            cpcBySubId: settings.cpcBySubId || {},
+            clicksBySubId: settings.clicksBySubId || {},
+            fileName: settings.fileName || ''
+          });
+        }
+      } catch {
+        settings = null;
+      }
+      const source = settings || local;
+      if (!cancelled) {
+        setDefaultCpc(Number(source?.defaultCpc || 0));
+        setCpcBySubId(source?.cpcBySubId || {});
+        setClicksBySubId(source?.clicksBySubId || {});
+      }
+
       try {
         const serverOrders = await fetchSavedOrders();
         if (serverOrders.length) {
@@ -160,6 +183,20 @@ export default function ShopeeSocial() {
     if (!hydrated) return;
     saveState({ orders, fileName, defaultCpc, cpcBySubId, clicksBySubId });
   }, [hydrated, orders, fileName, defaultCpc, cpcBySubId, clicksBySubId]);
+
+  // Luu cai dat len server (debounce 800ms khi dang go CPC/click)
+  useEffect(() => {
+    if (!hydrated) return undefined;
+    const payload = { defaultCpc: Number(defaultCpc || 0), cpcBySubId, clicksBySubId, fileName: fileName || '' };
+    const json = JSON.stringify(payload);
+    if (json === lastSavedSettingsRef.current) return undefined;
+    const timer = setTimeout(() => {
+      saveShopeeSocialSettings(payload)
+        .then(() => { lastSavedSettingsRef.current = json; })
+        .catch(err => toast.error(`Lỗi lưu cài đặt Shopee Social: ${err.message}`));
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [hydrated, defaultCpc, cpcBySubId, clicksBySubId, fileName]);
 
   // Truoc day khoang ngay bi "noi rong" theo moi ngay co ghi tay thuc nhan, nen chon 1 ngay
   // (vd 18/10) van cong ca hoa hong/chi phi Ads cua tat ca cac ngay co thuc nhan vao bang
@@ -204,12 +241,10 @@ export default function ShopeeSocial() {
     return () => clearInterval(timer);
   }, [adsSpendLedger]);
 
-  const applyNewDataset = useCallback((nextOrders, name, nextClicks = {}, nextCpc = {}, nextDefaultCpc = 0) => {
+  // Giu nguyen CPC/click da nhap (da luu DB) khi tai file moi; chi nut "Xoa" moi xoa
+  const applyNewDataset = useCallback((nextOrders, name) => {
     setOrders(nextOrders);
     setFileName(name);
-    setClicksBySubId(nextClicks);
-    setCpcBySubId(nextCpc);
-    setDefaultCpc(nextDefaultCpc);
     setFilters({ ...DEFAULT_FILTERS, ...dateRangeOf(nextOrders) });
   }, []);
 
@@ -226,10 +261,10 @@ export default function ShopeeSocial() {
         // Re-fetch the full merged dataset (all accounts) instead of only showing this
         // upload's rows, so accounts already saved on the server stay visible/filterable.
         const merged = await fetchSavedOrders();
-        applyNewDataset(merged, file.name, {}, {}, 0);
+        applyNewDataset(merged, file.name);
         toast.success(`Đã tải và lưu ${parsed.length} đơn hàng từ "${file.name}" (tài khoản ${accountName})`);
       } catch (syncErr) {
-        applyNewDataset(taggedOrders, file.name, {}, {}, 0);
+        applyNewDataset(taggedOrders, file.name);
         toast.error(`Đã tải ${parsed.length} đơn nhưng lưu vào server thất bại: ${syncErr.message}`);
       }
     } catch (err) {
@@ -272,6 +307,9 @@ export default function ShopeeSocial() {
       setDefaultCpc(0);
       setFilters({ ...DEFAULT_FILTERS, fromDate: todayStr(), toDate: todayStr() });
       clearState();
+      deleteShopeeSocialSettings()
+        .then(() => { lastSavedSettingsRef.current = JSON.stringify({ defaultCpc: 0, cpcBySubId: {}, clicksBySubId: {}, fileName: '' }); })
+        .catch(() => {});
     }
     toast.success('Đã xóa dữ liệu');
   }

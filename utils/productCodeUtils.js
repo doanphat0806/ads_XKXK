@@ -48,8 +48,40 @@ function getCampaignSkuCandidates(campaignName) {
     });
 }
 
+const CAMPAIGN_CODE_TOKEN_RE = /^[A-Z]{1,3}\d{5,}$/;
+
+// Cac ma rieng biet trong ten camp (vd "GS0711377 GS0711436 08/11 TEST").
+// Chi tra ve khi co >= 2 ma; 1 ma thi dung logic getCampaignSkuCandidates nhu cu.
+function getCampaignMultiSkuCodes(campaignName) {
+  const tokens = String(campaignName || '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+  const codes = [...new Set(tokens
+    .map(token => (token.startsWith('MS') && CAMPAIGN_CODE_TOKEN_RE.test(token.slice(2)) ? token.slice(2) : token))
+    .filter(token => CAMPAIGN_CODE_TOKEN_RE.test(token)))];
+  return codes.length >= 2 ? codes : [];
+}
+
+// So don cua camp: camp nhieu ma -> cong don cua tat ca cac ma
+function getCampaignOrderCount(campaignName, skuCounts = {}) {
+  if (!campaignName || !skuCounts) return 0;
+  const countOf = key => Number(skuCounts[key] || 0);
+  const multiCodes = getCampaignMultiSkuCodes(campaignName);
+  if (multiCodes.length) {
+    return multiCodes.reduce((sum, code) => {
+      const key = [`MS${code}`, code].find(candidate => countOf(candidate) > 0);
+      return sum + (key ? countOf(key) : 0);
+    }, 0);
+  }
+  for (const skuKey of getCampaignSkuCandidates(campaignName)) {
+    const count = countOf(skuKey);
+    if (count > 0) return count;
+  }
+  return 0;
+}
+
 module.exports = {
   normalizeInventoryProductCode,
   extractInventoryProductCode,
-  getCampaignSkuCandidates
+  getCampaignSkuCandidates,
+  getCampaignMultiSkuCodes,
+  getCampaignOrderCount
 };

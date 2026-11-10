@@ -7,6 +7,7 @@ import ColumnSettingsModal from '../components/ColumnSettingsModal';
 import ColumnPresetMenu from '../components/ColumnPresetMenu';
 import AdsManagerChildren from './AdsManagerChildren';
 import { loadXlsx } from '../utils/loadXlsx';
+import { getCampaignOrderCount } from '../utils/campaignSku';
 import { META_EXTRA_COLUMNS, META_EXTRA_COLUMN_BY_ID } from '../utils/metaExtraColumns';
 import {
   Megaphone,
@@ -130,16 +131,6 @@ function getCampaignSelectionKey(campaign) {
   const campaignId = String(campaign?.campaignId || '').trim();
   return accountId && campaignId ? `${accountId}:${campaignId}` : '';
 }
-
-const getCampaignSkuCandidates = (campaignName) => {
-  const rawName = String(campaignName || '').toUpperCase().trim();
-  const compactName = rawName.replace(/\s+/g, '');
-  const firstNineChars = rawName.slice(0, 9).replace(/\s+/g, '');
-  const firstToken = rawName.split(/\s+/)[0]?.replace(/\s+/g, '') || '';
-
-  return [...new Set([firstNineChars, firstToken, compactName].filter(Boolean))]
-    .map(code => `MS${code}`);
-};
 
 const formatPercent = (value) => `${(Number(value || 0) * 100).toFixed(2).replace('.', ',')}%`;
 const formatDateTime = (value) => {
@@ -427,12 +418,7 @@ export default function Campaigns() {
   }, [filterFromDate, filterToDate, provider]);
 
   const getOrderCountForCampaign = useCallback((campaignName) => {
-    if (!campaignName || !skuCounts) return 0;
-    for (const skuKey of getCampaignSkuCandidates(campaignName)) {
-      const count = Number(skuCounts[skuKey] || 0);
-      if (count > 0) return count;
-    }
-    return 0;
+    return getCampaignOrderCount(campaignName, skuCounts);
   }, [skuCounts]);
 
   useEffect(() => {
