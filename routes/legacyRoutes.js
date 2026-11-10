@@ -3,6 +3,7 @@
 const registerPageRoutes = require('./pageRoutes');
 const { getDealStopRows } = require('../services/dealStopRowsService');
 const { trackJob } = require('../utils/perfMonitor');
+const { scheduleNewAccountHistorySync } = require('../services/newAccountSyncService');
 const { buildMetaExtraGroupFields, buildMetaExtraProjectField, compactMetaExtraRows } = require('../utils/metaExtraMetrics');
 
 function registerLegacyRoutes(app, deps = {}) {
@@ -201,6 +202,7 @@ app.post('/api/accounts', async (req, res) => {
       await addLog(account._id, account.name, 'error', `Loi ket noi: ${error.message}`);
     }
 
+    scheduleNewAccountHistorySync([account._id]);
     res.json(account);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -392,6 +394,7 @@ app.post('/api/accounts/auto-discover', async (req, res) => {
       );
       tokenUpdated = Number(updateResult?.modifiedCount || 0);
     }
+    scheduleNewAccountHistorySync(created.map(item => item.id));
     console.log(`[auto-discover] done provider=${provider} found=${finalAdAccounts.length} created=${created.length} skipped=${skipped.length} tokenUpdated=${tokenUpdated} after ${Date.now() - startedAt}ms`);
 
     res.json({
@@ -455,6 +458,7 @@ app.post('/api/accounts/bulk', async (req, res) => {
       }
     }
 
+    scheduleNewAccountHistorySync(created.map(item => item.id));
     res.json({ ok: true, created, errors });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2371,7 +2375,17 @@ async function processCampaignSyncHistoryJob(data = {}, onProgress = null) {
   if (!accounts.length) throw new Error('Khong tim thay tai khoan can dong bo');
 
   const dates = assertPastCampaignSyncRange(fromDate, toDate);
-  const totalSteps = Math.max(1, accounts.length * dates.length);
+  // chunkDays > 1 (vd dong bo tron doi TK moi): moi lan goi Facebook lay ca khoi ngay, khong prune.
+  // Mac dinh 1 = tung ngay + prune nhu dong bo thu cong.
+  const chunkDays = Math.max(1, Math.min(90, parseInt(data.chunkDays, 10) || 1));
+  const ranges = [];
+  for (let i = 0; i < dates.length; i += chunkDays) {
+    const chunk = dates.slice(i, i + chunkDays);
+    ranges.push({ from: chunk[0], to: chunk[chunk.length - 1], size: chunk.length });
+  }
+  // Dong bo theo khoi: lam ngay gan nhat truoc de bao cao gan day co so lieu som
+  if (chunkDays > 1) ranges.reverse();
+  const totalSteps = Math.max(1, accounts.length * ranges.length);
   const baseProgress = {
     state: 'active',
     accountId: accountId ? String(accounts[0]._id) : '',
@@ -2397,8 +2411,10 @@ async function processCampaignSyncHistoryJob(data = {}, onProgress = null) {
 
   for (let accountIndex = 0; accountIndex < accounts.length; accountIndex += 1) {
     const account = accounts[accountIndex];
-    for (let index = 0; index < dates.length; index += 1) {
-      const dateKey = dates[index];
+    let accountCompletedDays = 0;
+    for (const range of ranges) {
+      const isSingleDay = range.from === range.to;
+      const rangeLabel = isSingleDay ? `ngay ${range.from}` : `${range.from} -> ${range.to}`;
       if (onProgress) {
         await onProgress({
           ...baseProgress,
@@ -2407,20 +2423,21 @@ async function processCampaignSyncHistoryJob(data = {}, onProgress = null) {
           completedAccounts: accountIndex,
           syncedRows,
           errors,
-          currentDay: dateKey,
-          completedDays: index,
+          currentDay: isSingleDay ? range.from : `${range.from}..${range.to}`,
+          completedDays: accountCompletedDays,
           percent: Math.round((completedSteps / totalSteps) * 100)
         });
       }
 
       try {
-        const count = await syncAccountHistoricalData(account, dateKey, dateKey, { prune: true });
+        const count = await syncAccountHistoricalData(account, range.from, range.to, { prune: isSingleDay });
         syncedRows += count;
-        await addLog(account._id, account.name, 'success', `Dong bo ngay ${dateKey}: ${count} camp`);
+        await addLog(account._id, account.name, 'success', `Dong bo ${rangeLabel}: ${count} camp`);
       } catch (error) {
-        errors.push({ accountId: String(account._id), accountName: account.name, date: dateKey, error: error.message });
-        await addLog(account._id, account.name, 'error', `Loi dong bo ngay ${dateKey}: ${error.message}`);
+        errors.push({ accountId: String(account._id), accountName: account.name, date: isSingleDay ? range.from : `${range.from}..${range.to}`, error: error.message });
+        await addLog(account._id, account.name, 'error', `Loi dong bo ${rangeLabel}: ${error.message}`);
       }
+      accountCompletedDays += range.size;
 
       completedSteps += 1;
       if (completedSteps < totalSteps && CAMPAIGN_SYNC_DAY_DELAY_MS > 0) {

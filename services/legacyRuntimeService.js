@@ -13,6 +13,7 @@ const { registerShopeeSocialOrdersRoutes } = require('../routes/shopeeSocialOrde
 const { registerShopeeSocialAccountsRoutes } = require('../routes/shopeeSocialAccountsRoutes');
 const { registerShopeeSocialCommissionReceiptsRoutes } = require('../routes/shopeeSocialCommissionReceiptsRoutes');
 const { authenticateApiRequest } = require('../middleware/auth');
+const { setNewAccountSyncHandler } = require('./newAccountSyncService');
 const { parseBoundedInt } = require('../utils/number');
 const { applyCampaignRuleLimits } = require('../utils/campaignRuleLimits');
 const {
@@ -187,6 +188,8 @@ function createLegacyRuntime(app) {
     CAMPAIGN_SYNC_JOB_ATTEMPTS,
     CAMPAIGN_SYNC_JOB_BACKOFF_MS,
     CAMPAIGN_SYNC_DAY_DELAY_MS,
+    NEW_ACCOUNT_HISTORY_SYNC_DAYS,
+    NEW_ACCOUNT_HISTORY_SYNC_CHUNK_DAYS,
     ORDER_SHEET_SYNC_QUEUE_NAME,
     ORDER_SHEET_SYNC_QUEUE_CONCURRENCY,
     ORDER_SHEET_SYNC_JOB_ATTEMPTS,
@@ -4152,6 +4155,78 @@ function createLegacyRuntime(app) {
   
   let legacyRoutesRuntime = null;
   legacyRoutesRuntime = registerLegacyRoutes(app, createLegacyRouteContext());
+
+  // Dong bo lich su cho TKQC vua them: co Redis thi day vao queue campaign-sync-history,
+  // khong thi chay ngam tuan tu tung tai khoan (khong chan request them tai khoan).
+  let newAccountHistorySyncChain = Promise.resolve();
+
+  async function runNewAccountHistorySync(accountIds = []) {
+    if (!isMongoReady()) return;
+    const accounts = await Account.find({ _id: { $in: accountIds } });
+    if (!accounts.length) return;
+
+    // Hom nay: dong bo ngay de khong phai doi timer 2-5 phut
+    for (const account of accounts) {
+      syncTodayCampaignSpendForAccount(account)
+        .catch(error => console.warn(`[new-account-sync] today ${account.name}: ${error.message}`));
+    }
+
+    const maxDays = NEW_ACCOUNT_HISTORY_SYNC_DAYS;
+    if (!maxDays) return;
+    const earliestDate = dateKeyFromVnOffset(-maxDays);
+    const toDate = dateKeyFromVnOffset(-1);
+
+    for (const account of accounts) {
+      // "Tron doi": bat dau tu ngay tao TKQC (neu lay duoc), khong som hon gioi han Facebook
+      let fromDate = earliestDate;
+      try {
+        const { fbToken } = await getEffectiveSecrets(account);
+        const acctId = String(account.adAccountId || '').startsWith('act_') ? account.adAccountId : `act_${account.adAccountId}`;
+        const info = await fbGet(fbToken, acctId, { fields: 'created_time' });
+        const createdMs = Date.parse(String(info?.created_time || ''));
+        // Doi sang ngay theo gio VN (UTC+7)
+        const createdKey = Number.isFinite(createdMs) ? new Date(createdMs + 7 * 60 * 60 * 1000).toISOString().slice(0, 10) : '';
+        if (/^\d{4}-\d{2}-\d{2}$/.test(createdKey) && createdKey > fromDate) fromDate = createdKey;
+      } catch (error) {
+        console.warn(`[new-account-sync] khong lay duoc created_time ${account.name}: ${error.message}`);
+      }
+      if (fromDate > toDate) continue; // TK tao hom nay: chi can dong bo hom nay
+
+      const payload = {
+        fromDate,
+        toDate,
+        provider: normalizeProvider(account.provider),
+        accountId: String(account._id),
+        totalDays: Math.round((Date.parse(`${toDate}T00:00:00Z`) - Date.parse(`${fromDate}T00:00:00Z`)) / 86400000) + 1,
+        chunkDays: NEW_ACCOUNT_HISTORY_SYNC_CHUNK_DAYS,
+        source: 'new-account'
+      };
+      if (account.ownerUserId) payload.ownerUserId = account.ownerUserId;
+
+      await addLog(account._id, account.name, 'info', `Tai khoan moi: tu dong dong bo du lieu ${fromDate} -> ${toDate}`);
+
+      if (campaignSyncQueue) {
+        try {
+          await campaignSyncQueue.add('sync-history', payload, { jobId: `new-account-${account._id}-${fromDate}` });
+          startCampaignSyncWorker();
+          continue;
+        } catch (error) {
+          console.warn(`[new-account-sync] queue loi, chay ngam: ${error.message}`);
+        }
+      }
+
+      newAccountHistorySyncChain = newAccountHistorySyncChain
+        .then(async () => {
+          if (!isMongoReady()) return;
+          const result = await legacyRoutesRuntime.processCampaignSyncHistoryJob(payload);
+          scheduleCampaignReadCacheClear();
+          console.log(`[new-account-sync] ${account.name}: ${result.syncedRows} dong, ${result.errors.length} loi`);
+        })
+        .catch(error => console.error(`[new-account-sync] ${account.name}: ${error.message}`));
+    }
+  }
+
+  setNewAccountSyncHandler(runNewAccountHistorySync);
   
   async function cleanupCampaignDailyDuplicates() {
     const duplicateGroups = await Campaign.aggregate([

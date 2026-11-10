@@ -51,6 +51,12 @@ module.exports = {
   CAMPAIGN_SYNC_JOB_ATTEMPTS: parseBoundedInt(process.env.CAMPAIGN_SYNC_JOB_ATTEMPTS, 1, 1, 5),
   CAMPAIGN_SYNC_JOB_BACKOFF_MS: parseBoundedInt(process.env.CAMPAIGN_SYNC_JOB_BACKOFF_MS, 30000, 1000, 300000),
   CAMPAIGN_SYNC_DAY_DELAY_MS: parseBoundedInt(process.env.CAMPAIGN_SYNC_DAY_DELAY_MS, 300, 0, 10000),
+  // So ngay toi da truoc hom nay se tu dong dong bo khi vua them TKQC moi (0 = tat).
+  // Mac dinh "tron doi": 1110 ngay ~ 37 thang = gioi han insights cua Facebook; thuc te bat dau
+  // tu ngay tao TKQC (created_time) neu moi hon.
+  NEW_ACCOUNT_HISTORY_SYNC_DAYS: parseBoundedInt(process.env.NEW_ACCOUNT_HISTORY_SYNC_DAYS, 1110, 0, 1110),
+  // So ngay moi lan goi Facebook khi dong bo TK moi (khoi lon = it request hon)
+  NEW_ACCOUNT_HISTORY_SYNC_CHUNK_DAYS: parseBoundedInt(process.env.NEW_ACCOUNT_HISTORY_SYNC_CHUNK_DAYS, 30, 1, 90),
   ORDER_SHEET_SYNC_QUEUE_NAME: process.env.ORDER_SHEET_SYNC_QUEUE_NAME || 'order-sheet-sync',
   ORDER_SHEET_SYNC_QUEUE_CONCURRENCY: parseBoundedInt(process.env.ORDER_SHEET_SYNC_QUEUE_CONCURRENCY, 1, 1, 3),
   ORDER_SHEET_SYNC_JOB_ATTEMPTS: parseBoundedInt(process.env.ORDER_SHEET_SYNC_JOB_ATTEMPTS, 2, 1, 5),

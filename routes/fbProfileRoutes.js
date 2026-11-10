@@ -10,6 +10,7 @@ const FbProfile = require('../models/FbProfile');
 const { fetchAllFbEdge } = require('../utils/fbApi');
 const { clearAllReadCache } = require('../utils/cacheManager');
 const { getAppConfig } = require('../services/configService');
+const { scheduleNewAccountHistorySync } = require('../services/newAccountSyncService');
 const {
   normalizeProvider,
   buildAccountProviderFilter,
@@ -184,6 +185,7 @@ router.post('/:id/import', async (req, res) => {
     }
 
     clearAllReadCache();
+    scheduleNewAccountHistorySync(created.map(item => item.id));
     res.json({
       ok: true,
       created,
