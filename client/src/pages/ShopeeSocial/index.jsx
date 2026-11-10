@@ -52,6 +52,8 @@ export default function ShopeeSocial() {
   const [hydrated, setHydrated] = useState(false);
   const [adsSpendCampaigns, setAdsSpendCampaigns] = useState([]);
   const [adsSpendLoading, setAdsSpendLoading] = useState(false);
+  // Tang len sau khi them / sua / xoa acc Shopee: server da gan lai acc cho tung dong chi phi -> tai lai
+  const [adsSpendReloadToken, setAdsSpendReloadToken] = useState(0);
   const [shopeeAccounts, setShopeeAccounts] = useState([]);
   const [shopeeAdAccounts, setShopeeAdAccounts] = useState([]);
   const [commissionReceipts, setCommissionReceipts] = useState([]);
@@ -86,6 +88,7 @@ export default function ShopeeSocial() {
     try {
       const account = await createShopeeAffAccount(name, subIdPrefix, adAccountIds, taxRate);
       setShopeeAccounts(prev => (prev.some(a => a._id === account._id) ? prev : [...prev, account].sort((a, b) => a.name.localeCompare(b.name))));
+      setAdsSpendReloadToken(token => token + 1);
       return account;
     } catch (err) {
       toast.error(`Lỗi tạo tài khoản: ${err.message}`);
@@ -97,6 +100,7 @@ export default function ShopeeSocial() {
     try {
       const account = await updateShopeeAffAccount(id, patch);
       setShopeeAccounts(prev => prev.map(a => (a._id === id ? account : a)));
+      setAdsSpendReloadToken(token => token + 1);
       return account;
     } catch (err) {
       toast.error(`Lỗi cập nhật tài khoản: ${err.message}`);
@@ -108,6 +112,7 @@ export default function ShopeeSocial() {
     try {
       await deleteShopeeAffAccount(id);
       setShopeeAccounts(prev => prev.filter(a => a._id !== id));
+      setAdsSpendReloadToken(token => token + 1);
     } catch (err) {
       toast.error(`Lỗi xóa tài khoản: ${err.message}`);
     }
@@ -178,7 +183,7 @@ export default function ShopeeSocial() {
       .catch(err => { if (!cancelled) toast.error(`Lỗi tải chi phí Ads: ${err.message}`); })
       .finally(() => { if (!cancelled) setAdsSpendLoading(false); });
     return () => { cancelled = true; };
-  }, [orders.length, widenedDateRange.fromDate, widenedDateRange.toDate]);
+  }, [orders.length, widenedDateRange.fromDate, widenedDateRange.toDate, adsSpendReloadToken]);
 
   const applyNewDataset = useCallback((nextOrders, name, nextClicks = {}, nextCpc = {}, nextDefaultCpc = 0) => {
     setOrders(nextOrders);

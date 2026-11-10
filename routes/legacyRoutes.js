@@ -5,6 +5,7 @@ const { getDealStopRows } = require('../services/dealStopRowsService');
 const { trackJob } = require('../utils/perfMonitor');
 const { scheduleNewAccountHistorySync } = require('../services/newAccountSyncService');
 const { setAccountSyncProgress, markAccountsQueued } = require('../services/accountSyncProgressService');
+const { snapshotAccountsToLedger } = require('../services/shopeeAdSpendLedgerService');
 const { buildMetaExtraGroupFields, buildMetaExtraProjectField, compactMetaExtraRows } = require('../utils/metaExtraMetrics');
 
 function registerLegacyRoutes(app, deps = {}) {
@@ -517,6 +518,12 @@ app.delete('/api/accounts/:id', async (req, res) => {
     const filter = withUserFilter(req, { _id: req.params.id });
     if (provider) Object.assign(filter, buildAccountProviderFilter(provider));
 
+    const existing = await Account.findOne(filter).select('_id').lean();
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    // Chep chi phi ads Shopee cua TK sang so cai ShopeeAdSpend TRUOC khi xoa Campaign
+    // (bao cao Shopee Social doc so cai -> chi phi cac ngay truoc van con). Loi thi khong xoa.
+    await snapshotAccountsToLedger([existing._id]);
+
     const account = await Account.findOneAndDelete(filter);
     if (!account) return res.status(404).json({ error: 'Not found' });
 
@@ -594,6 +601,9 @@ app.post('/api/accounts/delete-bulk', async (req, res) => {
     for (const id of matchedIds) {
       stopAccountScheduler(id);
     }
+
+    // Giu chi phi ads Shopee: chep sang so cai ShopeeAdSpend truoc khi xoa (loi thi khong xoa)
+    if (matchedIds.length) await snapshotAccountsToLedger(matchedIds);
 
     const accResult = matchedIds.length
       ? await Account.deleteMany({ _id: { $in: matchedIds } })

@@ -27,23 +27,33 @@ export function subIdMatchesAccountCodes(subId2, codesCsv) {
 //    account's default pool, without having to edit their configs too.
 export function resolveAdAccountScope(shopeeAccounts, accountName) {
   const account = (shopeeAccounts || []).find(a => a.name === accountName);
+  // affId: dung de so voi acc da gan san tren tung dong chi phi (server, so cai ShopeeAdSpend)
+  const affId = account?._id ? String(account._id) : '';
   const explicitIds = (account?.adAccountIds || []).map(String);
-  if (explicitIds.length) return { explicit: true, ids: new Set(explicitIds) };
+  if (explicitIds.length) return { affId, explicit: true, ids: new Set(explicitIds) };
 
   const claimed = new Set();
   (shopeeAccounts || []).forEach(a => {
     if (a.name === accountName) return;
     (a.adAccountIds || []).forEach(id => claimed.add(String(id)));
   });
-  return { explicit: false, claimed };
+  return { affId, explicit: false, claimed };
 }
 
 // A single ads-spend campaign row ({ accountId, subId2, date, spend, clicks }) belongs to
 // an account if it falls within that account's resolved ad-account scope — and, for the
 // default (non-explicit) scope, its SubID2 also matches the account's configured codes.
 // `scope === null` means "no account filter" (used for the "all accounts" view).
+//
+// Server da gan san moi dong chi phi cho DUNG 1 acc Shopee (shopeeAffAccountId, cung quy tac
+// ben duoi nhung chon 1 acc khi nhieu acc trung / long ma SubID) -> dung truong do de moi
+// khoan chi phi chi tinh cho 1 acc, khong bi tinh lap. Dong chua gan ('') khong thuoc acc nao
+// (chi hien o che do "tat ca"). Du lieu cu khong co truong nay thi tinh theo quy tac cu.
 export function campaignBelongsToScope(campaign, scope, subIdPrefix) {
   if (!scope) return true;
+  if (campaign && typeof campaign.shopeeAffAccountId === 'string') {
+    return Boolean(scope.affId) && campaign.shopeeAffAccountId === scope.affId;
+  }
   if (scope.explicit) return scope.ids.has(String(campaign.accountId));
   if (scope.claimed.has(String(campaign.accountId))) return false;
   return subIdMatchesAccountCodes(campaign.subId2, subIdPrefix);

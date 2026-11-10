@@ -7,6 +7,7 @@ const path = require('path');
 const { registerFacebookLoginRoutes } = require('./routes/facebookLoginRoutes');
 const { createLegacyRuntime } = require('./services/legacyRuntimeService');
 const { startPosOrderSync, stopPosOrderSync } = require('./services/posOrderService');
+const { startShopeeAdSpendLedger, stopShopeeAdSpendLedger } = require('./services/shopeeAdSpendLedgerService');
 const { startPerfMonitor, requestTimingMiddleware } = require('./utils/perfMonitor');
 
 const app = express();
@@ -84,6 +85,8 @@ mongoose.connect(MONGO_URI).then(async () => {
     await legacyRuntime.bootstrapFacebookToken();
     await legacyRuntime.initializeQueues();
     legacyRuntime.startCronTasks();
+    // So cai chi phi ads Shopee Social: giu chi phi ca khi xoa TKQC
+    startShopeeAdSpendLedger();
     await legacyRuntime.resumeAutoAccounts();
   })().catch(error => {
     console.error(`Background startup failed: ${error.message}`);
@@ -96,6 +99,7 @@ mongoose.connect(MONGO_URI).then(async () => {
 async function gracefulShutdown(signal) {
   console.log(`Shutting down gracefully (${signal})...`);
   stopPosOrderSync();
+  stopShopeeAdSpendLedger();
   await legacyRuntime.shutdown();
   await mongoose.connection.close();
   process.exit(0);

@@ -1,4 +1,15 @@
 const mongoose = require('mongoose');
+const { reassignAffAccountsForOwner } = require('../services/shopeeAdSpendLedgerService');
+
+// Doi cau hinh acc AFF (ma SubID / TKQC chon / ten / xoa) -> gan lai acc cho so cai chi phi ads,
+// vi trang Shopee Social tinh chi phi tung acc theo acc da gan (moi khoan chi phi chi thuoc 1 acc).
+async function reassignLedgerSafely(ownerUserId) {
+  try {
+    await reassignAffAccountsForOwner(ownerUserId);
+  } catch (error) {
+    console.error(`[ShopeeSocial] gan lai acc cho chi phi ads loi: ${error.message}`);
+  }
+}
 
 // Manages the user's list of Shopee Affiliate account names, so the Shopee Social
 // upload panel can offer a dropdown of accounts to tag an import with instead of
@@ -59,6 +70,7 @@ function registerShopeeSocialAccountsRoutes(app, deps = {}) {
         update,
         { upsert: true, new: true }
       );
+      await reassignLedgerSafely(ownerUserId);
       res.json({ account });
     } catch (err) {
       console.error('[ShopeeSocial] Error creating account:', err);
@@ -115,6 +127,7 @@ function registerShopeeSocialAccountsRoutes(app, deps = {}) {
         ]);
       }
 
+      await reassignLedgerSafely(ownerUserId);
       res.json({ account });
     } catch (err) {
       console.error('[ShopeeSocial] Error updating account:', err);
@@ -127,6 +140,7 @@ function registerShopeeSocialAccountsRoutes(app, deps = {}) {
       if (!req.currentUser?._id) return res.status(401).json({ error: 'Unauthorized' });
 
       const result = await ShopeeAffAccount.deleteOne({ _id: req.params.id, ownerUserId: req.currentUser._id });
+      await reassignLedgerSafely(req.currentUser._id);
       res.json({ ok: true, deleted: result.deletedCount });
     } catch (err) {
       console.error('[ShopeeSocial] Error deleting account:', err);
