@@ -17,11 +17,57 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Cac loai gioi han cua Facebook - moi loai tinh RIENG, nen trang "Gioi han toc do" cua app
+// con han muc (vd app 59%) van co the bi chan o cap khac (user/token, tung TKQC, Insights...).
+const FB_RATE_LIMIT_LABELS = {
+  4: 'gioi han cap UNG DUNG (#4)',
+  17: 'gioi han cap NGUOI DUNG / token VIA (#17)',
+  32: 'gioi han cap TRANG (#32)',
+  613: 'goi qua nhieu lan trong thoi gian ngan (#613)',
+  80000: 'gioi han Ads Insights cua TKQC (#80000)',
+  80003: 'gioi han Custom Audience cua TKQC (#80003)',
+  80004: 'gioi han Ads Management cua TKQC (#80004)',
+  80014: 'gioi han Catalog batch (#80014)'
+};
+
 function isFbRateLimitResponse(data) {
   const apiError = data?.error || {};
   const code = Number(apiError.code);
   const subcode = Number(apiError.error_subcode);
-  return [4, 17, 32, 613, 80004].includes(code) || subcode === 2446079;
+  return Object.prototype.hasOwnProperty.call(FB_RATE_LIMIT_LABELS, code) || subcode === 2446079;
+}
+
+// Header x-business-use-case-usage / x-ad-account-usage cho biet bao lau mo lai (phut)
+function getRegainAccessMinutes(headers = {}) {
+  let minutes = 0;
+  try {
+    const buc = headers['x-business-use-case-usage'];
+    if (buc) {
+      const parsed = typeof buc === 'string' ? JSON.parse(buc) : buc;
+      for (const items of Object.values(parsed || {})) {
+        for (const item of Array.isArray(items) ? items : []) {
+          minutes = Math.max(minutes, Number(item?.estimated_time_to_regain_access) || 0);
+        }
+      }
+    }
+    const adAccount = headers['x-ad-account-usage'];
+    if (adAccount) {
+      const parsed = typeof adAccount === 'string' ? JSON.parse(adAccount) : adAccount;
+      const resetSeconds = Number(parsed?.reset_time_duration) || 0;
+      minutes = Math.max(minutes, Math.ceil(resetSeconds / 60));
+    }
+  } catch {
+    // header la -> bo qua
+  }
+  return minutes;
+}
+
+function describeFbRateLimit(data, headers) {
+  const apiError = data?.error || {};
+  const code = Number(apiError.code);
+  const label = FB_RATE_LIMIT_LABELS[code] || `gioi han API (#${code || '?'}${apiError.error_subcode ? `/${apiError.error_subcode}` : ''})`;
+  const minutes = getRegainAccessMinutes(headers);
+  return `${label}${minutes ? `, Facebook bao mo lai sau ~${minutes} phut` : ''}`;
 }
 
 function isTransientFbResponse(status, data) {
@@ -37,7 +83,7 @@ function getFbRetryDelayMs(error, attempt) {
   return 700 * Math.pow(2, attempt);
 }
 
-function buildFbRequestError(method, status, data, fallbackMessage) {
+function buildFbRequestError(method, status, data, fallbackMessage, headers = {}) {
   const message = data?.error?.message || fallbackMessage;
   if (Number(status) === 400 && Number(data?.error?.code) === 190) {
     const tokenError = new Error(`Token het han hoac khong hop le: ${message}`);
@@ -49,10 +95,11 @@ function buildFbRequestError(method, status, data, fallbackMessage) {
 
   const rateLimited = isFbRateLimitResponse(data);
   const error = new Error(rateLimited
-    ? `FB ${method} bi gioi han API cua tai khoan quang cao. Da tu cho va thu lai; neu van loi hay doi vai phut roi nhan tiep.`
+    ? `FB ${method} bi ${describeFbRateLimit(data, headers)}. Da tu cho va thu lai; neu van loi hay doi roi thu tiep.`
     : `FB ${method} ${status || 'ERR'}: ${JSON.stringify(data) || fallbackMessage}`);
   error.status = status;
   error.fbData = data;
+  error.fbCode = Number(data?.error?.code) || null;
   error.transient = isTransientFbResponse(status, data);
   error.rateLimited = rateLimited;
   return error;
@@ -100,7 +147,7 @@ async function fbGet(token, resourcePath, params = {}, options = {}) {
       const response = await axios.get(url, { params: { access_token: token, ...params }, timeout: 30000 });
       return response.data;
     } catch (error) {
-      lastError = buildFbRequestError('GET', error.response?.status, error.response?.data, error.message);
+      lastError = buildFbRequestError('GET', error.response?.status, error.response?.data, error.message, error.response?.headers);
       const retryLimit = lastError.rateLimited ? rateLimitRetries : retries;
       if (!lastError.transient || attempt >= retryLimit) break;
       await sleep(getFbRetryDelayMs(lastError, attempt));
@@ -122,7 +169,7 @@ async function fbGetUrl(url, options = {}) {
       const response = await axios.get(url, { timeout });
       return response.data;
     } catch (error) {
-      lastError = buildFbRequestError('GET', error.response?.status, error.response?.data, error.message);
+      lastError = buildFbRequestError('GET', error.response?.status, error.response?.data, error.message, error.response?.headers);
       const retryLimit = lastError.rateLimited ? rateLimitRetries : retries;
       if (!lastError.transient || attempt >= retryLimit) break;
       await sleep(getFbRetryDelayMs(lastError, attempt));
@@ -144,7 +191,7 @@ async function fbPost(token, resourcePath, body = {}, options = {}) {
       const response = await axios.post(url, { access_token: token, ...body }, { timeout: 30000 });
       return response.data;
     } catch (error) {
-      lastError = buildFbRequestError('POST', error.response?.status, error.response?.data, error.message);
+      lastError = buildFbRequestError('POST', error.response?.status, error.response?.data, error.message, error.response?.headers);
       const retryLimit = lastError.rateLimited ? rateLimitRetries : retries;
       if (!lastError.transient || attempt >= retryLimit) break;
       await sleep(getFbRetryDelayMs(lastError, attempt));

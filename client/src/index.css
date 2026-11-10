@@ -7911,3 +7911,34 @@
   outline: 2px solid #0d6e52;
   outline-offset: 1px;
 }
+
+/* Trang thai so cai chi phi ads (trang Shopee Social) */
+.shopee-ledger-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+
+.shopee-ledger-status.pending {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #92400e;
+}
+
+.shopee-ledger-status.ok {
+  background: rgba(13, 110, 82, 0.06);
+  border-color: rgba(13, 110, 82, 0.2);
+  color: #0d6e52;
+}
+
+.shopee-ledger-status.error {
+  background: rgba(225, 29, 72, 0.06);
+  border-color: rgba(225, 29, 72, 0.25);
+  color: #be123c;
+}

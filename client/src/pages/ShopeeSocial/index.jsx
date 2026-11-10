@@ -8,7 +8,8 @@ import {
 } from './calculations';
 import { downloadTextFile, rowsToCsv, buildTaxRateMap } from './utils';
 import { loadState, saveState, clearState } from './storage';
-import { fetchAdsSpend } from './adsSpendApi';
+import { fetchAdsSpend, fetchAdsSpendStatus } from './adsSpendApi';
+import AdsSpendLedgerStatus from './components/AdsSpendLedgerStatus';
 import { importOrdersToServer, fetchSavedOrders, deleteSavedOrders } from './ordersApi';
 import { fetchShopeeAffAccounts, createShopeeAffAccount, updateShopeeAffAccount, deleteShopeeAffAccount, fetchShopeeAdAccounts } from './accountsApi';
 import { fetchCommissionReceipts, createCommissionReceipt, deleteCommissionReceipt } from './commissionReceiptsApi';
@@ -54,6 +55,8 @@ export default function ShopeeSocial() {
   const [adsSpendLoading, setAdsSpendLoading] = useState(false);
   // Tang len sau khi them / sua / xoa acc Shopee: server da gan lai acc cho tung dong chi phi -> tai lai
   const [adsSpendReloadToken, setAdsSpendReloadToken] = useState(0);
+  // Trang thai so cai chi phi ads (dang luu / da luu xong)
+  const [adsSpendLedger, setAdsSpendLedger] = useState(null);
   const [shopeeAccounts, setShopeeAccounts] = useState([]);
   const [shopeeAdAccounts, setShopeeAdAccounts] = useState([]);
   const [commissionReceipts, setCommissionReceipts] = useState([]);
@@ -176,14 +179,30 @@ export default function ShopeeSocial() {
     let cancelled = false;
     setAdsSpendLoading(true);
     fetchAdsSpend(widenedDateRange.fromDate, widenedDateRange.toDate)
-      .then(({ campaigns }) => {
+      .then(({ campaigns, ledger }) => {
         if (cancelled) return;
         setAdsSpendCampaigns(campaigns);
+        if (ledger) setAdsSpendLedger(ledger);
       })
       .catch(err => { if (!cancelled) toast.error(`Lỗi tải chi phí Ads: ${err.message}`); })
       .finally(() => { if (!cancelled) setAdsSpendLoading(false); });
     return () => { cancelled = true; };
   }, [orders.length, widenedDateRange.fromDate, widenedDateRange.toDate, adsSpendReloadToken]);
+
+  // So cai dang chep toan bo lan dau: hoi trang thai moi 5s, xong thi tai lai chi phi tu so cai
+  useEffect(() => {
+    if (!adsSpendLedger || adsSpendLedger.ready) return undefined;
+    const timer = setInterval(async () => {
+      try {
+        const result = await fetchAdsSpendStatus();
+        setAdsSpendLedger(result?.ledger || null);
+        if (result?.ledger?.ready) setAdsSpendReloadToken(token => token + 1);
+      } catch {
+        // bo qua, lan sau hoi lai
+      }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [adsSpendLedger]);
 
   const applyNewDataset = useCallback((nextOrders, name, nextClicks = {}, nextCpc = {}, nextDefaultCpc = 0) => {
     setOrders(nextOrders);
@@ -522,6 +541,8 @@ export default function ShopeeSocial() {
               <span style={{ marginLeft: 6, color: 'var(--muted2)' }}>đ/click</span>
             </label>
           </div>
+
+          <AdsSpendLedgerStatus ledger={adsSpendLedger} />
 
           <SubIdMatrix
             rows={matrixRows}

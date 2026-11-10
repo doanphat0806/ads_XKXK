@@ -8,5 +8,11 @@ import { api } from '../../lib/api';
 export async function fetchAdsSpend(fromDate, toDate) {
   if (!fromDate || !toDate) return { campaigns: [] };
   const result = await api('GET', `/shopee-social/ads-spend?from=${fromDate}&to=${toDate}`);
-  return { campaigns: result?.campaigns || [] };
+  // ledger: trang thai so cai chi phi ads (da luu xong chua), source: 'ledger' | 'campaigns'
+  return { campaigns: result?.campaigns || [], ledger: result?.ledger || null, source: result?.source || '' };
+}
+
+// Trang thai so cai chi phi ads Shopee (luu xong chua, bao nhieu dong, luu luc nao)
+export async function fetchAdsSpendStatus() {
+  return api('GET', '/shopee-social/ads-spend/status');
 }
