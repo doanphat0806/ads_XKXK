@@ -1577,6 +1577,64 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
   }
 });
 
+// "Hien tat ca camp" (trang Chien dich): moi camp da luu cua cac tai khoan, lay ban ghi MOI NHAT
+// (ten / trang thai / ngan sach hien tai), chi so = 0. Merge vao ket qua theo khoang ngay bang
+// mergeCampaignReportRows -> camp co du lieu trong ngay giu chi tieu, camp khong chay hien 0.
+// Bo camp da xoa / luu tru tren Facebook.
+const ALL_CAMPAIGNS_HIDDEN_STATUSES = ['DELETED', 'ARCHIVED'];
+const fetchAllStoredCampaignRows = async (accounts = [], includeAccountInfo = false) => {
+  const accountIds = accounts.map(account => account._id).filter(Boolean);
+  if (!accountIds.length) return [];
+  const accountById = new Map(accounts.map(account => [String(account._id), account]));
+  const latestRows = await Campaign.aggregate([
+    { $match: { accountId: { $in: accountIds } } },
+    { $sort: { date: -1, updatedAt: -1, _id: -1 } },
+    {
+      $group: {
+        _id: '$campaignId',
+        campaignId: { $first: '$campaignId' },
+        accountId: { $first: '$accountId' },
+        name: { $first: '$name' },
+        adName: { $first: '$adName' },
+        status: { $first: '$status' },
+        dailyBudget: { $first: '$dailyBudget' },
+        lifetimeBudget: { $first: '$lifetimeBudget' },
+        budgetType: { $first: '$budgetType' },
+        createdTime: { $first: '$createdTime' },
+        bidAmount: { $first: '$bidAmount' }
+      }
+    },
+    { $match: { status: { $nin: ALL_CAMPAIGNS_HIDDEN_STATUSES } } }
+  ]).allowDiskUse(true);
+
+  return latestRows.map(row => {
+    const account = accountById.get(String(row.accountId)) || {};
+    return {
+      campaignId: String(row.campaignId || '').trim(),
+      accountId: includeAccountInfo
+        ? { _id: account._id || row.accountId, name: account.name || '', adAccountId: account.adAccountId || '', provider: account.provider || 'facebook' }
+        : row.accountId,
+      name: row.name || '',
+      adName: row.adName || '',
+      status: row.status || '',
+      dailyBudget: row.dailyBudget || 0,
+      lifetimeBudget: row.lifetimeBudget || 0,
+      budgetType: row.budgetType || '',
+      createdTime: row.createdTime,
+      bidAmount: row.bidAmount || 0,
+      spend: 0,
+      messages: 0,
+      clicks: 0,
+      impressions: 0,
+      reach: 0,
+      engagements: 0,
+      linkClicks: 0,
+      metaOrders: 0,
+      costPerMessage: 0
+    };
+  });
+};
+
 app.get('/api/accounts/:id/campaigns', async (req, res) => {
   const startedAt = Date.now();
   try {
@@ -1587,7 +1645,8 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
     const includeScheduledNoSpend = req.query.includeScheduledNoSpend === 'true' || req.query.includeScheduledNoSpend === true;
     const includeLiveCreated = req.query.includeLiveCreated === 'true' || req.query.includeLiveCreated === true;
     const includeLiveCampaigns = includeScheduledNoSpend && includeLiveCreated && dateRangeTouchesTodayOrFuture(fDate, tDate);
-    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}`);
+    const allCampaigns = req.query.allCampaigns === 'true' || req.query.allCampaigns === true;
+    const cacheKey = userScopedCacheKey(req, `campaigns:account:${req.params.id}:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}:${allCampaigns ? 'all' : 'range'}`);
     const cached = includeLiveCampaigns ? null : getReadCache(cacheKey);
     if (cached) return res.json(cached);
 
@@ -1665,6 +1724,9 @@ app.get('/api/accounts/:id/campaigns', async (req, res) => {
     ]);
     compactMetaExtraRows(campaigns);
     let result = campaigns;
+    if (allCampaigns) {
+      result = mergeCampaignReportRows(result, await fetchAllStoredCampaignRows([ownedAccount], false));
+    }
     if (includeScheduledNoSpend) {
       try {
         const existingCampaignIds = new Set(campaigns.map(campaign => campaign.campaignId));
@@ -1726,7 +1788,8 @@ app.get('/api/campaigns/today', async (req, res) => {
     const today = todayStr();
     const shouldFetchMetaInsights = includeMetaInsights && provider !== 'shopee' && String(fDate) <= today;
     const metaInsightsToDate = String(tDate) > today ? today : tDate;
-    const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}:${shouldFetchMetaInsights ? 'meta-insights' : 'stored-insights'}`);
+    const allCampaigns = req.query.allCampaigns === 'true' || req.query.allCampaigns === true;
+    const cacheKey = userScopedCacheKey(req, `campaigns:today:${provider || 'all'}:${fDate}:${tDate}:${includeScheduledNoSpend ? 'with-scheduled-zero' : 'default'}:${includeLiveCampaigns ? 'live-created' : 'stored'}:${shouldFetchMetaInsights ? 'meta-insights' : 'stored-insights'}:${allCampaigns ? 'all' : 'range'}`);
     // Ban "live" (trang Chien dich) / meta-insights goi thang Facebook: truoc day khong cache nen
     // moi lan mo / tai lai trang la 1 luot goi Facebook. Nay cache 30s (READ_CACHE_TTL_MS) nhu ban
     // thuong; key da tach rieng live / meta, va bat/tat/sua camp deu clearCampaignReadCache.
@@ -1816,6 +1879,9 @@ app.get('/api/campaigns/today', async (req, res) => {
       ...campaign,
       accountId: accountById.get(String(campaign.accountId)) || campaign.accountId
     }));
+    if (allCampaigns) {
+      result = mergeCampaignReportRows(result, await fetchAllStoredCampaignRows(accounts, true));
+    }
     if (includeScheduledNoSpend && accounts.length > 0) {
       const existingCampaignIds = new Set(result.map(campaign => campaign.campaignId));
       const extraCampaigns = await fetchScheduledCampaignRowsFromDb(

@@ -7759,6 +7759,45 @@
     .ads-manager-table tbody tr:hover {
       background: #f8fafc;
     }
+
+    /* Trang Chien dich: bang rong theo noi dung, man hinh hep thi keo ngang (giong Dashboard) */
+    #campTableWrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: auto;
+      scrollbar-color: #94a3b8 #f1f5f9;
+    }
+    #campTableWrap::-webkit-scrollbar {
+      height: 12px;
+    }
+    #campTableWrap::-webkit-scrollbar-track {
+      background: #f1f5f9;
+      border-radius: 6px;
+    }
+    #campTableWrap::-webkit-scrollbar-thumb {
+      background: #94a3b8;
+      border-radius: 6px;
+      border: 2px solid #f1f5f9;
+    }
+    #campTableWrap::-webkit-scrollbar-thumb:hover {
+      background: #64748b;
+    }
+    #campTableWrap .ads-manager-table {
+      width: max-content;
+      min-width: 100%;
+      table-layout: auto;
+    }
+    #campTableWrap .ads-manager-table th,
+    #campTableWrap .ads-manager-table td {
+      white-space: nowrap;
+    }
+    /* Cot "Chien dich" giu do rong toi thieu, ten dai van xuong dong */
+    #campTableWrap .ads-manager-table thead th:nth-child(2),
+    #campTableWrap .ads-manager-table tbody td:nth-child(2) {
+      min-width: 220px;
+      max-width: 360px;
+      white-space: normal;
+    }
     .ads-manager-table tfoot td {
       background: #f8fafc;
       padding: 10px 12px;

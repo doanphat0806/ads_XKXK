@@ -14,6 +14,7 @@ function registerAllRoutes(app) {
   app.use('/api/listing', require('./listingRoutes'));
   app.use('/api/sale-stats', require('./saleStatsRoutes'));
   app.use('/api/campaigns', require('./campaignSnapshotRoutes'));
+  app.use('/api/ads-manager', require('./adsManagerRoutes'));
 }
 
 module.exports = { registerAllRoutes };

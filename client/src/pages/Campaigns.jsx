@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAppContext } from '../contexts/AppContext';
-import { api, apiUrl, uploadForm, formatVND, formatNumber, todayString } from '../lib/api';
+import { api, uploadForm, formatVND, formatNumber, todayString, dateTimeString } from '../lib/api';
 import { toast } from 'react-toastify';
 import DateRangePicker from '../components/DateRangePicker';
+import ColumnSettingsModal from '../components/ColumnSettingsModal';
+import ColumnPresetMenu from '../components/ColumnPresetMenu';
+import AdsManagerChildren from './AdsManagerChildren';
 import { loadXlsx } from '../utils/loadXlsx';
+import { META_EXTRA_COLUMNS, META_EXTRA_COLUMN_BY_ID } from '../utils/metaExtraColumns';
 import {
   Megaphone,
   Users,
@@ -75,6 +79,105 @@ const getCampaignSkuCandidates = (campaignName) => {
     .map(code => `MS${code}`);
 };
 
+const formatPercent = (value) => `${(Number(value || 0) * 100).toFixed(2).replace('.', ',')}%`;
+const formatDateTime = (value) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '-' : dateTimeString(date);
+};
+const formatMetaExtraValue = (value, format) => {
+  if (value === null || value === undefined) return '-';
+  if (format === 'vnd') return value > 0 ? formatVND(value) : '-';
+  if (format === 'percent') return value > 0 ? formatPercent(value) : '-';
+  return formatNumber(Math.round(value));
+};
+const vndOrDash = (value) => (value > 0 ? formatVND(value) : '-');
+
+// Cot tuy chinh cua tab Chien dich (giong Dashboard). Cot "Chien dich" (ten + bat/tat) luon co dinh.
+// sortField: sap xep theo so (tru delivery/account co xu ly rieng); ordersOnly: an voi Shopee.
+const CAMPAIGN_COLUMNS = [
+  { id: 'account', label: 'Tài khoản quảng cáo', group: 'settings', sortField: 'account', style: { minWidth: '150px' } },
+  { id: 'status', label: 'Trạng thái', group: 'settings', className: 'text-center', style: { width: '90px' } },
+  { id: 'delivery', label: 'Phân phối', group: 'settings', sortField: 'delivery', style: { width: '130px' } },
+  { id: 'budget', label: 'Ngân sách', group: 'settings', className: 'text-right', sortField: 'budget', style: { width: '120px' } },
+  { id: 'objective', label: 'Mục tiêu', group: 'settings', style: { width: '120px' } },
+  { id: 'metaOrders', label: 'Số lượt mua hàng', group: 'conversion', className: 'text-center', sortField: 'metaOrders', style: { width: '110px' } },
+  { id: 'orderCount', label: 'Đơn đặt hàng đã tạo', group: 'conversion', className: 'text-center', sortField: 'orderCount', ordersOnly: true, style: { width: '130px' } },
+  { id: 'messages', label: 'Lượt bắt đầu cuộc trò chuyện qua tin nhắn', group: 'engagement', className: 'text-right', sortField: 'messages', style: { width: '150px' } },
+  { id: 'costPerMessage', label: 'Chi phí trên mỗi lượt bắt đầu cuộc trò chuyện', group: 'engagement', className: 'text-right', sortField: 'costPerMessage', style: { width: '150px' } },
+  { id: 'spend', label: 'Số tiền đã chi tiêu', group: 'performance', className: 'text-right', sortField: 'spend', style: { width: '130px' } },
+  { id: 'createdTime', label: 'Ngày tạo', group: 'settings', sortField: 'createdTimeMs', defaultHidden: true },
+  { id: 'bidAmount', label: 'Giá bid', group: 'settings', className: 'text-right', sortField: 'bidAmount', defaultHidden: true },
+  { id: 'costPerOrder', label: 'CPO', group: 'conversion', className: 'text-right', sortField: 'costPerOrder', ordersOnly: true, defaultHidden: true },
+  { id: 'impressions', label: 'Hiển thị', group: 'performance', className: 'text-right', sortField: 'impressions', defaultHidden: true },
+  { id: 'reach', label: 'Tiếp cận', group: 'performance', className: 'text-right', sortField: 'reach', defaultHidden: true },
+  { id: 'costPerMille', label: 'CPM', group: 'performance', className: 'text-right', sortField: 'costPerMille', defaultHidden: true },
+  { id: 'frequency', label: 'Tần suất', group: 'performance', className: 'text-right', sortField: 'frequency', defaultHidden: true },
+  { id: 'costPerReach', label: 'CPP (1.000 tiếp cận)', group: 'performance', className: 'text-right', sortField: 'costPerReach', defaultHidden: true },
+  { id: 'engagements', label: 'Tương tác', group: 'engagement', className: 'text-right', sortField: 'engagements', defaultHidden: true },
+  { id: 'costPerClick', label: 'CPC', group: 'engagement', className: 'text-right', sortField: 'costPerClick', defaultHidden: true },
+  { id: 'ctr', label: 'CTR', group: 'engagement', className: 'text-right', sortField: 'ctr', defaultHidden: true },
+  { id: 'linkClicks', label: 'Click liên kết', group: 'engagement', className: 'text-right', sortField: 'linkClicks', defaultHidden: true },
+  { id: 'costPerLinkClick', label: 'CPC liên kết', group: 'engagement', className: 'text-right', sortField: 'costPerLinkClick', defaultHidden: true },
+  ...META_EXTRA_COLUMNS.map(({ id, label, group }) => ({ id, label, group, className: 'text-right', sortField: id, defaultHidden: true }))
+];
+const CAMPAIGN_COLUMN_BY_ID = new Map(CAMPAIGN_COLUMNS.map(column => [column.id, column]));
+const CAMPAIGN_COLUMN_GROUPS = [
+  { id: 'settings', label: 'Cài đặt' },
+  { id: 'conversion', label: 'Chuyển đổi' },
+  { id: 'performance', label: 'Hiệu quả' },
+  { id: 'engagement', label: 'Tương tác' }
+];
+const DEFAULT_CAMPAIGN_COLUMN_ORDER = CAMPAIGN_COLUMNS.map(column => column.id);
+const DEFAULT_HIDDEN_CAMPAIGN_COLUMN_IDS = CAMPAIGN_COLUMNS.filter(column => column.defaultHidden).map(column => column.id);
+// Sap xep chuoi thay vi so
+const TEXT_SORT_FIELDS = new Set(['name', 'account']);
+
+// Cot dang hien + phuong an: luu localStorage theo tung user (rieng voi Dashboard)
+const CAMPAIGN_COLUMN_VIEW_PREFIX = 'campaigns:columnsView:';
+const SHOW_ALL_CAMPAIGNS_KEY = 'campaigns:showAll';
+const CAMPAIGN_COLUMN_PRESETS_PREFIX = 'campaigns:columnPresets:';
+
+const readJsonStorage = (key) => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeJsonStorage = (key, value) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // localStorage khong kha dung -> chi giu trong phien hien tai
+  }
+};
+
+// Bo id khong con ton tai; cot moi them sau nay noi vao cuoi
+const normalizeCampaignColumnOrder = (saved) => {
+  const known = Array.isArray(saved) ? saved.filter(id => CAMPAIGN_COLUMN_BY_ID.has(id)) : [];
+  return [...new Set([...known, ...DEFAULT_CAMPAIGN_COLUMN_ORDER])];
+};
+
+// Cot mac dinh an ma ban luu chua tung biet den -> van an
+const normalizeCampaignColumnView = (raw) => {
+  const view = raw && typeof raw === 'object' ? raw : {};
+  const savedOrder = Array.isArray(view.order) ? view.order : [];
+  const known = new Set(savedOrder);
+  const hidden = Array.isArray(view.hidden) ? view.hidden : [];
+  return {
+    order: normalizeCampaignColumnOrder(savedOrder),
+    hidden: new Set([...hidden, ...DEFAULT_HIDDEN_CAMPAIGN_COLUMN_IDS.filter(id => !known.has(id))]),
+    activePreset: typeof view.activePreset === 'string' ? view.activePreset : ''
+  };
+};
+
+const normalizeCampaignColumnPresets = (value) => (Array.isArray(value)
+  ? value.filter(preset => preset && typeof preset.name === 'string' && preset.name.trim())
+  : []);
+
 export default function Campaigns() {
   const { provider, allAccounts, currentUser, loadAccounts, openModal } = useAppContext();
   
@@ -87,10 +190,20 @@ export default function Campaigns() {
   const [filterFromDate, setFilterFromDate] = useState(todayString());
   const [filterToDate, setFilterToDate] = useState(todayString());
   const [filterStatus, setFilterStatus] = useState('');
+  // Bat: hien moi camp (ngay chi dung de tinh chi tieu / chi so); tat: chi camp co du lieu trong ngay
+  const [showAllCampaigns, setShowAllCampaigns] = useState(() => {
+    try {
+      return localStorage.getItem(SHOW_ALL_CAMPAIGNS_KEY) !== 'false';
+    } catch {
+      return true;
+    }
+  });
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCampaignKeys, setSelectedCampaignKeys] = useState(() => new Set());
   const [bulkToggling, setBulkToggling] = useState('');
+  // Tang len khi bam tai lai -> tab nhom QC / quang cao / bai viet lay lai tu Facebook
+  const [childrenReloadToken, setChildrenReloadToken] = useState(0);
 
   // Accounts selection in accounts tab
   const [selectedAccountIds, setSelectedAccountIds] = useState(() => new Set());
@@ -118,6 +231,72 @@ export default function Campaigns() {
   const [lastToggleLog, setLastToggleLog] = useState('');
   const toggleReloadTimerRef = useRef(null);
 
+  // Doi ten camp truc tiep tren bang (giong Dashboard)
+  const [editingNameKey, setEditingNameKey] = useState('');
+  const [editingNameValue, setEditingNameValue] = useState('');
+  const [renamingKey, setRenamingKey] = useState('');
+  const renamingKeyRef = useRef('');
+
+  // Tuy chinh cot hien thi
+  const userId = currentUser?.id ? String(currentUser.id) : '';
+  const [columnView, setColumnView] = useState(() => normalizeCampaignColumnView(
+    userId ? readJsonStorage(`${CAMPAIGN_COLUMN_VIEW_PREFIX}${userId}`) : null
+  ));
+  const [columnPresets, setColumnPresets] = useState(() => normalizeCampaignColumnPresets(
+    userId ? readJsonStorage(`${CAMPAIGN_COLUMN_PRESETS_PREFIX}${userId}`) : null
+  ));
+  const [columnModalOpen, setColumnModalOpen] = useState(false);
+  const activePreset = columnPresets.some(preset => preset.name === columnView.activePreset) ? columnView.activePreset : '';
+
+  useEffect(() => {
+    // Doi user dang nhap -> doc lai cau hinh cot cua user do
+    setColumnView(normalizeCampaignColumnView(userId ? readJsonStorage(`${CAMPAIGN_COLUMN_VIEW_PREFIX}${userId}`) : null));
+    setColumnPresets(normalizeCampaignColumnPresets(userId ? readJsonStorage(`${CAMPAIGN_COLUMN_PRESETS_PREFIX}${userId}`) : null));
+  }, [userId]);
+
+  const commitColumnView = (next) => {
+    setColumnView(next);
+    if (userId) writeJsonStorage(`${CAMPAIGN_COLUMN_VIEW_PREFIX}${userId}`, { order: next.order, hidden: [...next.hidden], activePreset: next.activePreset });
+  };
+  const commitColumnPresets = (next) => {
+    setColumnPresets(next);
+    if (userId) writeJsonStorage(`${CAMPAIGN_COLUMN_PRESETS_PREFIX}${userId}`, next);
+  };
+  const applyColumnSettings = ({ order, hidden }) => {
+    commitColumnView({ order, hidden: new Set(hidden), activePreset: '' });
+    setColumnModalOpen(false);
+  };
+  const saveColumnPreset = (name, { order, hidden }) => {
+    commitColumnPresets([...columnPresets.filter(item => item.name !== name), { name, order, hidden: [...hidden] }]);
+    commitColumnView({ order, hidden: new Set(hidden), activePreset: name });
+    setColumnModalOpen(false);
+    toast.success(`Đã lưu phương án "${name}"`);
+  };
+  const selectColumnPreset = (preset) => {
+    commitColumnView({ ...normalizeCampaignColumnView(preset), activePreset: preset.name });
+  };
+  const deleteColumnPreset = (name) => {
+    commitColumnPresets(columnPresets.filter(item => item.name !== name));
+    if (columnView.activePreset === name) commitColumnView({ ...columnView, activePreset: '' });
+  };
+  const closeColumnModal = useCallback(() => setColumnModalOpen(false), []);
+
+  const showOrders = provider !== 'shopee';
+  const availableColumns = useMemo(
+    () => CAMPAIGN_COLUMNS.filter(column => showOrders || !column.ordersOnly),
+    [showOrders]
+  );
+  const visibleColumns = useMemo(() => {
+    const available = new Set(availableColumns.map(column => column.id));
+    return columnView.order
+      .filter(id => available.has(id) && !columnView.hidden.has(id))
+      .map(id => CAMPAIGN_COLUMN_BY_ID.get(id));
+  }, [availableColumns, columnView]);
+  const visibleExtraColumns = useMemo(
+    () => visibleColumns.map(column => META_EXTRA_COLUMN_BY_ID.get(column.id)).filter(Boolean),
+    [visibleColumns]
+  );
+
   // Load campaigns
   const loadCampaigns = useCallback(async (showLoader = true) => {
     if (showLoader || campaigns.length === 0) {
@@ -130,7 +309,8 @@ export default function Campaigns() {
         toDate: filterToDate,
         provider,
         includeScheduledNoSpend: 'true',
-        includeLiveCreated: 'true'
+        includeLiveCreated: 'true',
+        allCampaigns: showAllCampaigns ? 'true' : 'false'
       });
       const url = filterAcc
         ? `/accounts/${filterAcc}/campaigns?${params.toString()}`
@@ -143,7 +323,7 @@ export default function Campaigns() {
     } finally {
       setLoading(false);
     }
-  }, [filterAcc, filterFromDate, filterToDate, provider, campaigns.length]);
+  }, [filterAcc, filterFromDate, filterToDate, provider, showAllCampaigns, campaigns.length]);
 
   const reloadCampaignsNow = useCallback((showLoader = true) => {
     if (toggleReloadTimerRef.current) {
@@ -281,6 +461,50 @@ export default function Campaigns() {
     }
   };
 
+  // Doi ten camp
+  const startRenameCampaign = (campaign) => {
+    if (renamingKeyRef.current) return;
+    setEditingNameKey(getCampaignSelectionKey(campaign));
+    setEditingNameValue(String(campaign.name || '').toUpperCase());
+  };
+
+  const cancelRenameCampaign = () => {
+    setEditingNameKey('');
+    setEditingNameValue('');
+  };
+
+  const saveRenameCampaign = async (campaign) => {
+    const key = getCampaignSelectionKey(campaign);
+    const accountId = getCampaignAccountId(campaign);
+    const nextName = editingNameValue.trim().toUpperCase();
+    // Enter roi blur se goi 2 lan -> chan lan sau
+    if (!key || !accountId || renamingKeyRef.current) return;
+    if (!nextName) {
+      toast.error('Tên camp không được để trống');
+      return;
+    }
+    if (nextName === String(campaign.name || '').trim()) {
+      cancelRenameCampaign();
+      return;
+    }
+
+    renamingKeyRef.current = key;
+    setRenamingKey(key);
+    try {
+      await api('POST', `/campaigns/${campaign.campaignId}/rename`, { accountId, date: filterToDate, name: nextName });
+      setCampaigns(items => items.map(item => (
+        getCampaignSelectionKey(item) === key ? { ...item, name: nextName } : item
+      )));
+      toast.success('Đã đổi tên camp');
+      cancelRenameCampaign();
+    } catch (error) {
+      toast.error('Lỗi đổi tên camp: ' + error.message);
+    } finally {
+      renamingKeyRef.current = '';
+      setRenamingKey('');
+    }
+  };
+
   // Sync historical data
   const handleSyncHistoryQueued = async () => {
     if (syncToDate >= todayString()) {
@@ -290,17 +514,25 @@ export default function Campaigns() {
     setSyncing(true);
     setSyncJob(null);
     try {
-      const result = await api('POST', '/campaigns/sync-history-queued', {
+      // Server: co Redis -> xep hang (tra jobId de theo doi); khong co -> dong bo luon roi tra ket qua
+      const result = await api('POST', '/campaigns/sync-history', {
         fromDate: syncFromDate,
         toDate: syncToDate,
-        provider
-      });
+        provider,
+        queue: true
+      }, { timeoutMs: 30 * 60 * 1000 });
       if (result?.jobId) {
         toast.info('Bắt đầu đồng bộ trong nền...');
         pollSyncJob(result.jobId);
       } else {
-        toast.success('Đã gửi yêu cầu đồng bộ');
+        setSyncJob({ ...result, percent: 100 });
+        if (result?.errors?.length) {
+          toast.warn(`Đồng bộ xong nhưng có ${result.errors.length} lỗi (${result.completedDays || 0}/${result.totalDays || 0} ngày)`);
+        } else {
+          toast.success(`Đồng bộ hoàn tất (${result?.completedDays || 0}/${result?.totalDays || 0} ngày)`);
+        }
         setSyncing(false);
+        await loadCampaigns(true);
       }
     } catch (e) {
       toast.error('Lỗi đồng bộ: ' + e.message);
@@ -311,12 +543,17 @@ export default function Campaigns() {
   const pollSyncJob = (jobId) => {
     const timer = setInterval(async () => {
       try {
-        const res = await api('GET', `/campaigns/sync-jobs/${jobId}`);
+        const response = await api('GET', `/campaigns/sync-history/${jobId}`);
+        const res = response?.job || response || {};
         setSyncJob(res);
-        if (res.state === 'completed') {
+        if (res.state === 'completed' || res.state === 'completed_with_errors') {
           clearInterval(timer);
           setSyncing(false);
-          toast.success(`Đồng bộ hoàn tất (${res.completedDays || 0}/${res.totalDays || 0} ngày)`);
+          if (res.state === 'completed_with_errors') {
+            toast.warn(`Đồng bộ xong nhưng có ${res.errors?.length || 0} lỗi (${res.completedDays || 0}/${res.totalDays || 0} ngày)`);
+          } else {
+            toast.success(`Đồng bộ hoàn tất (${res.completedDays || 0}/${res.totalDays || 0} ngày)`);
+          }
           await loadCampaigns(true);
         } else if (res.state === 'failed') {
           clearInterval(timer);
@@ -326,6 +563,7 @@ export default function Campaigns() {
       } catch (err) {
         clearInterval(timer);
         setSyncing(false);
+        toast.error('Không theo dõi được tiến trình đồng bộ: ' + err.message);
       }
     }, 2500);
   };
@@ -386,8 +624,17 @@ export default function Campaigns() {
       const metaOrders = Number(campaign.metaOrders || 0);
       const costPerMessage = messages > 0 ? spend / messages : 0;
       const budget = campaign.budgetType === 'LIFETIME' ? Number(campaign.lifetimeBudget || 0) : Number(campaign.dailyBudget || 0);
+      const clicks = Number(campaign.clicks || 0);
+      const impressions = Number(campaign.impressions || 0);
+      const reach = Number(campaign.reach || 0);
+      const linkClicks = Number(campaign.linkClicks || 0);
+      const createdTimeValue = campaign.createdTime || campaign.created_time;
+      const createdTimeMs = createdTimeValue ? new Date(createdTimeValue).getTime() || 0 : 0;
+      const extraValues = {};
+      for (const column of visibleExtraColumns) extraValues[column.id] = column.value(campaign);
       return {
         ...campaign,
+        ...extraValues,
         account,
         accountName: account?.name || '',
         adAccountId: account?.adAccountId || '',
@@ -396,10 +643,25 @@ export default function Campaigns() {
         orderCount,
         metaOrders,
         costPerMessage,
-        budget
+        budget,
+        clicks,
+        impressions,
+        reach,
+        linkClicks,
+        engagements: Number(campaign.engagements || 0),
+        bidAmount: Number(campaign.bidAmount || 0),
+        createdTimeValue,
+        createdTimeMs,
+        costPerOrder: orderCount > 0 ? spend / orderCount : 0,
+        costPerClick: clicks > 0 ? spend / clicks : 0,
+        costPerMille: impressions > 0 ? (spend / impressions) * 1000 : 0,
+        ctr: impressions > 0 ? clicks / impressions : 0,
+        costPerLinkClick: linkClicks > 0 ? spend / linkClicks : 0,
+        frequency: reach > 0 ? impressions / reach : 0,
+        costPerReach: reach > 0 ? (spend / reach) * 1000 : 0
       };
     });
-  }, [campaigns, allAccounts, provider, getOrderCountForCampaign]);
+  }, [campaigns, allAccounts, provider, getOrderCountForCampaign, visibleExtraColumns]);
 
   // Account metrics aggregated from campaigns
   const accountMetricsMap = useMemo(() => {
@@ -531,14 +793,11 @@ export default function Campaigns() {
         const delB = isCampaignActiveStatus(b.status) ? 1 : 0;
         return dir * (delA - delB);
       }
-      if (sortField === 'spend') return dir * (a.spend - b.spend);
-      if (sortField === 'budget') return dir * (a.budget - b.budget);
-      if (sortField === 'messages') return dir * (a.messages - b.messages);
-      if (sortField === 'metaOrders') return dir * (a.metaOrders - b.metaOrders);
-      if (sortField === 'orderCount') return dir * (a.orderCount - b.orderCount);
-      if (sortField === 'costPerMessage') return dir * (a.costPerMessage - b.costPerMessage);
       if (sortField === 'name') return dir * String(a.name || '').localeCompare(String(b.name || ''));
       if (sortField === 'account') return dir * String(a.accountName || '').localeCompare(String(b.accountName || ''));
+      if (!TEXT_SORT_FIELDS.has(sortField)) {
+        return dir * (Number(a[sortField] || 0) - Number(b[sortField] || 0));
+      }
       return b.spend - a.spend;
     });
   }, [enrichedCampaigns, filterAcc, filterStatus, searchTerm, sortField, sortDir]);
@@ -566,8 +825,12 @@ export default function Campaigns() {
       acc.metaOrders += Number(c.metaOrders || 0);
       acc.orderCount += Number(c.orderCount || 0);
       acc.messages += Number(c.messages || 0);
+      acc.clicks += Number(c.clicks || 0);
+      acc.impressions += Number(c.impressions || 0);
+      acc.engagements += Number(c.engagements || 0);
+      acc.linkClicks += Number(c.linkClicks || 0);
       return acc;
-    }, { spend: 0, metaOrders: 0, orderCount: 0, messages: 0 });
+    }, { spend: 0, metaOrders: 0, orderCount: 0, messages: 0, clicks: 0, impressions: 0, engagements: 0, linkClicks: 0 });
   }, [filteredCampaigns]);
 
   const avgCostPerMessage = summaryTotals.messages > 0 ? summaryTotals.spend / summaryTotals.messages : 0;
@@ -580,6 +843,15 @@ export default function Campaigns() {
   const selectedCampaigns = useMemo(() => (
     selectableCampaigns.filter(campaign => selectedCampaignKeys.has(getCampaignSelectionKey(campaign)))
   ), [selectableCampaigns, selectedCampaignKeys]);
+
+  // Camp dang chon (khong phu thuoc o tim kiem) -> dung cho tab nhom QC / quang cao / bai viet
+  const selectedCampaignsAll = useMemo(() => (
+    enrichedCampaigns.filter(campaign => selectedCampaignKeys.has(getCampaignSelectionKey(campaign)))
+  ), [enrichedCampaigns, selectedCampaignKeys]);
+  const campaignNameById = useMemo(
+    () => new Map(enrichedCampaigns.map(campaign => [String(campaign.campaignId || ''), campaign.name || ''])),
+    [enrichedCampaigns]
+  );
 
   const allFilteredSelected = selectableCampaigns.length > 0 && selectedCampaigns.length === selectableCampaigns.length;
 
@@ -799,6 +1071,197 @@ export default function Campaigns() {
     if (currentPage > totalPages) setCurrentPage(totalPages);
   }, [currentPage, totalPages]);
 
+  const sortIndicator = (field) => (sortField === field ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '');
+
+  const renderColumnHeader = (column) => {
+    const style = { ...(column.style || {}), ...(column.sortField ? { cursor: 'pointer', userSelect: 'none' } : {}) };
+    return (
+      <th
+        key={column.id}
+        className={column.className}
+        style={style}
+        onClick={column.sortField ? () => handleSort(column.sortField) : undefined}
+      >
+        {column.label}{column.sortField ? sortIndicator(column.sortField) : ''}
+      </th>
+    );
+  };
+
+  const renderCampaignCell = (column, campaign) => {
+    const isActive = isCampaignActiveStatus(campaign.status);
+    const numberCell = (value, emptyText = '-') => (
+      <td key={column.id} className={column.className}>{value > 0 ? formatNumber(value) : emptyText}</td>
+    );
+    const vndCell = (value) => <td key={column.id} className={column.className}>{vndOrDash(value)}</td>;
+
+    switch (column.id) {
+      case 'account': {
+        const accId = getCampaignAccountId(campaign);
+        const isAccFiltered = filterAcc && filterAcc === accId;
+        return (
+          <td key="account">
+            <div
+              className="account-name-cell"
+              style={{ cursor: 'pointer' }}
+              title="Bấm để lọc theo tài khoản này (bấm lại để hiện tất cả)"
+              onClick={() => {
+                if (!accId) return;
+                if (filterAcc === accId) {
+                  setFilterAcc('');
+                  toast.info('Đã bỏ lọc tài khoản');
+                } else {
+                  setFilterAcc(accId);
+                  toast.info(`Đang lọc theo tài khoản: ${campaign.accountName}`);
+                }
+              }}
+            >
+              <span style={{ color: '#10b981', fontSize: '14px', lineHeight: 1 }}>•</span>
+              <span style={{ fontWeight: isAccFiltered ? 700 : 600, color: isAccFiltered ? '#0d6e52' : 'inherit', textDecoration: isAccFiltered ? 'underline' : 'none' }}>
+                {campaign.accountName || '-'}
+              </span>
+            </div>
+            {campaign.adAccountId && (
+              <div className="campaign-id-sub" style={{ paddingLeft: '11px' }}>{campaign.adAccountId}</div>
+            )}
+          </td>
+        );
+      }
+      case 'status':
+        return (
+          <td key="status" className="text-center" style={{ fontWeight: 700, fontSize: '12px', color: isActive ? 'var(--txt)' : 'var(--muted2)' }}>
+            {isActive ? 'ACTIVE' : 'PAUSED'}
+          </td>
+        );
+      case 'delivery':
+        return (
+          <td key="delivery">
+            <div className={`delivery-cell ${isActive ? 'active' : 'paused'}`}>
+              <span style={{ fontSize: '14px', lineHeight: 1 }}>•</span>
+              <span>{isActive ? 'Đang phân phối' : 'Đã tắt'}</span>
+            </div>
+          </td>
+        );
+      case 'budget': {
+        const isEditingBudget = editingBudgetId === campaign.campaignId;
+        const isSavingBudget = savingBudgetId === campaign.campaignId;
+        const isLifetime = campaign.budgetType === 'LIFETIME';
+        return (
+          <td key="budget" className="text-right">
+            {isEditingBudget ? (
+              <input
+                value={editingBudgetValue}
+                autoFocus
+                inputMode="numeric"
+                disabled={isSavingBudget}
+                onChange={e => setEditingBudgetValue(e.target.value.replace(/[^\d]/g, ''))}
+                onBlur={() => saveBudget(campaign)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') saveBudget(campaign);
+                  if (e.key === 'Escape') cancelEditBudget();
+                }}
+                style={{ width: '100px', height: '26px', textAlign: 'right', border: '1px solid var(--border2)', borderRadius: '4px', padding: '0 6px', fontSize: '12px', color: 'var(--txt)', background: 'var(--s1)' }}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => startEditBudget(campaign)}
+                title="Click để sửa ngân sách"
+                style={{ border: 0, padding: 0, background: 'transparent', color: 'var(--txt)', cursor: 'text', font: 'inherit', fontWeight: 700, fontSize: '12.5px' }}
+              >
+                {isSavingBudget ? '...' : formatVND(campaign.budget)}
+              </button>
+            )}
+            <div style={{ fontSize: '10.5px', color: isLifetime ? 'var(--o)' : 'var(--muted2)', marginTop: '2px' }}>
+              {isLifetime ? 'Trọn đời' : 'Hàng ngày'}
+            </div>
+          </td>
+        );
+      }
+      case 'objective':
+        return (
+          <td key="objective" style={{ fontSize: '12px', color: 'var(--txt)' }}>
+            {campaign.objective === 'OUTCOME_SALES' ? 'Doanh số' : (campaign.objective === 'OUTCOME_TRAFFIC' ? 'Lưu lượng truy cập' : 'Lượt tương tác')}
+          </td>
+        );
+      case 'metaOrders':
+      case 'orderCount': {
+        const value = campaign[column.id];
+        return (
+          <td key={column.id} className="text-center" style={{ fontWeight: value > 0 ? 600 : 400, color: value > 0 ? 'var(--txt)' : 'var(--muted2)' }}>
+            {value > 0 ? formatNumber(value) : '-'}
+          </td>
+        );
+      }
+      case 'messages':
+        return (
+          <td key="messages" className="text-right" style={{ fontWeight: campaign.messages > 0 ? 600 : 400 }}>
+            {campaign.messages > 0 ? formatNumber(campaign.messages) : '-'}
+          </td>
+        );
+      case 'spend':
+        return (
+          <td key="spend" className="text-right" style={{ fontWeight: 600 }}>
+            {campaign.spend > 0 ? formatVND(campaign.spend) : '0 ₫'}
+          </td>
+        );
+      case 'createdTime':
+        return <td key="createdTime" style={{ color: 'var(--muted)', fontSize: '12px' }}>{formatDateTime(campaign.createdTimeValue)}</td>;
+      case 'reach':
+        return (
+          <td key="reach" className="text-right" title={campaign.reachUnavailable ? 'Meta không có tiếp cận theo giờ' : undefined}>
+            {campaign.reachUnavailable ? '-' : formatNumber(campaign.reach || 0)}
+          </td>
+        );
+      case 'impressions':
+      case 'engagements':
+      case 'linkClicks':
+        return numberCell(campaign[column.id], '0');
+      case 'ctr':
+        return <td key="ctr" className="text-right">{campaign.ctr > 0 ? formatPercent(campaign.ctr) : '-'}</td>;
+      case 'frequency':
+        return <td key="frequency" className="text-right">{campaign.frequency > 0 ? campaign.frequency.toFixed(2).replace('.', ',') : '-'}</td>;
+      case 'costPerMessage':
+      case 'costPerOrder':
+      case 'costPerClick':
+      case 'costPerMille':
+      case 'costPerLinkClick':
+      case 'costPerReach':
+      case 'bidAmount':
+        return vndCell(campaign[column.id]);
+      default: {
+        const extraColumn = META_EXTRA_COLUMN_BY_ID.get(column.id);
+        if (!extraColumn) return <td key={column.id}>-</td>;
+        return <td key={column.id} className="text-right">{formatMetaExtraValue(campaign[column.id], extraColumn.format)}</td>;
+      }
+    }
+  };
+
+  // Dong tong: chi cot cong / tinh duoc tu tong moi co so
+  const renderFooterCell = (column) => {
+    const t = summaryTotals;
+    const values = {
+      metaOrders: t.metaOrders > 0 ? formatNumber(t.metaOrders) : '-',
+      orderCount: t.orderCount > 0 ? formatNumber(t.orderCount) : '-',
+      messages: t.messages > 0 ? formatNumber(t.messages) : '-',
+      costPerMessage: vndOrDash(avgCostPerMessage),
+      spend: formatVND(t.spend),
+      costPerOrder: vndOrDash(t.orderCount > 0 ? t.spend / t.orderCount : 0),
+      impressions: formatNumber(t.impressions),
+      engagements: formatNumber(t.engagements),
+      linkClicks: formatNumber(t.linkClicks),
+      clicks: formatNumber(t.clicks),
+      costPerClick: vndOrDash(t.clicks > 0 ? t.spend / t.clicks : 0),
+      costPerMille: vndOrDash(t.impressions > 0 ? (t.spend / t.impressions) * 1000 : 0),
+      ctr: t.impressions > 0 && t.clicks > 0 ? formatPercent(t.clicks / t.impressions) : '-',
+      costPerLinkClick: vndOrDash(t.linkClicks > 0 ? t.spend / t.linkClicks : 0)
+    };
+    return (
+      <td key={column.id} className={column.className} style={{ fontWeight: 700 }}>
+        {values[column.id] ?? ''}
+      </td>
+    );
+  };
+
   return (
     <div id="page-campaigns">
       {/* SMIT Green Header */}
@@ -834,6 +1297,11 @@ export default function Campaigns() {
           >
             <Layers size={14} />
             <span>Nhóm quảng cáo</span>
+            {selectedCampaignsAll.length > 0 && (
+              <span style={{ marginLeft: '4px', fontSize: '10.5px', fontWeight: 700, padding: '1px 6px', borderRadius: '10px', background: 'rgba(13, 110, 82, 0.12)', color: '#0d6e52' }} title={`Của ${selectedCampaignsAll.length} chiến dịch đã chọn`}>
+                {selectedCampaignsAll.length} camp
+              </span>
+            )}
           </button>
           <button
             type="button"
@@ -842,6 +1310,11 @@ export default function Campaigns() {
           >
             <Megaphone size={14} />
             <span>Quảng cáo</span>
+            {selectedCampaignsAll.length > 0 && (
+              <span style={{ marginLeft: '4px', fontSize: '10.5px', fontWeight: 700, padding: '1px 6px', borderRadius: '10px', background: 'rgba(13, 110, 82, 0.12)', color: '#0d6e52' }} title={`Của ${selectedCampaignsAll.length} chiến dịch đã chọn`}>
+                {selectedCampaignsAll.length} camp
+              </span>
+            )}
           </button>
           <button
             type="button"
@@ -850,6 +1323,11 @@ export default function Campaigns() {
           >
             <PenSquare size={14} />
             <span>Bài viết</span>
+            {selectedCampaignsAll.length > 0 && (
+              <span style={{ marginLeft: '4px', fontSize: '10.5px', fontWeight: 700, padding: '1px 6px', borderRadius: '10px', background: 'rgba(13, 110, 82, 0.12)', color: '#0d6e52' }} title={`Của ${selectedCampaignsAll.length} chiến dịch đã chọn`}>
+                {selectedCampaignsAll.length} camp
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -886,7 +1364,8 @@ export default function Campaigns() {
             className="ads-manager-btn"
             onClick={() => {
               if (activeTab === 'accounts' && loadAccounts) loadAccounts();
-              reloadCampaignsNow(true);
+              if (['adsets', 'ads', 'posts'].includes(activeTab)) setChildrenReloadToken(token => token + 1);
+              else reloadCampaignsNow(true);
             }}
             disabled={loading}
             title="Tải lại dữ liệu"
@@ -952,6 +1431,26 @@ export default function Campaigns() {
             </select>
           )}
 
+          {/* Hien tat ca camp: ngay chi de xem chi tieu */}
+          {activeTab === 'campaigns' && (
+            <label
+              className="ads-manager-btn"
+              title={showAllCampaigns ? 'Đang hiện mọi camp; ngày chỉ dùng để tính chi tiêu' : 'Chỉ hiện camp có dữ liệu trong ngày đã chọn'}
+              style={{ cursor: 'pointer', gap: '6px' }}
+            >
+              <input
+                type="checkbox"
+                checked={showAllCampaigns}
+                onChange={e => {
+                  const next = e.target.checked;
+                  setShowAllCampaigns(next);
+                  try { localStorage.setItem(SHOW_ALL_CAMPAIGNS_KEY, String(next)); } catch { /* bo qua */ }
+                }}
+              />
+              <span>Hiện tất cả camp</span>
+            </label>
+          )}
+
           {/* Date Picker Button */}
           <DateRangePicker
             fromDate={filterFromDate}
@@ -986,6 +1485,33 @@ export default function Campaigns() {
               <FolderSync size={13} />
               <span>Đồng bộ & CSV</span>
             </button>
+          )}
+
+          {/* Tuy chinh cot hien thi (giong Dashboard) */}
+          {activeTab === 'campaigns' && (
+            <ColumnPresetMenu
+              label={activePreset ? `Cột: ${activePreset}` : 'Tùy chỉnh cột'}
+              presets={columnPresets}
+              activePreset={activePreset}
+              onSelect={selectColumnPreset}
+              onDelete={deleteColumnPreset}
+              onCustomize={() => setColumnModalOpen(true)}
+            />
+          )}
+          {columnModalOpen && (
+            <ColumnSettingsModal
+              columns={availableColumns}
+              groups={CAMPAIGN_COLUMN_GROUPS}
+              order={columnView.order}
+              hidden={columnView.hidden}
+              defaultOrder={DEFAULT_CAMPAIGN_COLUMN_ORDER}
+              defaultHidden={DEFAULT_HIDDEN_CAMPAIGN_COLUMN_IDS}
+              pinnedLabel="Chiến dịch"
+              presetName={activePreset}
+              onApply={applyColumnSettings}
+              onSavePreset={saveColumnPreset}
+              onClose={closeColumnModal}
+            />
           )}
 
           {/* Bulk Selection Actions for Campaigns */}
@@ -1437,60 +1963,10 @@ export default function Campaigns() {
                         aria-label="Chọn tất cả chiến dịch"
                       />
                     </th>
-                    <th style={{ minWidth: '180px' }}>Chiến dịch</th>
-                    <th style={{ minWidth: '150px' }}>Tài khoản quảng cáo</th>
-                    <th className="text-center" style={{ width: '90px' }}>Trạng thái</th>
-                    <th
-                      style={{ width: '130px', cursor: 'pointer', userSelect: 'none' }}
-                      onClick={() => handleSort('delivery')}
-                      className="delivery-col-header"
-                      title="Bấm để sắp xếp theo trạng thái phân phối"
-                    >
-                      Phân phối {sortField === 'delivery' ? (sortDir === 'asc' ? '↑' : '↓') : '↑'}
+                    <th style={{ minWidth: '180px', cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('name')}>
+                      Chiến dịch{sortIndicator('name')}
                     </th>
-                    <th
-                      className="text-right"
-                      style={{ width: '120px', cursor: 'pointer', userSelect: 'none' }}
-                      onClick={() => handleSort('budget')}
-                    >
-                      Ngân sách {sortField === 'budget' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-                    </th>
-                    <th style={{ width: '120px' }}>Mục tiêu</th>
-                    <th
-                      className="text-center"
-                      style={{ width: '110px', cursor: 'pointer', userSelect: 'none' }}
-                      onClick={() => handleSort('metaOrders')}
-                    >
-                      Số lượt mua hàng {sortField === 'metaOrders' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-                    </th>
-                    <th
-                      className="text-center"
-                      style={{ width: '130px', cursor: 'pointer', userSelect: 'none' }}
-                      onClick={() => handleSort('orderCount')}
-                    >
-                      Đơn đặt hàng đã tạo {sortField === 'orderCount' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-                    </th>
-                    <th
-                      className="text-right"
-                      style={{ width: '150px', cursor: 'pointer', userSelect: 'none' }}
-                      onClick={() => handleSort('messages')}
-                    >
-                      Lượt bắt đầu cuộc trò chuyện qua tin nhắn {sortField === 'messages' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-                    </th>
-                    <th
-                      className="text-right"
-                      style={{ width: '150px', cursor: 'pointer', userSelect: 'none' }}
-                      onClick={() => handleSort('costPerMessage')}
-                    >
-                      Chi phí trên mỗi lượt bắt đầu cuộc trò chuyện {sortField === 'costPerMessage' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-                    </th>
-                    <th
-                      className="text-right"
-                      style={{ width: '130px', cursor: 'pointer', userSelect: 'none' }}
-                      onClick={() => handleSort('spend')}
-                    >
-                      Số tiền đã chi tiêu {sortField === 'spend' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-                    </th>
+                    {visibleColumns.map(renderColumnHeader)}
                   </tr>
                 </thead>
                 <tbody>
@@ -1499,10 +1975,8 @@ export default function Campaigns() {
                     const isActive = isCampaignActiveStatus(campaign.status);
                     const selectionKey = getCampaignSelectionKey(campaign);
                     const isSelected = selectedCampaignKeys.has(selectionKey);
-                    const isEditingBudget = editingBudgetId === campaign.campaignId;
-                    const isSavingBudget = savingBudgetId === campaign.campaignId;
-                    const isLifetime = campaign.budgetType === 'LIFETIME';
-                    const isAccFiltered = filterAcc && filterAcc === (campaign.accountId?._id || campaign.accountId);
+                    const isEditingName = Boolean(selectionKey) && editingNameKey === selectionKey;
+                    const isRenaming = Boolean(selectionKey) && renamingKey === selectionKey;
 
                     return (
                       <tr
@@ -1521,7 +1995,7 @@ export default function Campaigns() {
                           />
                         </td>
 
-                        {/* Chiến dịch (Toggle + Name + ID) */}
+                        {/* Chiến dịch (Toggle + Name + ID) - bam vao ten de doi ten */}
                         <td>
                           <div className="campaign-name-cell">
                             <label className="smit-tgl" title={isActive ? 'Tắt camp' : 'Bật camp'}>
@@ -1539,137 +2013,37 @@ export default function Campaigns() {
                             </label>
 
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div className="campaign-name-title" title={campaign.name}>
-                                {campaign.name}
-                              </div>
+                              {isEditingName ? (
+                                <input
+                                  value={editingNameValue}
+                                  autoFocus
+                                  disabled={isRenaming}
+                                  onChange={e => setEditingNameValue(e.target.value.toUpperCase())}
+                                  onBlur={() => saveRenameCampaign(campaign)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') saveRenameCampaign(campaign);
+                                    if (e.key === 'Escape') cancelRenameCampaign();
+                                  }}
+                                  style={{ width: '100%', minWidth: '140px', height: '26px', border: '1px solid var(--border2)', borderRadius: '4px', padding: '0 6px', fontWeight: 600, fontSize: '12.5px', color: 'var(--txt)', background: 'var(--s1)' }}
+                                />
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="campaign-name-title"
+                                  onClick={() => startRenameCampaign(campaign)}
+                                  disabled={!selectionKey}
+                                  title={`${campaign.name || ''}\nBấm để đổi tên camp`}
+                                  style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', textAlign: 'left', cursor: 'text', font: 'inherit' }}
+                                >
+                                  {isRenaming ? 'Đang đổi tên...' : campaign.name}
+                                </button>
+                              )}
                               <div className="campaign-id-sub">{campaign.campaignId}</div>
                             </div>
                           </div>
                         </td>
 
-                        {/* Tài khoản quảng cáo - Clickable to filter by account */}
-                        <td>
-                          <div
-                            className="account-name-cell"
-                            style={{ cursor: 'pointer' }}
-                            title="Bấm để lọc theo tài khoản này (bấm lại để hiện tất cả)"
-                            onClick={() => {
-                              const accId = campaign.accountId?._id || campaign.accountId;
-                              if (accId) {
-                                if (filterAcc === accId) {
-                                  setFilterAcc('');
-                                  toast.info('Đã bỏ lọc tài khoản');
-                                } else {
-                                  setFilterAcc(accId);
-                                  toast.info(`Đang lọc theo tài khoản: ${campaign.accountName}`);
-                                }
-                              }
-                            }}
-                          >
-                            <span style={{ color: '#10b981', fontSize: '14px', lineHeight: 1 }}>•</span>
-                            <span style={{ fontWeight: isAccFiltered ? 700 : 600, color: isAccFiltered ? '#0d6e52' : 'inherit', textDecoration: isAccFiltered ? 'underline' : 'none' }}>
-                              {campaign.accountName || '-'}
-                            </span>
-                          </div>
-                          {campaign.adAccountId && (
-                            <div className="campaign-id-sub" style={{ paddingLeft: '11px' }}>
-                              {campaign.adAccountId}
-                            </div>
-                          )}
-                        </td>
-
-                        {/* Trạng thái */}
-                        <td className="text-center" style={{ fontWeight: 700, fontSize: '12px', color: isActive ? 'var(--txt)' : 'var(--muted2)' }}>
-                          {isActive ? 'ACTIVE' : 'PAUSED'}
-                        </td>
-
-                        {/* Phân phối */}
-                        <td>
-                          <div className={`delivery-cell ${isActive ? 'active' : 'paused'}`}>
-                            <span style={{ fontSize: '14px', lineHeight: 1 }}>•</span>
-                            <span>{isActive ? 'Đang phân phối' : 'Đã tắt'}</span>
-                          </div>
-                        </td>
-
-                        {/* Ngân sách */}
-                        <td className="text-right">
-                          {isEditingBudget ? (
-                            <input
-                              value={editingBudgetValue}
-                              autoFocus
-                              inputMode="numeric"
-                              disabled={isSavingBudget}
-                              onChange={e => setEditingBudgetValue(e.target.value.replace(/[^\d]/g, ''))}
-                              onBlur={() => saveBudget(campaign)}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') saveBudget(campaign);
-                                if (e.key === 'Escape') cancelEditBudget();
-                              }}
-                              style={{
-                                width: '100px',
-                                height: '26px',
-                                textAlign: 'right',
-                                border: '1px solid var(--border2)',
-                                borderRadius: '4px',
-                                padding: '0 6px',
-                                fontSize: '12px',
-                                color: 'var(--txt)',
-                                background: 'var(--s1)'
-                              }}
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => startEditBudget(campaign)}
-                              title="Click để sửa ngân sách"
-                              style={{
-                                border: 0,
-                                padding: 0,
-                                background: 'transparent',
-                                color: 'var(--txt)',
-                                cursor: 'text',
-                                font: 'inherit',
-                                fontWeight: 700,
-                                fontSize: '12.5px'
-                              }}
-                            >
-                              {isSavingBudget ? '...' : formatVND(campaign.budget)}
-                            </button>
-                          )}
-                          <div style={{ fontSize: '10.5px', color: isLifetime ? 'var(--o)' : 'var(--muted2)', marginTop: '2px' }}>
-                            {isLifetime ? 'Trọn đời' : 'Hàng ngày'}
-                          </div>
-                        </td>
-
-                        {/* Mục tiêu */}
-                        <td style={{ fontSize: '12px', color: 'var(--txt)' }}>
-                          {campaign.objective === 'OUTCOME_SALES' ? 'Doanh số' : (campaign.objective === 'OUTCOME_TRAFFIC' ? 'Lưu lượng truy cập' : 'Lượt tương tác')}
-                        </td>
-
-                        {/* Số lượt mua hàng */}
-                        <td className="text-center" style={{ fontWeight: campaign.metaOrders > 0 ? 600 : 400, color: campaign.metaOrders > 0 ? 'var(--txt)' : 'var(--muted2)' }}>
-                          {campaign.metaOrders > 0 ? formatNumber(campaign.metaOrders) : '-'}
-                        </td>
-
-                        {/* Đơn đặt hàng đã tạo (POS) */}
-                        <td className="text-center" style={{ fontWeight: campaign.orderCount > 0 ? 600 : 400, color: campaign.orderCount > 0 ? 'var(--txt)' : 'var(--muted2)' }}>
-                          {campaign.orderCount > 0 ? formatNumber(campaign.orderCount) : '-'}
-                        </td>
-
-                        {/* Lượt bắt đầu cuộc trò chuyện */}
-                        <td className="text-right" style={{ fontWeight: campaign.messages > 0 ? 600 : 400 }}>
-                          {campaign.messages > 0 ? formatNumber(campaign.messages) : '-'}
-                        </td>
-
-                        {/* Chi phí trên mỗi lượt bắt đầu */}
-                        <td className="text-right">
-                          {campaign.costPerMessage > 0 ? formatVND(campaign.costPerMessage) : '-'}
-                        </td>
-
-                        {/* Số tiền đã chi tiêu */}
-                        <td className="text-right" style={{ fontWeight: 600 }}>
-                          {campaign.spend > 0 ? formatVND(campaign.spend) : '0 ₫'}
-                        </td>
+                        {visibleColumns.map(column => renderCampaignCell(column, campaign))}
                       </tr>
                     );
                   })}
@@ -1682,22 +2056,7 @@ export default function Campaigns() {
                       <td colSpan={2} style={{ fontWeight: 700 }}>
                         Kết quả từ {formatNumber(filteredCampaigns.length)} chiến dịch
                       </td>
-                      <td colSpan={5}></td>
-                      <td className="text-center" style={{ fontWeight: 700 }}>
-                        {summaryTotals.metaOrders > 0 ? formatNumber(summaryTotals.metaOrders) : '-'}
-                      </td>
-                      <td className="text-center" style={{ fontWeight: 700 }}>
-                        {summaryTotals.orderCount > 0 ? formatNumber(summaryTotals.orderCount) : '-'}
-                      </td>
-                      <td className="text-right" style={{ fontWeight: 700 }}>
-                        {summaryTotals.messages > 0 ? formatNumber(summaryTotals.messages) : '-'}
-                      </td>
-                      <td className="text-right" style={{ fontWeight: 700 }}>
-                        {avgCostPerMessage > 0 ? formatVND(avgCostPerMessage) : '-'}
-                      </td>
-                      <td className="text-right" style={{ fontWeight: 700, color: 'var(--txt)' }}>
-                        {formatVND(summaryTotals.spend)}
-                      </td>
+                      {visibleColumns.map(renderFooterCell)}
                     </tr>
                   </tfoot>
                 )}
@@ -1705,65 +2064,18 @@ export default function Campaigns() {
             )
           )}
 
-          {/* TAB 3: ADSETS VIEW */}
-          {activeTab === 'adsets' && (
-            <div className="empty" style={{ padding: '60px 20px', textAlign: 'center' }}>
-              <div className="ei" style={{ fontSize: '32px' }}>📦</div>
-              <h3 style={{ marginTop: '12px', fontSize: '16px', fontWeight: 700 }}>Nhóm quảng cáo</h3>
-              <p style={{ color: 'var(--muted2)', marginTop: '6px', fontSize: '13px' }}>
-                Dữ liệu nhóm quảng cáo được đồng bộ và quản lý trực tiếp theo chiến dịch.
-              </p>
-              <button
-                type="button"
-                className="ads-manager-btn primary"
-                onClick={() => setActiveTab('campaigns')}
-                style={{ marginTop: '16px' }}
-              >
-                Về danh sách Chiến dịch
-              </button>
-            </div>
-          )}
-
-          {/* TAB 4: ADS VIEW */}
-          {activeTab === 'ads' && (
-            <div className="empty" style={{ padding: '60px 20px', textAlign: 'center' }}>
-              <div className="ei" style={{ fontSize: '32px' }}>📢</div>
-              <h3 style={{ marginTop: '12px', fontSize: '16px', fontWeight: 700 }}>Quảng cáo</h3>
-              <p style={{ color: 'var(--muted2)', marginTop: '6px', fontSize: '13px' }}>
-                Dữ liệu chi tiết từng quảng cáo được thống kê theo chiến dịch hoạt động.
-              </p>
-              <button
-                type="button"
-                className="ads-manager-btn primary"
-                onClick={() => setActiveTab('campaigns')}
-                style={{ marginTop: '16px' }}
-              >
-                Về danh sách Chiến dịch
-              </button>
-            </div>
-          )}
-
-          {/* TAB 5: POSTS VIEW */}
-          {activeTab === 'posts' && (
-            <div className="empty" style={{ padding: '60px 20px', textAlign: 'center' }}>
-              <div className="ei" style={{ fontSize: '32px' }}>📝</div>
-              <h3 style={{ marginTop: '12px', fontSize: '16px', fontWeight: 700 }}>Bài viết</h3>
-              <p style={{ color: 'var(--muted2)', marginTop: '6px', fontSize: '13px' }}>
-                Quản lý bài viết Fanpage và lên lịch đăng bài tự động.
-              </p>
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '16px' }}>
-                <a href="/creater-page" className="ads-manager-btn primary">
-                  Đi đến Trang Đăng Bài
-                </a>
-                <button
-                  type="button"
-                  className="ads-manager-btn"
-                  onClick={() => setActiveTab('campaigns')}
-                >
-                  Về danh sách Chiến dịch
-                </button>
-              </div>
-            </div>
+          {/* TAB 3-5: NHOM QUANG CAO / QUANG CAO / BAI VIET cua cac camp dang chon */}
+          {['adsets', 'ads', 'posts'].includes(activeTab) && (
+            <AdsManagerChildren
+              level={activeTab}
+              selectedCampaigns={selectedCampaignsAll}
+              campaignNameById={campaignNameById}
+              fromDate={filterFromDate}
+              toDate={filterToDate}
+              searchTerm={searchTerm}
+              reloadToken={childrenReloadToken}
+              onBackToCampaigns={() => setActiveTab('campaigns')}
+            />
           )}
         </div>
 
