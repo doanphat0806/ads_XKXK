@@ -263,6 +263,10 @@ export default function Campaigns() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCampaignKeys, setSelectedCampaignKeys] = useState(() => new Set());
   const [bulkToggling, setBulkToggling] = useState('');
+  // Sua gia thau hang loat cho cac camp da chon
+  const [bulkBidOpen, setBulkBidOpen] = useState(false);
+  const [bulkBidValue, setBulkBidValue] = useState('');
+  const [bulkBidSaving, setBulkBidSaving] = useState(false);
   // Tang len khi bam tai lai -> tab nhom QC / quang cao / bai viet lay lai tu Facebook
   const [childrenReloadToken, setChildrenReloadToken] = useState(0);
 
@@ -1086,6 +1090,62 @@ export default function Campaigns() {
     }
   };
 
+  // Sua gia thau (bid_amount) cho tat ca adset cua cac camp da chon
+  const openBulkBid = () => {
+    const bids = selectedCampaigns.map(c => Number(c.bidAmount || 0)).filter(v => v > 0);
+    const sameBid = bids.length && bids.every(v => v === bids[0]) ? String(bids[0]) : '';
+    setBulkBidValue(sameBid);
+    setBulkBidOpen(true);
+  };
+
+  const cancelBulkBid = () => {
+    if (bulkBidSaving) return;
+    setBulkBidOpen(false);
+    setBulkBidValue('');
+  };
+
+  const saveBulkBid = async () => {
+    if (!selectedCampaigns.length || bulkBidSaving) return;
+    const bidAmount = Math.round(Number(bulkBidValue));
+    if (!Number.isFinite(bidAmount) || bidAmount <= 0) {
+      toast.error('Giá thầu không hợp lệ');
+      return;
+    }
+    if (!window.confirm(`Đặt giá thầu ${formatVND(bidAmount)} cho ${selectedCampaigns.length} chiến dịch đã chọn?`)) return;
+
+    setBulkBidSaving(true);
+    try {
+      const payload = {
+        bidAmount,
+        fromDate: filterFromDate,
+        toDate: filterToDate,
+        items: selectedCampaigns.map(campaign => ({
+          campaignId: campaign.campaignId,
+          accountId: getCampaignAccountId(campaign)
+        }))
+      };
+      const result = await api('POST', '/campaigns/bulk-bid-update', payload, { timeoutMs: 10 * 60 * 1000 });
+      const updatedKeys = new Set((result?.results || []).map(r => `${r.accountId}:${r.campaignId}`));
+      setCampaigns(items => items.map(item => (
+        updatedKeys.has(`${getCampaignAccountId(item)}:${item.campaignId}`) ? { ...item, bidAmount } : item
+      )));
+      if (result?.logMessage) setLastToggleLog(result.logMessage);
+      const changedText = `${formatNumber(result?.changed || 0)}/${formatNumber(result?.requested || selectedCampaigns.length)}`;
+      if (result?.failed > 0) {
+        const firstError = result.errors?.[0]?.error;
+        toast.warn(`Đã sửa giá thầu ${changedText} camp, lỗi ${formatNumber(result.failed)}${firstError ? `: ${firstError}` : ''}`);
+      } else {
+        toast.success(`Đã sửa giá thầu ${changedText} camp`);
+      }
+      setBulkBidOpen(false);
+      setBulkBidValue('');
+    } catch (error) {
+      toast.error('Lỗi sửa giá thầu: ' + error.message);
+    } finally {
+      setBulkBidSaving(false);
+    }
+  };
+
   // Export Campaigns to Excel
   const exportExcel = async () => {
     if (filteredCampaigns.length === 0) return;
@@ -1622,6 +1682,51 @@ export default function Campaigns() {
               >
                 {bulkToggling === 'ACTIVE' ? 'Đang bật...' : `Bật đã chọn (${selectedCampaigns.length})`}
               </button>
+              {bulkBidOpen ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoFocus
+                    placeholder="Giá thầu (đ)"
+                    value={bulkBidValue ? Number(bulkBidValue).toLocaleString('vi-VN') : ''}
+                    disabled={bulkBidSaving}
+                    onChange={e => setBulkBidValue(e.target.value.replace(/[^\d]/g, ''))}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') saveBulkBid();
+                      if (e.key === 'Escape') cancelBulkBid();
+                    }}
+                    style={{ width: '120px', height: '30px', padding: '0 8px', textAlign: 'right' }}
+                  />
+                  <button
+                    type="button"
+                    className="ads-manager-btn"
+                    onClick={saveBulkBid}
+                    disabled={bulkBidSaving || !bulkBidValue}
+                    style={{ color: '#2563eb', borderColor: '#2563eb', fontWeight: 600 }}
+                  >
+                    {bulkBidSaving ? 'Đang lưu...' : 'Lưu'}
+                  </button>
+                  <button
+                    type="button"
+                    className="ads-manager-btn"
+                    onClick={cancelBulkBid}
+                    disabled={bulkBidSaving}
+                  >
+                    Hủy
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="ads-manager-btn"
+                  onClick={openBulkBid}
+                  disabled={Boolean(bulkToggling)}
+                  style={{ color: '#2563eb', borderColor: '#2563eb', fontWeight: 600 }}
+                >
+                  {`Sửa giá thầu (${selectedCampaigns.length})`}
+                </button>
+              )}
               <button
                 type="button"
                 className="ads-manager-btn"
@@ -1986,6 +2091,14 @@ export default function Campaigns() {
                               type="button"
                               className="account-action-btn danger"
                               title="Xóa tài khoản"
+
+
+
+
+
+
+
+
                               aria-label="Xóa tài khoản"
                               onClick={() => deleteSingleAccount(acc._id, acc.name)}
                             >
