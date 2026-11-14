@@ -109,6 +109,10 @@ function CellInner({
     }
   };
 
+  // O ghi chu dang sua: textarea noi len tren (absolute) thay vi day cao dong -
+  // bang ao hoa co chieu cao dong co dinh nen dong cao hon se de len dong ben duoi.
+  if (isEditing && isNoteColumn) classes.push('is-editing-note');
+
   return (
     <td className={classes.join(' ')} style={{ width: column.width, minWidth: column.width }}>
       {isEditing ? (

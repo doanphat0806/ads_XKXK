@@ -6198,6 +6198,24 @@
       line-height: 1.35;
     }
 
+    /* Ghi chu dang sua: giu nguyen chieu cao dong 28px, textarea noi len tren
+       cac dong ben duoi nhu popup (bang ao hoa khong cho dong cao len). */
+    #page-deal-stop-orders .deal-table td.is-editing-note {
+      position: relative;
+      overflow: visible;
+    }
+
+    #page-deal-stop-orders td.is-editing-note .deal-inline-textarea {
+      position: absolute;
+      top: 2px;
+      left: 4px;
+      z-index: 30;
+      width: calc(100% - 8px);
+      min-height: 72px;
+      border-color: #3b82f6;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+    }
+
     #page-deal-stop-orders .deal-inline-grid-input {
       width: 100%;
       min-height: 24px;

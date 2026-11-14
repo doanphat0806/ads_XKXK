@@ -86,27 +86,53 @@ function normalizeCode(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
 }
 
-function getDirectInputRowPayload(row = {}) {
-  return {
+const DIRECT_SAVE_FIELDS = ['orderSizeS', 'orderSizeM', 'orderSizeL', 'orderSizeXL', 'orderSizeFZ', 'ghiChu'];
+
+// Chi gui dung cac truong vua sua. Truoc day moi lan luu 1 o (vd: size S) deu gui
+// kem ca ghiChu + cac size khac dang co o may minh - neu may nay chua dong bo ghi
+// chu nguoi khac vua nhap thi PATCH se ghi de ghi chu do ve rong (mat ghi chu).
+function getDirectInputRowPayload(row = {}, fields = DIRECT_SAVE_FIELDS) {
+  const payload = {
     id: row.id,
     ma: row.ma,
-    slKhachDat: row.slKhachDat,
-    orderSizeS: row.orderSizeS ?? '',
-    orderSizeM: row.orderSizeM ?? '',
-    orderSizeL: row.orderSizeL ?? '',
-    orderSizeXL: row.orderSizeXL ?? '',
-    orderSizeFZ: row.orderSizeFZ ?? '',
-    ghiChu: row.ghiChu ?? ''
+    slKhachDat: row.slKhachDat
   };
+  fields.forEach(field => {
+    payload[field] = row[field] ?? '';
+  });
+  return payload;
 }
 
-function sendDealStopRowKeepalive(activeTab, row = {}) {
+// Ap map ghi chu/order size rieng tu server (state.directInputByTab[tab]) vao cac dong.
+// Map nay la ban chuan cho cac truong nhanh, ke ca voi ma nam ngoai 5000 dong ma
+// server luu trong rowsByTab.
+function applyDirectInputToRows(rows = [], tabDirectInput = {}, config, isLocked = () => false) {
+  if (!tabDirectInput || !Object.keys(tabDirectInput).length) return rows;
+  return rows.map(row => {
+    const code = normalizeCode(row.ma);
+    const entry = tabDirectInput[code];
+    if (!entry || isLocked(row, code)) return row;
+    let changed = false;
+    const nextRow = { ...row };
+    DIRECT_SAVE_FIELDS.forEach(field => {
+      const value = entry[field] ?? '';
+      if ((row[field] ?? '') !== value) {
+        nextRow[field] = value;
+        changed = true;
+      }
+    });
+    return changed ? recalculateRow(nextRow, config) : row;
+  });
+}
+
+function sendDealStopRowKeepalive(activeTab, entry = {}) {
   if (typeof window === 'undefined') return;
+  const row = entry.row || {};
   const token = getAuthToken();
   const payload = {
     tabId: activeTab,
     ma: normalizeCode(row.ma),
-    row: getDirectInputRowPayload(row),
+    row: getDirectInputRowPayload(row, entry.fields || DIRECT_SAVE_FIELDS),
     // navigator.sendBeacon() khong cho dat header Authorization, nen kem token
     // vao body - server chap nhan token qua body lam fallback (xem getBearerToken).
     token
@@ -264,7 +290,7 @@ function markManualOverride(row = {}, field = '') {
   };
 }
 
-function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, actualQtyByCode = {}) {
+function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, actualQtyByCode = {}, directInput = {}) {
   const hidden = new Set(hiddenCodes.map(normalizeCode));
   const localByCode = new Map(localRows.map(row => [normalizeCode(row.ma), row]));
   const sourceByCode = new Map(sourceRows.map(row => [normalizeCode(row.ma), row]));
@@ -272,10 +298,12 @@ function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, ac
   const buildMergedSourceRow = (sourceRow) => {
     const localRow = localByCode.get(normalizeCode(sourceRow.ma));
     const manualOverrides = cleanManualOverrides(localRow);
+    // Ma chua co dong local (vd: nam ngoai 5000 dong server luu) thi lay ghi chu /
+    // order size tu map rieng, khong de trong.
     const getLocalText = (field) => (
       localRow && Object.prototype.hasOwnProperty.call(localRow, field)
         ? localRow[field]
-        : ''
+        : (directInput[normalizeCode(sourceRow.ma)]?.[field] ?? '')
     );
     const overrideNumber = (field, fallback) => (
       manualOverrides[field] === true && Object.prototype.hasOwnProperty.call(localRow || {}, field)
@@ -503,7 +531,39 @@ export default function DealStopOrders() {
   const pollTimerRef = React.useRef(null);
   const autoRefreshTimerRef = React.useRef(null);
   const rowSaveTimersRef = React.useRef(new Map());
+  // code -> { row, fields: Set } : dong dang cho luu nhanh va cac truong can gui.
   const pendingDirectRowsRef = React.useRef(new Map());
+  // Tang moi khi nguoi dung sua o tren bang - applyRemoteState dung de bo snapshot
+  // GET da cu (lay truoc khi nguoi dung vua sua) thay vi ghi de len ban moi.
+  const localEditSeqRef = React.useRef(0);
+  // Map ghi chu/order size theo ma cua tab hien tai, lay tu server.
+  const directInputRef = React.useRef({});
+
+  // Ghi nhan updatedAt tu response cua chinh minh. Neu truoc lan ghi nay server da
+  // co thay doi cua nguoi khac (previousUpdatedAt > moc dang biet) thi KHONG day
+  // moc len, de nhip poll sau van keo thay doi do ve (truoc day moc bi day len nen
+  // may nay khong bao gio thay ghi chu nguoi khac nhap -> roi ghi de no).
+  const acknowledgeOwnWrite = React.useCallback((res) => {
+    const nextUpdatedAt = res?.state?.updatedAt;
+    if (!nextUpdatedAt) return;
+    const previousUpdatedAt = res?.previousUpdatedAt || '';
+    const knownUpdatedAt = remoteUpdatedAtRef.current;
+    if (!knownUpdatedAt || !previousUpdatedAt || previousUpdatedAt <= knownUpdatedAt) {
+      if (!knownUpdatedAt || nextUpdatedAt > knownUpdatedAt) {
+        remoteUpdatedAtRef.current = nextUpdatedAt;
+      }
+    }
+  }, []);
+
+  const queuePendingDirectRow = React.useCallback((code, row, field) => {
+    const previous = pendingDirectRowsRef.current.get(code);
+    const fields = new Set(previous?.fields || []);
+    if (field) fields.add(field);
+    const entry = { row, fields };
+    pendingDirectRowsRef.current.set(code, entry);
+    localEditSeqRef.current += 1;
+    return entry;
+  }, []);
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -526,6 +586,11 @@ export default function DealStopOrders() {
         if (cancelled) return;
 
         remoteUpdatedAtRef.current = remoteState.updatedAt || '';
+        directInputRef.current = remoteState.directInputByTab?.[activeTab] || {};
+        nextState.rowsByTab = {
+          ...nextState.rowsByTab,
+          [activeTab]: applyDirectInputToRows(nextState.rowsByTab[activeTab] || [], directInputRef.current, nextState.config)
+        };
         replaceConfig(nextState.config);
         setStaffList(nextState.staffList);
         setActualQtyByCode(nextState.actualQtyByCode);
@@ -572,9 +637,7 @@ export default function DealStopOrders() {
       .catch(() => {})
       .then(() => api('PUT', DEAL_STOP_STATE_API, { state: nextState }, { timeoutMs: 60000 }))
       .then(res => {
-        if (res?.state?.updatedAt) {
-          remoteUpdatedAtRef.current = res.state.updatedAt;
-        }
+        acknowledgeOwnWrite(res);
       })
       .catch(error => {
         if (!silent) toast.error(`Lưu dữ liệu Đóng deal lỗi: ${error.message}`);
@@ -583,7 +646,7 @@ export default function DealStopOrders() {
         isSavingRef.current = false;
       });
     return saveStateRequestRef.current;
-  }, [activeTab]);
+  }, [acknowledgeOwnWrite, activeTab]);
 
   const scheduleSaveSharedState = React.useCallback(() => {
     if (!stateReady) return;
@@ -598,47 +661,62 @@ export default function DealStopOrders() {
     }, 600);
   }, [saveSharedState, stateReady]);
 
-  const saveDirectInputRow = React.useCallback((row) => {
+  const saveDirectInputRow = React.useCallback((entry) => {
+    const row = entry?.row;
     const code = normalizeCode(row?.ma);
     if (!code || !stateReady) return Promise.resolve();
 
     return api('PATCH', '/deal-stop/state/row', {
       tabId: activeTab,
       ma: code,
-      row: getDirectInputRowPayload(row)
+      row: getDirectInputRowPayload(row, [...entry.fields])
     }, { timeoutMs: 30000 })
       .then(res => {
-        if (res?.state?.updatedAt) {
-          remoteUpdatedAtRef.current = res.state.updatedAt;
+        acknowledgeOwnWrite(res);
+        if (res?.row) {
+          const savedEntry = {};
+          DIRECT_SAVE_FIELDS.forEach(field => {
+            savedEntry[field] = res.row[field] ?? '';
+          });
+          directInputRef.current = { ...directInputRef.current, [code]: savedEntry };
         }
-        pendingDirectRowsRef.current.delete(code);
+        // Chi xoa neu khong co ban moi hon duoc them vao trong luc request dang chay -
+        // truoc day xoa luon ca ban moi hon, timer cua no thay rong nen bo qua -> mat chu.
+        if (pendingDirectRowsRef.current.get(code) === entry) {
+          pendingDirectRowsRef.current.delete(code);
+        }
         return res;
       })
       .catch(error => {
-        pendingDirectRowsRef.current.set(code, row);
+        const current = pendingDirectRowsRef.current.get(code);
+        if (!current) {
+          pendingDirectRowsRef.current.set(code, entry);
+        } else if (current !== entry) {
+          entry.fields.forEach(field => current.fields.add(field));
+        }
         throw error;
       });
-  }, [activeTab, stateReady]);
+  }, [acknowledgeOwnWrite, activeTab, stateReady]);
 
-  const scheduleDirectInputRowSave = React.useCallback((row) => {
+  const scheduleDirectInputRowSave = React.useCallback((row, field) => {
     const code = normalizeCode(row?.ma);
     if (!code) return;
 
-    pendingDirectRowsRef.current.set(code, row);
+    queuePendingDirectRow(code, row, field);
     const existingTimer = rowSaveTimersRef.current.get(code);
     if (existingTimer) window.clearTimeout(existingTimer);
 
     const timer = window.setTimeout(() => {
       rowSaveTimersRef.current.delete(code);
-      const latestRow = pendingDirectRowsRef.current.get(code);
-      if (!latestRow) return;
-      saveDirectInputRow(latestRow).catch(error => {
-        toast.error(`Lưu ĐH ${latestRow.ma || code} lỗi: ${error.message}`);
+      const latestEntry = pendingDirectRowsRef.current.get(code);
+      if (!latestEntry) return;
+      saveDirectInputRow(latestEntry).catch(error => {
+        toast.error(`Lưu ĐH ${latestEntry.row?.ma || code} lỗi: ${error.message}`);
       });
     }, DEAL_STOP_ROW_SAVE_DEBOUNCE_MS);
 
     rowSaveTimersRef.current.set(code, timer);
-  }, [saveDirectInputRow]);
+  }, [queuePendingDirectRow, saveDirectInputRow]);
 
   // Dong dang duoc nguoi dung chinh sua hoac dang cho luu thi khong cho dong bo tu xa ghi de.
   const isRowLocked = React.useCallback((row, code) => (
@@ -665,18 +743,18 @@ export default function DealStopOrders() {
         const baseRow = currentRows.find(row => row.id === editingCell.rowId);
         if (baseRow) {
           const liveRow = { ...baseRow, [editingCell.columnId]: editValue };
-          pendingDirectRowsRef.current.set(normalizeCode(liveRow.ma), liveRow);
+          queuePendingDirectRow(normalizeCode(liveRow.ma), liveRow, editingCell.columnId);
         }
       }
 
-      pendingDirectRowsRef.current.forEach(row => sendDealStopRowKeepalive(activeTab, row));
+      pendingDirectRowsRef.current.forEach(entry => sendDealStopRowKeepalive(activeTab, entry));
     };
 
     window.addEventListener('beforeunload', flushPendingDirectRows);
     return () => {
       window.removeEventListener('beforeunload', flushPendingDirectRows);
     };
-  }, [activeTab, editingCell, editValue]);
+  }, [activeTab, editingCell, editValue, queuePendingDirectRow]);
 
   React.useEffect(() => {
     scheduleSaveSharedState();
@@ -730,7 +808,7 @@ export default function DealStopOrders() {
 
       setRowsByTab(current => {
         const { activeTab: tab, hiddenCodes: hidden, config: currentConfig, actualQtyByCode: actualQty } = mergeInputsRef.current;
-        const mergedRows = mergeSourceRowsWithLocal(sourceRows, current[tab] || [], hidden, currentConfig, actualQty);
+        const mergedRows = mergeSourceRowsWithLocal(sourceRows, current[tab] || [], hidden, currentConfig, actualQty, directInputRef.current);
         return { ...current, [tab]: mergedRows };
       });
       setSourceLoaded(true);
@@ -747,7 +825,7 @@ export default function DealStopOrders() {
     const cachedSourceRows = initialSourceCacheRef.current;
     initialSourceCacheRef.current = null;
     setRowsByTab(current => {
-      const mergedRows = mergeSourceRowsWithLocal(cachedSourceRows, current[activeTab] || [], hiddenCodes, config, actualQtyByCode);
+      const mergedRows = mergeSourceRowsWithLocal(cachedSourceRows, current[activeTab] || [], hiddenCodes, config, actualQtyByCode, directInputRef.current);
       return { ...current, [activeTab]: mergedRows };
     });
   }, [stateReady, activeTab, hiddenCodes, config, actualQtyByCode]);
@@ -773,13 +851,17 @@ export default function DealStopOrders() {
   const applyRemoteState = React.useCallback(async () => {
     if (isSavingRef.current || isReloadingRef.current) return;
     isReloadingRef.current = true;
+    const editSeqAtStart = localEditSeqRef.current;
     try {
       const data = await api('GET', DEAL_STOP_STATE_API, null, { timeoutMs: 60000 });
       // Nguoi dung co the vua sua gi do trong luc cho GET nay tra ve - ban snapshot
       // trong tay da cu, ap vao se ghi de thay doi do (vd: nhan vien vua luu bi mat
-      // sau vai giay). Bo qua, nhip poll sau se dong bo lai.
-      if (isSavingRef.current) return;
+      // sau vai giay). Bo qua, nhip poll sau se dong bo lai. Chi kiem isSavingRef
+      // la chua du: neu PATCH/PUT da xong truoc khi GET (cham) tra ve thi flag da
+      // ve false, snapshot cu van bi ap -> ghi chu vua nhap bien mat.
+      if (isSavingRef.current || localEditSeqRef.current !== editSeqAtStart) return;
       const remoteState = data?.state || {};
+      if (remoteState.updatedAt && remoteUpdatedAtRef.current && remoteState.updatedAt < remoteUpdatedAtRef.current) return;
       const nextState = normalizeDealStopState(
         hasPersistedDealStopState(remoteState, activeTab) ? remoteState : latestStateRef.current,
         activeTab
@@ -788,9 +870,15 @@ export default function DealStopOrders() {
       // Tron du lieu theo tung dong thay vi thay nguyen ca mang: dong nao giong het thi giu
       // nguyen tham chieu cu (khong render lai / khong "giat" bang), dong dang sua dang thi
       // giu ban local, dong moi tu server thi duoc them vao — khong can "reload" ca bang.
-      const mergedActiveRows = mergeRemoteRowsWithLocal(
-        nextState.rowsByTab[activeTab] || [],
-        latestStateRef.current.rowsByTab[activeTab] || [],
+      directInputRef.current = remoteState.directInputByTab?.[activeTab] || {};
+      const mergedActiveRows = applyDirectInputToRows(
+        mergeRemoteRowsWithLocal(
+          nextState.rowsByTab[activeTab] || [],
+          latestStateRef.current.rowsByTab[activeTab] || [],
+          isRowLocked
+        ),
+        directInputRef.current,
+        nextState.config,
         isRowLocked
       );
       const mergedState = {
@@ -899,7 +987,7 @@ export default function DealStopOrders() {
     setRowsByTab(current => {
       const currentRows = current[activeTab] || [];
       const nextRows = sourceRows.length
-        ? mergeSourceRowsWithLocal(sourceRows, currentRows, hiddenCodes, config, nextActualQtyByCode)
+        ? mergeSourceRowsWithLocal(sourceRows, currentRows, hiddenCodes, config, nextActualQtyByCode, directInputRef.current)
         : currentRows.map(row => {
             const code = normalizeCode(row.ma);
             if (!hasImportedActualQty(nextActualQtyByCode, code)) {
@@ -964,17 +1052,17 @@ export default function DealStopOrders() {
           window.clearTimeout(existingTimer);
           rowSaveTimersRef.current.delete(code);
         }
-        pendingDirectRowsRef.current.set(code, nextRow);
-        saveDirectInputRow(nextRow).catch(error => {
+        const entry = queuePendingDirectRow(code, nextRow, columnId);
+        saveDirectInputRow(entry).catch(error => {
           toast.error(`Lưu ĐH ${nextRow.ma || code} lỗi: ${error.message}`);
         });
       } else {
-        scheduleDirectInputRowSave(nextRow);
+        scheduleDirectInputRowSave(nextRow, columnId);
       }
 
       return nextRow;
     }));
-  }, [config, saveDirectInputRow, scheduleDirectInputRowSave, updateRows]);
+  }, [config, queuePendingDirectRow, saveDirectInputRow, scheduleDirectInputRowSave, updateRows]);
 
   const startEdit = (rowId, columnId, currentValue) => {
     setEditingCell({ rowId, columnId });
@@ -1008,11 +1096,12 @@ export default function DealStopOrders() {
       if (editingCell.columnId === 'ghiChu') {
         // Luu ghi chu ngay qua duong PATCH nhanh (giong cot orderSize*) thay vi
         // cho debounce 600ms cua toan bo state - tranh mat ghi chu khi F5/luu loi am tham.
-        scheduleDirectInputRowSave(nextRow);
+        scheduleDirectInputRowSave(nextRow, 'ghiChu');
       }
 
       return nextRow;
     }));
+    localEditSeqRef.current += 1;
 
     setEditingCell(targetCell);
     if (targetCell) {
@@ -1099,7 +1188,21 @@ export default function DealStopOrders() {
       setHiddenCodes(current => current.filter(item => normalizeCode(item) !== code));
     }
 
-    updateRows(currentRows => [nextRow, ...currentRows.filter(row => normalizeCode(row.ma) !== code)]);
+    // Them lai ma da co: giu ghi chu / order size cu neu form de trong, khong de
+    // dong moi ghi de thanh rong. Ghi chu nhap trong form thi luu ngay qua PATCH.
+    const existingRow = rows.find(row => normalizeCode(row.ma) === code);
+    const savedInput = directInputRef.current[code] || {};
+    const mergedRow = { ...nextRow };
+    DIRECT_SAVE_FIELDS.forEach(field => {
+      if (!String(mergedRow[field] ?? '').trim()) {
+        mergedRow[field] = existingRow?.[field] ?? savedInput[field] ?? '';
+      }
+    });
+    if (code && String(nextRow.ghiChu ?? '').trim()) {
+      scheduleDirectInputRowSave(mergedRow, 'ghiChu');
+    }
+
+    updateRows(currentRows => [mergedRow, ...currentRows.filter(row => normalizeCode(row.ma) !== code)]);
     const prefix = String(nextRow.ma || '').trim().charAt(0).toUpperCase();
     if (prefix) {
       setGroupExpanded(current => ({ ...current, [prefix]: true }));

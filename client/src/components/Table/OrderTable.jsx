@@ -109,8 +109,9 @@ export default function OrderTable({
     }
 
     const rowClass = colorRules.getRowColor(item.row.slCanDatThem);
+    const isEditingNote = editingCell?.rowId === item.row.id && editingCell?.columnId === 'ghiChu';
     return (
-      <tr key={item.row.id} className={`deal-data-row ${rowClass}`.trim()}>
+      <tr key={item.row.id} className={`deal-data-row ${rowClass} ${isEditingNote ? 'is-editing-note-row' : ''}`.trim()}>
         {visibleColumns.map(column => {
           const isEditing = editingCell?.rowId === item.row.id && editingCell?.columnId === column.id;
           return (
@@ -147,6 +148,12 @@ export default function OrderTable({
             <tbody style={{ position: 'relative', height: `${totalSize}px` }}>
               {virtualItems.map(virtualItem => {
                 const item = flatRows[virtualItem.index];
+                // Moi dong ao co transform -> la 1 stacking context rieng, dong ve sau
+                // luon de len dong truoc. Dong dang sua ghi chu phai nang z-index de
+                // popup textarea noi len tren cac dong ben duoi.
+                const isEditingNoteRow = item?.kind === 'row'
+                  && editingCell?.rowId === item.row.id
+                  && editingCell?.columnId === 'ghiChu';
                 return (
                   <tr
                     key={`virtual-${virtualItem.key}`}
@@ -154,6 +161,7 @@ export default function OrderTable({
                       position: 'absolute',
                       top: 0,
                       left: 0,
+                      zIndex: isEditingNoteRow ? 20 : undefined,
                       transform: `translateY(${virtualItem.start}px)`,
                       width: '100%',
                       display: 'table',

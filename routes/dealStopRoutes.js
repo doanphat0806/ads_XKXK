@@ -7,6 +7,9 @@ const { getAppConfig, clearAppConfigCache } = require('../services/configService
 const router = express.Router();
 const DEAL_STOP_ROW_TEXT_LIMIT = 500;
 const DEAL_STOP_ORDER_SIZE_FIELDS = ['orderSizeS', 'orderSizeM', 'orderSizeL', 'orderSizeXL', 'orderSizeFZ'];
+const DEAL_STOP_FAST_SAVE_FIELDS = [...DEAL_STOP_ORDER_SIZE_FIELDS, 'ghiChu'];
+const DEAL_STOP_ROWS_LIMIT = 5000;
+const DEAL_STOP_DIRECT_INPUT_CODE_LIMIT = 30000;
 
 // PATCH /state/row (luu nhanh 1 dong) va PUT /state (luu toan bo bang) deu doc-sua-ghi
 // ca document Config, khong atomic. Neu 2 request chay xen ke (vd server dang tai
@@ -38,9 +41,58 @@ function normalizeDealStopStateRowsByTab(value = {}) {
   return Object.fromEntries(
     Object.entries(rowsByTab).map(([tabId, rows]) => [
       String(tabId || '').slice(0, 100),
-      Array.isArray(rows) ? rows.slice(0, 5000) : []
+      Array.isArray(rows) ? rows.slice(0, DEAL_STOP_ROWS_LIMIT) : []
     ]).filter(([tabId]) => Boolean(tabId))
   );
+}
+
+// Ghi chu + order size luu rieng theo ma SP: { [tabId]: { [ma]: { ghiChu, orderSizeS, ... } } }.
+// rowsByTab bi cat o DEAL_STOP_ROWS_LIMIT dong (~540 byte/dong, document Config toi da
+// 16MB) - ma moi nam ngoai 5000 dong dau bi cat khi PUT ca bang, lam mat ghi chu vua
+// PATCH. Map nay nho (chi ma co du lieu) nen khong bi cat theo so dong.
+function pickDirectInputFields(row = {}, { keepEmpty = false } = {}) {
+  const source = toPlainObject(row);
+  const entry = {};
+  DEAL_STOP_FAST_SAVE_FIELDS.forEach(field => {
+    const limit = field === 'ghiChu' ? DEAL_STOP_ROW_TEXT_LIMIT : 100;
+    const value = toBoundedText(source[field] ?? '', limit);
+    if (keepEmpty || value.trim()) entry[field] = value;
+  });
+  return entry;
+}
+
+function normalizeDealStopDirectInputByTab(value = {}) {
+  const byTab = toPlainObject(value);
+  return Object.fromEntries(
+    Object.entries(byTab).map(([tabId, byCode]) => [
+      String(tabId || '').slice(0, 100),
+      Object.fromEntries(
+        Object.entries(toPlainObject(byCode))
+          .map(([code, entry]) => [normalizeDealStopCode(code), pickDirectInputFields(entry)])
+          .filter(([code, entry]) => Boolean(code) && Object.keys(entry).length > 0)
+          .slice(0, DEAL_STOP_DIRECT_INPUT_CODE_LIMIT)
+      )
+    ]).filter(([tabId]) => Boolean(tabId))
+  );
+}
+
+// Map day du = gia tri tu cac dong cu (du lieu truoc khi co map rieng) + map rieng
+// de len tren (map rieng luon la ban moi nhat).
+function buildDirectInputByTab(state = {}) {
+  const rowsByTab = toPlainObject(state.rowsByTab);
+  const directByTab = normalizeDealStopDirectInputByTab(state.directInputByTab);
+  const tabIds = new Set([...Object.keys(rowsByTab), ...Object.keys(directByTab)]);
+  const result = {};
+  tabIds.forEach(tabId => {
+    const fromRows = {};
+    (Array.isArray(rowsByTab[tabId]) ? rowsByTab[tabId] : []).forEach(row => {
+      const code = normalizeDealStopCode(row?.ma);
+      const entry = pickDirectInputFields(row);
+      if (code && Object.keys(entry).length) fromRows[code] = entry;
+    });
+    result[tabId] = { ...fromRows, ...(directByTab[tabId] || {}) };
+  });
+  return normalizeDealStopDirectInputByTab(result);
 }
 
 function normalizeDealStopOrderState(value = {}) {
@@ -63,6 +115,7 @@ function normalizeDealStopOrderState(value = {}) {
       : [],
     actualQtyByCode: cleanActualQtyByCode,
     rowsByTab: normalizeDealStopStateRowsByTab(state.rowsByTab),
+    directInputByTab: normalizeDealStopDirectInputByTab(state.directInputByTab),
     updatedAt: state.updatedAt || '',
     updatedBy: state.updatedBy || ''
   };
@@ -103,10 +156,10 @@ function normalizeDealStopRowPatch(row = {}, existingRow = {}, code = '') {
 router.get('/state', async (req, res) => {
   try {
     const config = await getAppConfig();
-    res.json({
-      ok: true,
-      state: normalizeDealStopOrderState(config?.dealStopOrderState || {})
-    });
+    const rawState = config?.dealStopOrderState || {};
+    const state = normalizeDealStopOrderState(rawState);
+    state.directInputByTab = buildDirectInputByTab(rawState);
+    res.json({ ok: true, state });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -122,7 +175,7 @@ async function saveDealStopRow(req, res) {
       return res.status(400).json({ error: 'Thieu tab hoac ma san pham' });
     }
 
-    const { state, nextRow } = await enqueueDealStopWrite(async () => {
+    const { state, nextRow, previousUpdatedAt } = await enqueueDealStopWrite(async () => {
       const now = new Date();
       // Bat buoc doc du lieu moi nhat (khong dung cache) vi day la thao tac
       // doc-sua-ghi: doc cache cu se lam mat thay doi cua request truoc do
@@ -132,16 +185,35 @@ async function saveDealStopRow(req, res) {
       const rowsByTab = normalizeDealStopStateRowsByTab(currentState.rowsByTab);
       const currentRows = Array.isArray(rowsByTab[tabId]) ? rowsByTab[tabId] : [];
       const rowIndex = currentRows.findIndex(row => normalizeDealStopCode(row?.ma) === code);
-      const nextRow = normalizeDealStopRowPatch(rowPatch, rowIndex >= 0 ? currentRows[rowIndex] : {}, code);
+      const directInputByTab = buildDirectInputByTab(currentState);
+      const tabDirectInput = directInputByTab[tabId] || {};
+      // Gia tri hien tai cua cac truong nhanh lay tu map rieng (ban moi nhat), ke ca
+      // khi dong da bi cat khoi rowsByTab.
+      const baseRow = {
+        ...(rowIndex >= 0 ? currentRows[rowIndex] : {}),
+        ...pickDirectInputFields(tabDirectInput[code] || {}, { keepEmpty: true })
+      };
+      const nextRow = normalizeDealStopRowPatch(rowPatch, baseRow, code);
       const nextRows = rowIndex >= 0
         ? currentRows.map((row, index) => (index === rowIndex ? nextRow : row))
-        : [nextRow, ...currentRows].slice(0, 5000);
+        // Them vao CUOI (dung thu tu client dang hien: ma moi nam cuoi bang). Truoc day
+        // chen len dau -> F5 xong dong nhay len dau nhom, tuong ghi chu bi mat. Neu da du
+        // DEAL_STOP_ROWS_LIMIT dong thi dong nay khong vao rowsByTab, ghi chu van nam
+        // trong directInputByTab va client tu ghep lai.
+        : [...currentRows, nextRow].slice(0, DEAL_STOP_ROWS_LIMIT);
 
       const state = normalizeDealStopOrderState({
         ...currentState,
         rowsByTab: {
           ...rowsByTab,
           [tabId]: nextRows
+        },
+        directInputByTab: {
+          ...directInputByTab,
+          [tabId]: {
+            ...tabDirectInput,
+            [code]: pickDirectInputFields(nextRow)
+          }
         },
         updatedAt: now.toISOString(),
         updatedBy: String(req.currentUser?.displayName || req.currentUser?.username || '').trim()
@@ -159,10 +231,12 @@ async function saveDealStopRow(req, res) {
       ).lean();
       clearAppConfigCache();
 
-      return { state, nextRow };
+      return { state, nextRow, previousUpdatedAt: currentState.updatedAt || '' };
     });
 
-    res.json({ ok: true, state, row: nextRow });
+    // previousUpdatedAt: moc updatedAt cua server ngay truoc lan ghi nay - client dung
+    // de biet giua chung co nguoi khac ghi hay khong (neu co thi van phai keo ve).
+    res.json({ ok: true, state, row: nextRow, previousUpdatedAt });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -174,16 +248,20 @@ router.patch('/state/row', saveDealStopRow);
 // hon fetch(keepalive:true) - xem sendDealStopRowKeepalive o client.
 router.post('/state/row/beacon', saveDealStopRow);
 
-const DEAL_STOP_FAST_SAVE_FIELDS = [...DEAL_STOP_ORDER_SIZE_FIELDS, 'ghiChu'];
-
-function preserveFastSaveFields(incomingRowsByTab = {}, currentRowsByTab = {}) {
+function preserveFastSaveFields(incomingRowsByTab = {}, currentRowsByTab = {}, directInputByTab = {}) {
   return Object.fromEntries(
     Object.entries(incomingRowsByTab).map(([tabId, rows]) => {
       const currentRows = Array.isArray(currentRowsByTab[tabId]) ? currentRowsByTab[tabId] : [];
       const currentByCode = new Map(currentRows.map(row => [normalizeDealStopCode(row?.ma), row]));
+      const tabDirectInput = directInputByTab[tabId] || {};
 
       const mergedRows = rows.map(row => {
-        const currentRow = currentByCode.get(normalizeDealStopCode(row?.ma));
+        const code = normalizeDealStopCode(row?.ma);
+        const directEntry = tabDirectInput[code];
+        if (directEntry) {
+          return { ...row, ...pickDirectInputFields(directEntry, { keepEmpty: true }) };
+        }
+        const currentRow = currentByCode.get(code);
         if (!currentRow) return row;
 
         const merged = { ...row };
@@ -200,7 +278,7 @@ function preserveFastSaveFields(incomingRowsByTab = {}, currentRowsByTab = {}) {
 
 router.put('/state', async (req, res) => {
   try {
-    const state = await enqueueDealStopWrite(async () => {
+    const result = await enqueueDealStopWrite(async () => {
       const now = new Date();
       // Tuong tu PATCH /state/row: phai doc fresh, khong dung cache 30s, neu
       // khong preserveFastSaveFields ben duoi se lay nham gia tri ghiChu/orderSize
@@ -210,13 +288,16 @@ router.put('/state', async (req, res) => {
       const config = await getAppConfig({ fresh: true });
       const currentState = normalizeDealStopOrderState(config?.dealStopOrderState || {});
       const incomingState = normalizeDealStopOrderState(req.body?.state || {});
+      const directInputByTab = buildDirectInputByTab(currentState);
 
       const state = normalizeDealStopOrderState({
         ...incomingState,
         // Cac truong orderSize* va ghiChu duoc luu rieng qua PATCH /state/row voi do tre thap hon,
         // nen gia tri tren server luon moi hon snapshot day du tu client. Giu nguyen
         // gia tri server de tranh bi ghi de boi snapshot cu (vd: tu dong refresh nguon).
-        rowsByTab: preserveFastSaveFields(incomingState.rowsByTab, currentState.rowsByTab),
+        rowsByTab: preserveFastSaveFields(incomingState.rowsByTab, currentState.rowsByTab, directInputByTab),
+        // Map ghi chu/order size chi duoc sua qua PATCH /state/row, khong lay tu client.
+        directInputByTab,
         updatedAt: now.toISOString(),
         updatedBy: String(req.currentUser?.displayName || req.currentUser?.username || '').trim()
       });
@@ -233,10 +314,10 @@ router.put('/state', async (req, res) => {
       ).lean();
       clearAppConfigCache();
 
-      return state;
+      return { state, previousUpdatedAt: currentState.updatedAt || '' };
     });
 
-    res.json({ ok: true, state });
+    res.json({ ok: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
