@@ -994,6 +994,21 @@ function createLegacyRuntime(app) {
     return buildVietnamCampaignStart(year, month, day, hour, minute);
   }
   
+  // Lech gio bat dau them N phut (vd tao nhieu camp: camp 1 7h00, camp 2 7h01...)
+  function offsetVietnamCampaignStart(scheduledStart, offsetMinutes = 0) {
+    const minutes = Number(offsetMinutes) || 0;
+    const startUtc = new Date(scheduledStart?.utc || '');
+    if (!minutes || Number.isNaN(startUtc.getTime())) return scheduledStart;
+    const vnLocal = new Date(startUtc.getTime() + minutes * 60 * 1000 + 7 * 60 * 60 * 1000);
+    return buildVietnamCampaignStart(
+      vnLocal.getUTCFullYear(),
+      vnLocal.getUTCMonth() + 1,
+      vnLocal.getUTCDate(),
+      vnLocal.getUTCHours(),
+      vnLocal.getUTCMinutes()
+    );
+  }
+
   function campaignDateFromScheduledStart(scheduledStart) {
     const startUtc = new Date(scheduledStart?.utc || '');
     if (Number.isNaN(startUtc.getTime())) return todayStr();
@@ -4115,6 +4130,7 @@ function createLegacyRuntime(app) {
       parseVietnamCampaignStart,
       parseVietnamCampaignEnd,
       campaignDateFromScheduledStart,
+      offsetVietnamCampaignStart,
       parseCampaignAgeRange,
       parseCampaignGender,
       getMetaGenderTargeting,

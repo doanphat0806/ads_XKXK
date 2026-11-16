@@ -1335,8 +1335,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
     const campaignGender = isShopee ? parseCampaignGender(req.body.gender) : 'female';
     const genderTargeting = getMetaGenderTargeting(campaignGender);
 
-    const scheduledStart = parseVietnamCampaignStart(req.body.startTime);
-    const campaignDate = campaignDateFromScheduledStart(scheduledStart);
+    const baseScheduledStart = parseVietnamCampaignStart(req.body.startTime);
 
     const created = [];
     const errors = [];
@@ -1353,7 +1352,10 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
       60000
     );
 
-    const processCampaignItem = async (item) => {
+    // Moi camp chay cach nhau 1 phut theo thu tu nhap: camp 1 = gio da chon, camp 2 = +1 phut...
+    const processCampaignItem = async (item, itemIndex = 0) => {
+      const scheduledStart = offsetVietnamCampaignStart(baseScheduledStart, itemIndex);
+      const campaignDate = campaignDateFromScheduledStart(scheduledStart);
       const code = item.campaignName;
       const lookupTerm = item.lookupTerm;
       const destinationUrl = getDestinationUrlFromLookupTerm(item.destinationUrl || lookupTerm);
@@ -1550,7 +1552,7 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
     let stoppedByRateLimit = false;
     for (let i = 0; i < campaignItems.length; i += createConcurrency) {
       const chunk = campaignItems.slice(i, i + createConcurrency);
-      const itemResults = await Promise.allSettled(chunk.map(processCampaignItem));
+      const itemResults = await Promise.allSettled(chunk.map((item, chunkIndex) => processCampaignItem(item, i + chunkIndex)));
 
       for (const result of itemResults) {
         if (result.status === 'fulfilled') {
@@ -1584,8 +1586,8 @@ app.post('/api/campaigns/create-from-posts', async (req, res) => {
       createConcurrency,
       createItemDelayMs,
       stoppedByRateLimit,
-      startTime: scheduledStart.fbStartTime,
-      startTimeDisplay: scheduledStart.display
+      startTime: baseScheduledStart.fbStartTime,
+      startTimeDisplay: baseScheduledStart.display
     });
   } catch (error) {
     res.status(400).json({ error: error.message });
