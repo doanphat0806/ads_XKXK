@@ -93,10 +93,11 @@ async function buildOrderContext({ from, to }) {
       sku,
       returned: stats.returned,
       returning: stats.returning,
+      undelivered: stats.undelivered || 0,
       received: stats.received,
       rate: stats.rate
     }))
-    .filter(row => row.returned + row.returning + row.received > 0)
+    .filter(row => row.returned + row.returning + row.undelivered + row.received > 0)
     .sort((a, b) => b.rate - a.rate)
     .slice(0, TOP_RETURN_SKU_LIMIT);
 
@@ -114,6 +115,7 @@ async function buildOrderContext({ from, to }) {
       shipRate: returnSummary.total.shipRate,
       returned: returnSummary.total.returned,
       returning: returnSummary.total.returning,
+      undelivered: returnSummary.total.undelivered || 0,
       received: returnSummary.total.received,
       returnRate: returnSummary.total.returnRate,
       topReturnRateSkus

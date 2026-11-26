@@ -213,14 +213,20 @@ function normalizeStatusKey(value) {
     .trim();
 }
 
+function hasUndeliveredTag(order = {}) {
+  const tags = getOrderTagText(order);
+  if (!tags) return false;
+  return normalizeStatusKey(tags).includes('giao khong thanh');
+}
+
 function classifyReturnStatus(order = {}) {
   const rawStatus = order.status || order.rawData?.status_name || order.rawData?.status || '';
   const status = normalizeStatusKey(rawStatus);
-  if (!status) return '';
 
   if (status.includes('dang hoan')) return 'returning';
   if (status.includes('da hoan')) return 'returned';
   if (status.includes('da nhan')) return 'received';
+  if (status.includes('giao khong thanh') || hasUndeliveredTag(order)) return 'undelivered';
   return '';
 }
 
@@ -379,7 +385,7 @@ function buildOrderTableStats(orders = []) {
 }
 
 // Chi cac truong buildOrderSkuStats doc: ~1/4 dung luong so voi ca rawData (lich su ~117k don: 103MB -> 26MB)
-const ORDER_SKU_STATS_FIELDS = 'orderId status rawData.status rawData.status_name rawData.items rawData.line_items rawData.products rawData.details';
+const ORDER_SKU_STATS_FIELDS = 'orderId status rawData.status rawData.status_name rawData.tags rawData.sheetColumns.col13 rawData.items rawData.line_items rawData.products rawData.details';
 
 function getOrderStatsCacheKey({ fromDate, toDate } = {}) {
   return `${fromDate || ''}:${toDate || ''}:${getOrderDataVersion({ fromDate })}`;
@@ -396,6 +402,7 @@ function buildOrderSkuStats(orders = []) {
   const returnStats = {
     returned: 0,
     returning: 0,
+    undelivered: 0,
     received: 0,
     denominator: 0,
     rate: 0
@@ -419,6 +426,7 @@ function buildOrderSkuStats(orders = []) {
         returnStatsBySku[sku] = {
           returned: 0,
           returning: 0,
+          undelivered: 0,
           received: 0,
           denominator: 0,
           rate: 0
@@ -428,15 +436,15 @@ function buildOrderSkuStats(orders = []) {
     }
   }
 
-  returnStats.denominator = returnStats.returned + returnStats.returning + returnStats.received;
+  returnStats.denominator = returnStats.returned + returnStats.returning + returnStats.undelivered + returnStats.received;
   returnStats.rate = returnStats.denominator > 0
-    ? (returnStats.returned + returnStats.returning) / returnStats.denominator
+    ? (returnStats.returned + returnStats.returning + returnStats.undelivered) / returnStats.denominator
     : 0;
 
   for (const skuStats of Object.values(returnStatsBySku)) {
-    skuStats.denominator = skuStats.returned + skuStats.returning + skuStats.received;
+    skuStats.denominator = skuStats.returned + skuStats.returning + skuStats.undelivered + skuStats.received;
     skuStats.rate = skuStats.denominator > 0
-      ? (skuStats.returned + skuStats.returning) / skuStats.denominator
+      ? (skuStats.returned + skuStats.returning + skuStats.undelivered) / skuStats.denominator
       : 0;
   }
 
@@ -449,6 +457,7 @@ function createReturnProductRateStats(key, label) {
     label,
     returned: 0,
     returning: 0,
+    undelivered: 0,
     received: 0,
     returnCount: 0,
     denominator: 0,
@@ -459,14 +468,16 @@ function createReturnProductRateStats(key, label) {
 function finalizeReturnProductRateStats(stats = {}) {
   const returned = Number(stats.returned || 0);
   const returning = Number(stats.returning || 0);
+  const undelivered = Number(stats.undelivered || 0);
   const received = Number(stats.received || 0);
-  const returnCount = returned + returning;
+  const returnCount = returned + returning + undelivered;
   const denominator = returnCount + received;
 
   return {
     ...stats,
     returned,
     returning,
+    undelivered,
     received,
     returnCount,
     denominator,
@@ -556,7 +567,7 @@ function buildReturnProductRateStats(orders = []) {
 
   for (const order of orders) {
     const returnStatus = classifyReturnStatus(order);
-    if (!['returned', 'returning', 'received'].includes(returnStatus)) continue;
+    if (!['returned', 'returning', 'undelivered', 'received'].includes(returnStatus)) continue;
 
     const productUnitCount = getOrderReturnProductUnitCount(order);
     if (productUnitCount <= 0) continue;
@@ -592,6 +603,7 @@ function buildReturnSummaryOrderStats(orders = [], { fromDate = '', toDate = '' 
     shipRate: 0,
     returned: 0,
     returning: 0,
+    undelivered: 0,
     received: 0,
     returnCount: 0,
     returnDenominator: 0,
@@ -624,6 +636,7 @@ function buildReturnSummaryOrderStats(orders = [], { fromDate = '', toDate = '' 
           shipRate: 0,
           returned: 0,
           returning: 0,
+          undelivered: 0,
           received: 0,
           returnCount: 0,
           returnDenominator: 0,
@@ -639,6 +652,7 @@ function buildReturnSummaryOrderStats(orders = [], { fromDate = '', toDate = '' 
           shipRate: 0,
           returned: 0,
           returning: 0,
+          undelivered: 0,
           received: 0,
           returnCount: 0,
           returnDenominator: 0,
@@ -671,7 +685,7 @@ function buildReturnSummaryOrderStats(orders = [], { fromDate = '', toDate = '' 
   [total, ...Object.values(daily).map(day => day.total), ...Object.values(monthly).map(month => month.total)]
     .forEach(stats => {
       stats.shipRate = stats.orderCount > 0 ? stats.shippedOrderCount / stats.orderCount : 0;
-      stats.returnCount = Number(stats.returned || 0) + Number(stats.returning || 0);
+      stats.returnCount = Number(stats.returned || 0) + Number(stats.returning || 0) + Number(stats.undelivered || 0);
       stats.returnDenominator = stats.returnCount + Number(stats.received || 0);
       stats.returnRate = stats.returnDenominator > 0 ? stats.returnCount / stats.returnDenominator : 0;
     });

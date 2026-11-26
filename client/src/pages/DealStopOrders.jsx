@@ -325,6 +325,7 @@ function mergeSourceRowsWithLocal(sourceRows, localRows, hiddenCodes, config, ac
       daNhan: Number(sourceRow.daNhan || 0),
       dangHoan: Number(sourceRow.dangHoan || 0),
       daHoan: Number(sourceRow.daHoan || 0),
+      giaoKhongThanh: Number(sourceRow.giaoKhongThanh || 0),
       dangGuiHang: overrideNumber('dangGuiHang', sourceRow.dangGuiHang),
       tongDaShip: overrideNumber('tongDaShip', sourceRow.tongDaShip),
       orderSizeS: getLocalText('orderSizeS'),

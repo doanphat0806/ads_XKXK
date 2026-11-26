@@ -234,14 +234,14 @@ const formatMetaExtraValue = (value, format) => {
   if (format === 'percent') return value > 0 ? formatPercent(value) : '-';
   return formatNumber(Math.round(value));
 };
-const EMPTY_RETURN_STATS = { returned: 0, returning: 0, received: 0, denominator: 0, rate: 0 };
-// Server gui ti le hoan theo SKU dang gon [hoan, dang hoan, da nhan] (fields=returnStatsBySku);
+const EMPTY_RETURN_STATS = { returned: 0, returning: 0, undelivered: 0, received: 0, denominator: 0, rate: 0 };
+// Server gui ti le hoan theo SKU dang gon [hoan, dang hoan, da nhan, giao khong thanh] (fields=returnStatsBySku);
 // ban cu trong cache trinh duyet van la object -> nhan ca 2 dang
 const toReturnStats = (value) => {
   if (!Array.isArray(value)) return value || EMPTY_RETURN_STATS;
-  const [returned = 0, returning = 0, received = 0] = value;
-  const denominator = returned + returning + received;
-  return { returned, returning, received, denominator, rate: denominator > 0 ? (returned + returning) / denominator : 0 };
+  const [returned = 0, returning = 0, received = 0, undelivered = 0] = value;
+  const denominator = returned + returning + undelivered + received;
+  return { returned, returning, undelivered, received, denominator, rate: denominator > 0 ? (returned + returning + undelivered) / denominator : 0 };
 };
 
 const buildStatsFromCampaigns = (campaigns = [], isShopee = false) => {
@@ -406,7 +406,7 @@ const CampaignRow = React.memo(function CampaignRow({
     ),
     returnRate: () => (
       <td key="returnRate" className="text-right" style={{ color: campaign.returnStats?.denominator > 0 ? 'var(--b)' : 'var(--muted2)' }}>
-        {campaign.returnStats?.denominator > 0 ? <><div style={{ fontWeight: 'bold' }}>{formatPercent(campaign.returnRate)}</div><div style={{ fontSize: '11px', color: 'var(--muted2)' }}>{formatNumber((campaign.returnStats.returned || 0) + (campaign.returnStats.returning || 0))} / {formatNumber(campaign.returnStats.denominator)}</div></> : ''}
+        {campaign.returnStats?.denominator > 0 ? <><div style={{ fontWeight: 'bold' }}>{formatPercent(campaign.returnRate)}</div><div style={{ fontSize: '11px', color: 'var(--muted2)' }}>{formatNumber((campaign.returnStats.returned || 0) + (campaign.returnStats.returning || 0) + (campaign.returnStats.undelivered || 0))} / {formatNumber(campaign.returnStats.denominator)}</div></> : ''}
       </td>
     ),
     impressions: () => (
@@ -976,9 +976,10 @@ export default function Dashboard() {
     const merged = keys.map(key => toReturnStats(returnStatsBySku[key])).reduce((acc, stats) => ({
       returned: acc.returned + Number(stats.returned || 0),
       returning: acc.returning + Number(stats.returning || 0),
-      received: acc.received + Number(stats.received || 0)
-    }), { returned: 0, returning: 0, received: 0 });
-    return toReturnStats([merged.returned, merged.returning, merged.received]);
+      received: acc.received + Number(stats.received || 0),
+      undelivered: acc.undelivered + Number(stats.undelivered || 0)
+    }), { returned: 0, returning: 0, received: 0, undelivered: 0 });
+    return toReturnStats([merged.returned, merged.returning, merged.received, merged.undelivered]);
   }, [returnStatsBySku, hasReturnStatsBySku]);
 
   // Dang chon khung gio (khac ca ngay) -> chi tieu/click/hien thi/don Meta cua camp chi tinh trong khung gio do.
@@ -1509,7 +1510,7 @@ export default function Dashboard() {
             <div className="stat-label">Tỉ lệ hoàn {dateLabel}</div>
             <div className="stat-value" id="sReturnRate">{skuLoading ? '...' : orderReturnStats.denominator > 0 ? formatPercent(orderReturnStats.rate) : ''}</div>
             <div className="stat-sub">
-              {skuLoading ? 'Dang tai' : orderReturnStats.denominator > 0 ? `${formatNumber(orderReturnStats.returned + orderReturnStats.returning)} / ${formatNumber(orderReturnStats.denominator)}` : ''}
+              {skuLoading ? 'Dang tai' : orderReturnStats.denominator > 0 ? `${formatNumber((orderReturnStats.returned || 0) + (orderReturnStats.returning || 0) + (orderReturnStats.undelivered || 0))} / ${formatNumber(orderReturnStats.denominator)}` : ''}
             </div>
           </div>
         )}

@@ -38,7 +38,8 @@ function buildGroupSummary(rows) {
   const daNhan = sumField(rows, 'daNhan');
   const dangHoan = sumField(rows, 'dangHoan');
   const daHoan = sumField(rows, 'daHoan');
-  const returnDenominator = daNhan + dangHoan + daHoan;
+  const giaoKhongThanh = sumField(rows, 'giaoKhongThanh');
+  const returnDenominator = daNhan + dangHoan + daHoan + giaoKhongThanh;
 
   return {
     slKhachDat: sumField(rows, 'slKhachDat'),
@@ -46,14 +47,15 @@ function buildGroupSummary(rows) {
     tongDaShip: sumField(rows, 'tongDaShip'),
     tiLeDat: averageRate(rows, 'tiLeDat'),
     tiLeHoan: averageRate(rows, 'tiLeHoan'),
-    // Ti le hoan tong hop theo so luong thuc te (dangHoan + daHoan) / (daNhan + dangHoan + daHoan)
+    // Ti le hoan tong hop theo so luong thuc te (dangHoan + daHoan + giaoKhongThanh) / (daNhan + dangHoan + daHoan + giaoKhongThanh)
     // thay vi trung binh cong tung dong, de phan anh dung ti le hoan chung cua ca nhan vien.
-    tiLeHoanTong: returnDenominator > 0 ? (dangHoan + daHoan) / returnDenominator : 0,
+    tiLeHoanTong: returnDenominator > 0 ? (dangHoan + daHoan + giaoKhongThanh) / returnDenominator : 0,
     tiLeShip: averageRate(rows, 'tiLeShip'),
     cpo: averageRate(rows, 'cpo'),
     daNhan,
     dangHoan,
     daHoan,
+    giaoKhongThanh,
     dangGuiHang: sumField(rows, 'dangGuiHang')
   };
 }

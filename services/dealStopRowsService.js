@@ -282,6 +282,7 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
           daNhan: 0,
           dangHoan: 0,
           daHoan: 0,
+          giaoKhongThanh: 0,
           dangGuiHang: 0,
           tongDaShip: 0,
           tiLeShip: 0,
@@ -303,6 +304,7 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
       if (returnStatus === 'received') row.daNhan += quantity;
       if (returnStatus === 'returning') row.dangHoan += quantity;
       if (returnStatus === 'returned') row.daHoan += quantity;
+      if (returnStatus === 'undelivered') row.giaoKhongThanh += quantity;
       if (shipped && !returnStatus) row.dangGuiHang += quantity;
 
       const sizeFieldKey = getSizeFieldKey(item);
@@ -331,7 +333,7 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
     .filter(row => row._hasAllowedTag === true)
     .filter(row => Number(row.slKhachDat || 0) >= 2)
     .map(row => {
-      const returnDenominator = row.daNhan + row.dangHoan + row.daHoan;
+      const returnDenominator = row.daNhan + row.dangHoan + row.daHoan + row.giaoKhongThanh;
       const cpoMeta = cpoByCode[row.ma] || {};
       const sizeBuckets = row._sizeBuckets || {};
       const { _sizeBuckets, _firstOrderMeta, _hasAllowedTag, ...cleanRow } = row;
@@ -351,7 +353,7 @@ function buildDealStopRows(orderRows = [], campaignRows = []) {
         sizeM: sizeBuckets.sizeM > 0 ? String(sizeBuckets.sizeM) : '',
         sizeL: sizeBuckets.sizeL > 0 ? String(sizeBuckets.sizeL) : '',
         sizeXL: sizeBuckets.sizeXL > 0 ? String(sizeBuckets.sizeXL) : '',
-        tiLeHoan: returnDenominator > 0 ? (row.dangHoan + row.daHoan) / returnDenominator : 0,
+        tiLeHoan: returnDenominator > 0 ? (row.dangHoan + row.daHoan + row.giaoKhongThanh) / returnDenominator : 0,
         tiLeShip: row.slKhachDat > 0 ? row.tongDaShip / row.slKhachDat : 0
       };
     })

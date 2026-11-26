@@ -3157,12 +3157,12 @@ function isLongOrderStatsRange(fromDate, toDate) {
   return Number.isFinite(from) && Number.isFinite(to) && (to - from) / 86400000 >= LONG_RANGE_ORDER_STATS_MIN_DAYS;
 }
 
-// Dashboard chi dung ti le hoan theo SKU: gui dang gon [hoan, dang hoan, da nhan] thay cho
-// object 5 truong cua ~28k SKU (2.7 MB -> vai tram KB). Client tu tinh denominator / rate.
+// Dashboard chi dung ti le hoan theo SKU: gui dang gon [hoan, dang hoan, da nhan, giao khong thanh] thay cho
+// object cua ~28k SKU (2.7 MB -> vai tram KB). Client tu tinh denominator / rate.
 function buildCompactReturnStatsJson(stats) {
   const compact = {};
   for (const [sku, item] of Object.entries(stats.returnStatsBySku || {})) {
-    if (item.denominator > 0) compact[sku] = [item.returned, item.returning, item.received];
+    if (item.denominator > 0) compact[sku] = [item.returned, item.returning, item.received, item.undelivered || 0];
   }
   return JSON.stringify({ ok: true, compact: true, returnStatsBySku: compact });
 }
@@ -3321,6 +3321,7 @@ function getReturnSummaryMonthlyRow(monthlyMap, monthKey) {
       shippedOrderCount: 0,
       returned: 0,
       returning: 0,
+      undelivered: 0,
       received: 0
     });
   }
@@ -3333,8 +3334,9 @@ function finalizeReturnSummaryMonthlyRow(row = {}) {
   const shippedOrderCount = Number(row.shippedOrderCount || 0);
   const returned = Number(row.returned || 0);
   const returning = Number(row.returning || 0);
+  const undelivered = Number(row.undelivered || 0);
   const received = Number(row.received || 0);
-  const returnCount = returned + returning;
+  const returnCount = returned + returning + undelivered;
   const returnDenominator = returnCount + received;
 
   return {
@@ -3344,6 +3346,7 @@ function finalizeReturnSummaryMonthlyRow(row = {}) {
     shipRate: orderCount > 0 ? shippedOrderCount / orderCount : 0,
     returned,
     returning,
+    undelivered,
     received,
     returnCount,
     returnDenominator,
@@ -3359,13 +3362,15 @@ function buildProductReturnSummary(orderRows = []) {
     .map(([sku, stats = {}]) => {
       const returned = Number(stats.returned || 0);
       const returning = Number(stats.returning || 0);
+      const undelivered = Number(stats.undelivered || 0);
       const received = Number(stats.received || 0);
-      const returnCount = returned + returning;
+      const returnCount = returned + returning + undelivered;
       const denominator = Number(stats.denominator || (returnCount + received));
       return {
         sku,
         returned,
         returning,
+        undelivered,
         received,
         returnCount,
         denominator,
@@ -3383,6 +3388,7 @@ function buildProductReturnSummary(orderRows = []) {
   const total = rows.reduce((acc, row) => {
     acc.returned += row.returned;
     acc.returning += row.returning;
+    acc.undelivered += row.undelivered;
     acc.received += row.received;
     acc.returnCount += row.returnCount;
     acc.denominator += row.denominator;
@@ -3390,6 +3396,7 @@ function buildProductReturnSummary(orderRows = []) {
   }, {
     returned: 0,
     returning: 0,
+    undelivered: 0,
     received: 0,
     returnCount: 0,
     denominator: 0,
@@ -3567,6 +3574,7 @@ async function buildReturnSummaryPayload({ accountFilter, provider, fromDate, to
     month.shippedOrderCount = Number(totalStats.shippedOrderCount || 0);
     month.returned = Number(totalStats.returned || 0);
     month.returning = Number(totalStats.returning || 0);
+    month.undelivered = Number(totalStats.undelivered || 0);
     month.received = Number(totalStats.received || 0);
   });
 
