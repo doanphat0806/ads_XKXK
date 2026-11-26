@@ -3171,8 +3171,21 @@ function computeOrderSkuStats(fromDate, toDate, cacheKey) {
   let pending = orderSkuStatsInFlight.get(cacheKey);
   if (!pending) {
     pending = (async () => {
-      const allOrders = await Order.find(buildOrderQuery({ fromDate, toDate })).select(ORDER_SKU_STATS_FIELDS).lean();
-      return buildOrderSkuStats(allOrders);
+      const { createOrderSkuStatsAccumulator, accumulateOrderSkuStat, finalizeOrderSkuStats } = require('../services/orderService');
+      const acc = createOrderSkuStatsAccumulator();
+      const cursor = Order.find(buildOrderQuery({ fromDate, toDate }))
+        .select(ORDER_SKU_STATS_FIELDS)
+        .lean()
+        .cursor({ batchSize: 2000 });
+      let processed = 0;
+      for await (const order of cursor) {
+        accumulateOrderSkuStat(acc, order);
+        processed += 1;
+        if (processed % 2000 === 0) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      }
+      return finalizeOrderSkuStats(acc);
     })().finally(() => orderSkuStatsInFlight.delete(cacheKey));
     orderSkuStatsInFlight.set(cacheKey, pending);
   }

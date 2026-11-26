@@ -285,6 +285,9 @@ async function upsertPosOrders(orders = [], shopId = '') {
       result = error.result || {};
     }
     changed += Number(result.upsertedCount ?? result.nUpserted ?? 0) + Number(result.modifiedCount ?? result.nModified ?? 0);
+    if (start + BULK_WRITE_SIZE < docs.length) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
   }
   if (changed) orderSourceState.posVersion += 1;
   return { received: docs.length, changed };

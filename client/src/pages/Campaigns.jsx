@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import { api, uploadForm, formatVND, formatNumber, todayString, dateTimeString } from '../lib/api';
 import { toast } from 'react-toastify';
@@ -260,6 +260,7 @@ export default function Campaigns() {
     }
   });
   const [searchTerm, setSearchTerm] = useState('');
+  const deferredSearchTerm = useDeferredValue(searchTerm);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCampaignKeys, setSelectedCampaignKeys] = useState(() => new Set());
   const [bulkToggling, setBulkToggling] = useState('');
@@ -363,9 +364,11 @@ export default function Campaigns() {
     [visibleColumns]
   );
 
-  // Load campaigns
+  // Load campaigns (khong dua campaigns.length vao deps de tranh goi API 2 lan sau lan tai dau)
+  const hasCampaignsRef = useRef(false);
+
   const loadCampaigns = useCallback(async (showLoader = true) => {
-    if (showLoader || campaigns.length === 0) {
+    if (showLoader || !hasCampaignsRef.current) {
       setLoading(true);
     }
 
@@ -382,14 +385,16 @@ export default function Campaigns() {
         ? `/accounts/${filterAcc}/campaigns?${params.toString()}`
         : `/campaigns/today?${params.toString()}`;
       const data = await api('GET', url, null, { timeoutMs: 5 * 60 * 1000 });
-      setCampaigns(data || []);
+      const nextCampaigns = data || [];
+      hasCampaignsRef.current = nextCampaigns.length > 0;
+      setCampaigns(nextCampaigns);
       setLastToggleLog('');
     } catch (error) {
       toast.error('Lỗi tải chiến dịch: ' + error.message);
     } finally {
       setLoading(false);
     }
-  }, [filterAcc, filterFromDate, filterToDate, provider, showAllCampaigns, campaigns.length]);
+  }, [filterAcc, filterFromDate, filterToDate, provider, showAllCampaigns]);
 
   const reloadCampaignsNow = useCallback((showLoader = true) => {
     if (toggleReloadTimerRef.current) {
@@ -798,7 +803,7 @@ export default function Campaigns() {
     if (filterAcc) {
       result = result.filter(acc => String(acc._id || '') === filterAcc);
     }
-    const normalizedSearch = String(searchTerm || '').trim().toLowerCase();
+    const normalizedSearch = String(deferredSearchTerm || '').trim().toLowerCase();
     if (normalizedSearch) {
       result = result.filter(acc => {
         const name = String(acc.name || '').toLowerCase();
@@ -818,7 +823,7 @@ export default function Campaigns() {
       if (sortField === 'name') return dir * String(a.name || '').localeCompare(String(b.name || ''));
       return b.spend - a.spend;
     });
-  }, [enrichedAccounts, filterAcc, searchTerm, sortField, sortDir]);
+  }, [enrichedAccounts, filterAcc, deferredSearchTerm, sortField, sortDir]);
 
   // Accounts summary totals
   const accountsSummaryTotals = useMemo(() => {
@@ -862,7 +867,7 @@ export default function Campaigns() {
           : !isCampaignActiveStatus(campaign.status)
       ));
     }
-    const normalizedSearch = String(searchTerm || '').trim().toLowerCase();
+    const normalizedSearch = String(deferredSearchTerm || '').trim().toLowerCase();
     if (normalizedSearch) {
       result = result.filter(campaign => {
         const campaignName = String(campaign.name || '').toLowerCase();
@@ -890,7 +895,7 @@ export default function Campaigns() {
       }
       return b.spend - a.spend;
     });
-  }, [enrichedCampaigns, filterAcc, filterStatus, searchTerm, sortField, sortDir]);
+  }, [enrichedCampaigns, filterAcc, filterStatus, deferredSearchTerm, sortField, sortDir]);
 
   const handleSort = (field) => {
     if (sortField === field) {

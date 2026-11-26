@@ -391,51 +391,60 @@ function getOrderStatsCacheKey({ fromDate, toDate } = {}) {
   return `${fromDate || ''}:${toDate || ''}:${getOrderDataVersion({ fromDate })}`;
 }
 
-function buildOrderSkuStats(orders = []) {
-  const EXCLUDE_ST = ['mới', 'moi', 'new'];
-  const rows = orders.filter(o => {
-    const st = String(o.status || '').toLowerCase().trim();
-    return !EXCLUDE_ST.includes(st);
-  });
-  const totalOrders = rows.filter(o => o.orderId && String(o.orderId).trim() !== '').length;
-  const counts = {};
-  const returnStats = {
-    returned: 0,
-    returning: 0,
-    undelivered: 0,
-    received: 0,
-    denominator: 0,
-    rate: 0
+const EXCLUDE_SKU_STATUSES = new Set(['mới', 'moi', 'new']);
+
+function createOrderSkuStatsAccumulator() {
+  return {
+    totalOrders: 0,
+    counts: {},
+    returnStats: {
+      returned: 0,
+      returning: 0,
+      undelivered: 0,
+      received: 0,
+      denominator: 0,
+      rate: 0
+    },
+    returnStatsBySku: {}
   };
-  const returnStatsBySku = {};
+}
 
-  for (const order of rows) {
-    const returnStatus = classifyReturnStatus(order);
-    incrementReturnStats(returnStats, returnStatus, 1);
+function accumulateOrderSkuStat(acc, order) {
+  const st = String(order?.status || '').toLowerCase().trim();
+  if (EXCLUDE_SKU_STATUSES.has(st)) return;
 
-    const orderSkuQuantities = {};
-    for (const item of getOrderItemsFromRaw(order.rawData || {})) {
-      const sku = normalizeSkuKey(getOrderItemSku(item));
-      if (!sku) continue;
-      orderSkuQuantities[sku] = (orderSkuQuantities[sku] || 0) + getOrderItemQuantity(item);
-    }
-
-    for (const [sku, quantity] of Object.entries(orderSkuQuantities)) {
-      counts[sku] = (counts[sku] || 0) + quantity;
-      if (!returnStatsBySku[sku]) {
-        returnStatsBySku[sku] = {
-          returned: 0,
-          returning: 0,
-          undelivered: 0,
-          received: 0,
-          denominator: 0,
-          rate: 0
-        };
-      }
-      incrementReturnStats(returnStatsBySku[sku], returnStatus, 1);
-    }
+  if (order.orderId && String(order.orderId).trim() !== '') {
+    acc.totalOrders += 1;
   }
 
+  const returnStatus = classifyReturnStatus(order);
+  incrementReturnStats(acc.returnStats, returnStatus, 1);
+
+  const orderSkuQuantities = {};
+  for (const item of getOrderItemsFromRaw(order.rawData || {})) {
+    const sku = normalizeSkuKey(getOrderItemSku(item));
+    if (!sku) continue;
+    orderSkuQuantities[sku] = (orderSkuQuantities[sku] || 0) + getOrderItemQuantity(item);
+  }
+
+  for (const [sku, quantity] of Object.entries(orderSkuQuantities)) {
+    acc.counts[sku] = (acc.counts[sku] || 0) + quantity;
+    if (!acc.returnStatsBySku[sku]) {
+      acc.returnStatsBySku[sku] = {
+        returned: 0,
+        returning: 0,
+        undelivered: 0,
+        received: 0,
+        denominator: 0,
+        rate: 0
+      };
+    }
+    incrementReturnStats(acc.returnStatsBySku[sku], returnStatus, 1);
+  }
+}
+
+function finalizeOrderSkuStats(acc) {
+  const { counts, totalOrders, returnStats, returnStatsBySku } = acc;
   returnStats.denominator = returnStats.returned + returnStats.returning + returnStats.undelivered + returnStats.received;
   returnStats.rate = returnStats.denominator > 0
     ? (returnStats.returned + returnStats.returning + returnStats.undelivered) / returnStats.denominator
@@ -449,6 +458,14 @@ function buildOrderSkuStats(orders = []) {
   }
 
   return { counts, totalOrders, returnStats, returnStatsBySku };
+}
+
+function buildOrderSkuStats(orders = []) {
+  const acc = createOrderSkuStatsAccumulator();
+  for (const order of orders) {
+    accumulateOrderSkuStat(acc, order);
+  }
+  return finalizeOrderSkuStats(acc);
 }
 
 function createReturnProductRateStats(key, label) {
@@ -714,6 +731,9 @@ module.exports = {
   getOrderSourceName,
   getOrderDataVersion,
   buildOrderSkuStats,
+  createOrderSkuStatsAccumulator,
+  accumulateOrderSkuStat,
+  finalizeOrderSkuStats,
   buildOrderTableStats,
   getOrderStatsCacheKey,
   ORDER_SKU_STATS_FIELDS,
