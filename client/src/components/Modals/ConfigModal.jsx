@@ -108,6 +108,78 @@ export default function ConfigModal() {
   const [tab, setTab] = useState('general');
   const [viaProfiles, setViaProfiles] = useState([]);
   const [viaLoading, setViaLoading] = useState(false);
+  const [shopApi, setShopApi] = useState({ hasKey: false, apiKey: '', createdAt: null });
+  const [shopApiLoading, setShopApiLoading] = useState(false);
+  const [shopApiReveal, setShopApiReveal] = useState(false);
+  const [shopApiTesting, setShopApiTesting] = useState(false);
+  const [shopApiPreview, setShopApiPreview] = useState('');
+
+  const loadShopApi = async () => {
+    try {
+      const data = await api('GET', '/config/shop-api');
+      setShopApi({ hasKey: Boolean(data?.hasKey), apiKey: data?.apiKey || '', createdAt: data?.createdAt || null });
+    } catch {
+      // bo qua neu khong tai duoc
+    }
+  };
+
+  const generateShopApiKey = async () => {
+    if (shopApi.hasKey && !window.confirm('Tạo key mới sẽ vô hiệu hóa API Key cũ. Tiếp tục?')) return;
+    setShopApiLoading(true);
+    try {
+      const data = await api('POST', '/config/shop-api/generate');
+      setShopApi({ hasKey: true, apiKey: data.apiKey || '', createdAt: data.createdAt || null });
+      setShopApiReveal(true);
+      setShopApiPreview('');
+      toast.success('Đã tạo API Key thông tin shop');
+    } catch (e) {
+      toast.error('Lỗi tạo API Key: ' + e.message);
+    } finally {
+      setShopApiLoading(false);
+    }
+  };
+
+  const revokeShopApiKey = async () => {
+    if (!window.confirm('Thu hồi API Key này? Các hệ thống ngoài đang dùng key sẽ bị ngắt kết nối.')) return;
+    setShopApiLoading(true);
+    try {
+      await api('DELETE', '/config/shop-api');
+      setShopApi({ hasKey: false, apiKey: '', createdAt: null });
+      setShopApiPreview('');
+      toast.success('Đã thu hồi API Key');
+    } catch (e) {
+      toast.error('Lỗi thu hồi: ' + e.message);
+    } finally {
+      setShopApiLoading(false);
+    }
+  };
+
+  const copyText = async (text, label) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`Đã copy ${label}`);
+    } catch {
+      toast.error('Không thể copy tự động');
+    }
+  };
+
+  const testShopApi = async () => {
+    if (!shopApi.apiKey) return;
+    setShopApiTesting(true);
+    try {
+      const res = await fetch('/api/public/shop', {
+        headers: { 'x-api-key': shopApi.apiKey }
+      });
+      const data = await res.json();
+      setShopApiPreview(JSON.stringify(data, null, 2));
+      if (!res.ok) toast.error(data?.error || 'Lỗi gọi API');
+      else toast.success('Gọi API thành công');
+    } catch (e) {
+      toast.error('Lỗi gọi API: ' + e.message);
+    } finally {
+      setShopApiTesting(false);
+    }
+  };
 
   const loadViaProfiles = async () => {
     setViaLoading(true);
@@ -121,7 +193,10 @@ export default function ConfigModal() {
   };
 
   useEffect(() => {
-    if (tab === 'connect' && showAdActions) loadViaProfiles();
+    if (tab === 'connect' && showAdActions) {
+      loadViaProfiles();
+      loadShopApi();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -598,6 +673,84 @@ export default function ConfigModal() {
                 <input type="password" placeholder={appConfig.hasPancakeApiKey ? 'API Key đã lưu' : 'API Key'} value={pancake.apiKey} onChange={e => setPancake({ ...pancake, apiKey: e.target.value })} />
                 <button className="btn btn-p btn-sm" onClick={() => save('/config', { pancakeApiKey: pancake.apiKey, pancakeShopId: pancake.shopId }, 'Đã lưu cấu hình Pancake')}>Lưu</button>
               </div>
+            </div>
+
+            <div className="cfg-block">
+              <div className="cfg-block-title">API Thông Tin Shop (External API) {statusPill(shopApi.hasKey)}</div>
+              <div className="cfg-inline" style={{ flexWrap: 'wrap', gap: '8px' }}>
+                <input
+                  type={shopApiReveal ? 'text' : 'password'}
+                  readOnly
+                  placeholder="Chưa tạo API Key"
+                  value={shopApi.apiKey}
+                  style={{ flex: 1, minWidth: '220px', fontFamily: 'var(--mono)' }}
+                />
+                {shopApi.hasKey && (
+                  <>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShopApiReveal(v => !v)}>
+                      {shopApiReveal ? 'Ẩn' : 'Hiện'}
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => copyText(shopApi.apiKey, 'API Key')}>
+                      Copy Key
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-sm" disabled={shopApiTesting} onClick={testShopApi}>
+                      {shopApiTesting ? 'Đang test...' : 'Test API'}
+                    </button>
+                  </>
+                )}
+                <button type="button" className="btn btn-p btn-sm" disabled={shopApiLoading} onClick={generateShopApiKey}>
+                  {shopApi.hasKey ? 'Đổi Key mới' : 'Tạo API Key'}
+                </button>
+                {shopApi.hasKey && (
+                  <button type="button" className="btn btn-danger btn-sm" disabled={shopApiLoading} onClick={revokeShopApiKey}>
+                    Thu hồi
+                  </button>
+                )}
+              </div>
+              <div className="cfg-hint" style={{ marginTop: '8px', lineHeight: 1.6 }}>
+                <div><b>Endpoints toàn shop:</b> (dùng header <code>x-api-key</code> hoặc bấm Copy để lấy link mở trực tiếp trên trình duyệt)</div>
+                {[
+                  { label: 'Tổng quan toàn shop (Đơn, Ads, Kho, Đặt hàng, Đóng deal)', path: '/api/public/shop' },
+                  { label: 'Đặt hàng (Purchase Orders)', path: '/api/public/shop/purchase-orders' },
+                  { label: 'Đóng deal (Deal Stop)', path: '/api/public/shop/deal-stop' },
+                  { label: 'Kho (Inventory)', path: '/api/public/shop/inventory' },
+                  { label: 'Chiến dịch Ads', path: '/api/public/shop/ads' },
+                  { label: 'Tài khoản Ads', path: '/api/public/shop/ads/accounts' },
+                  { label: 'Đơn hàng POS', path: '/api/public/shop/orders' }
+                ].map(ep => {
+                  const fullUrl = shopApi.hasKey
+                    ? `${window.location.origin}${ep.path}?api_key=${encodeURIComponent(shopApi.apiKey)}`
+                    : `${window.location.origin}${ep.path}`;
+                  return (
+                    <div key={ep.path}>
+                      • {ep.label}: <code>{window.location.origin}{ep.path}</code>{' '}
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        style={{ padding: '1px 6px', fontSize: '11px' }}
+                        onClick={() => copyText(fullUrl, ep.label)}
+                      >
+                        Copy link
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              {shopApiPreview && (
+                <pre style={{
+                  marginTop: '10px',
+                  maxHeight: '220px',
+                  overflow: 'auto',
+                  padding: '10px',
+                  borderRadius: '8px',
+                  background: '#0f172a',
+                  color: '#e2e8f0',
+                  fontSize: '11px',
+                  lineHeight: 1.45
+                }}>
+                  {shopApiPreview}
+                </pre>
+              )}
             </div>
           </>
         )}

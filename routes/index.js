@@ -16,6 +16,7 @@ function registerAllRoutes(app) {
   app.use('/api/campaigns', require('./campaignSnapshotRoutes'));
   app.use('/api/ads-manager', require('./adsManagerRoutes'));
   app.use('/api/account-sync', require('./accountSyncRoutes'));
+  app.use('/api/public/shop', require('./publicShopRoutes'));
 }
 
 module.exports = { registerAllRoutes };

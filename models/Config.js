@@ -13,6 +13,8 @@ const ConfigSchema = new mongoose.Schema({
   fbAppSecret: { type: String, default: '' },
   pancakeApiKey: { type: String, default: '' },
   pancakeShopId: { type: String, default: '' },
+  shopApiKey: { type: String, default: '' },
+  shopApiKeyCreatedAt: { type: Date },
   autoRuleStartTime: { type: String, default: '00:00' },
   autoRuleEndTime: { type: String, default: '09:00' },
   shopeeAutoRuleStartTime: { type: String, default: '00:00' },

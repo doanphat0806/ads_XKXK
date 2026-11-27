@@ -13,7 +13,9 @@ async function authenticateApiRequest(req, res, next) {
     req.path === '/auth/login' ||
     req.path === '/facebook/oauth/callback' ||
     req.path === '/google/oauth/callback' ||
-    req.path === '/webhooks/pancake'
+    req.path === '/webhooks/pancake' ||
+    req.path === '/public/shop' ||
+    req.path.startsWith('/public/shop/')
   ) {
     return next();
   }

@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const express = require('express');
 const Config = require('../models/Config');
 const User = require('../models/User');
@@ -247,6 +248,48 @@ router.delete('/dashboard-columns/presets/:name', async (req, res) => {
     res.json({ ok: true, presets: await getColumnPresets(req.currentUser._id) });
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+router.get('/config/shop-api', async (req, res) => {
+  try {
+    const config = await getAppConfig();
+    res.json({
+      hasKey: Boolean(config?.shopApiKey),
+      apiKey: config?.shopApiKey || '',
+      createdAt: config?.shopApiKeyCreatedAt || null
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/config/shop-api/generate', async (req, res) => {
+  try {
+    const apiKey = `xkxk_${crypto.randomBytes(24).toString('hex')}`;
+    const createdAt = new Date();
+    await Config.findOneAndUpdate(
+      { key: 'app' },
+      { $set: { shopApiKey: apiKey, shopApiKeyCreatedAt: createdAt, updatedAt: createdAt }, $setOnInsert: { key: 'app' } },
+      { upsert: true, new: true }
+    );
+    clearAppConfigCache();
+    res.json({ ok: true, hasKey: true, apiKey, createdAt });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.delete('/config/shop-api', async (req, res) => {
+  try {
+    await Config.findOneAndUpdate(
+      { key: 'app' },
+      { $set: { shopApiKey: '', shopApiKeyCreatedAt: null, updatedAt: new Date() } }
+    );
+    clearAppConfigCache();
+    res.json({ ok: true, hasKey: false, apiKey: '', createdAt: null });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
